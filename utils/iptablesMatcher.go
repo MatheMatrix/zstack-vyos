@@ -341,6 +341,10 @@ func (r *IpTableRule) isMatcherEqual(o *IpTableRule) error {
 		return fmt.Errorf("not match, old priority: %d, new priority: %d", o.priority, r.priority)
 	}
 
+	if r.snatTargetIp != o.snatTargetIp {
+		return fmt.Errorf("not match, old snatTargetIp: %s, new snatTargetIp: %s", o.snatTargetIp, r.snatTargetIp)
+	}
+
 	return nil
 }
 
