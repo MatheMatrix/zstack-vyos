@@ -222,7 +222,12 @@ func SetHaStatus(status string) {
 }
 
 func GetHaStatus() (status string) {
-	return BootstrapInfo["haStatus"].(string)
+	haStatus := NOHA
+	if v, ok := BootstrapInfo["haStatus"]; ok {
+		haStatus = v.(string)
+	}
+
+	return haStatus
 }
 
 func IsRuingUT() bool {
