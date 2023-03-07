@@ -670,7 +670,6 @@ func getIpsecConns() map[string]string {
 	files, _ := ioutil.ReadDir(ipsec_path_cfg_ipsecdir)
 	for _, f := range files {
 		filename := f.Name() // 1234.conf
-		fmt.Println(filename)
 		fileExt := path.Ext(filename)
 		if fileExt == ".conf" || fileExt == ".conf_bak" {
 			connUuids[filename[0:(len(filename)-len(fileExt))]] = filename
