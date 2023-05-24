@@ -104,7 +104,7 @@ SBIN_DIR=/opt/vyatta/sbin
 VERSION=`date +%Y%m%d`
 ZVR_VERSION=$tmpdir/version
 GOPRLIMIT=$tmpdir/goprlimit
-DATA=$tmpdir/data.tar.gz
+DATA=$tmpdir/zvr-data.tar.gz
 
 guestfish <<_EOF_
 add $imgfile
