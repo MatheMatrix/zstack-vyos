@@ -1,0 +1,23 @@
+[[GENERIC]]
+# this files for all archs
+# format: [source file]  [dst file]  [file mode]  [file owner]
+#
+zstack-logrotate        /etc/logrotate.d/zstack-logrotate                0644     root:root
+
+
+[[X86]]
+# this files just for x86_64
+# format: [source file]  [dst file]  [file mode]  [file owner]
+#
+
+
+[[ARM]]
+# this files just for aarch64
+# format: [source file]  [dst file]  [file mode]  [file owner]
+#
+
+
+[[MIPS]]
+# Use for add/sync files just for mips64
+# format: [source file]  [dst file]  [file mode]  [file owner]
+#
