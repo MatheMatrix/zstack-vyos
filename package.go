@@ -107,7 +107,7 @@ cat $tmpdir/setup.sh $targettar > {{.BinaryPath}}
 chmod a+x {{.BinaryPath}}
 rm -rf $tmpdir
 `
-	utils.ModuleName = project.name
+	utils.InitBuildInfo(project.name, "")
 	binaryPath := fmt.Sprintf("%s/%s.bin", *project.config.Location, project.name)
 	context := map[string]string{
 		"Dir":           *project.config.Dir,
