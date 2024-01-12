@@ -47,6 +47,11 @@ func initPlugins() {
 	if err := plugin.IpsecInit(); err != nil {
 		log.Warningf("init plugin ipsec failed, %v", err.Error())
 	}
+	if utils.IsSLB() {
+		radvdService := make(utils.RadvdAttrsMap)
+		_ = radvdService.StopService()
+		log.Debugf("stop radvd service with SLB")
+	}
 	plugin.InitHaNicState()
 }
 
@@ -56,8 +61,8 @@ type nic struct {
 	category string
 }
 
-var zvrHomePath     = utils.GetUserHomePath()
-var zvrRootPath     = utils.GetZvrRootPath()
+var zvrHomePath = utils.GetUserHomePath()
+var zvrRootPath = utils.GetZvrRootPath()
 var zvrZsConfigPath = utils.GetZvrZsConfigPath()
 
 // Note: there shouldn't be 'daily' etc. in the following config files.
@@ -311,7 +316,11 @@ func main() {
 	loadPlugins()
 	setupRotates()
 	server.VyosLockInterface(configureZvrFirewall)()
-	utils.StartDiskMon(getHeartBeatFile(options.LogFile), func(e error) { if utils.IsHaEnabled() {os.Exit(1)} }, 2*time.Second)
+	utils.StartDiskMon(getHeartBeatFile(options.LogFile), func(e error) {
+		if utils.IsHaEnabled() {
+			os.Exit(1)
+		}
+	}, 2*time.Second)
 
 	server.Start()
 }
