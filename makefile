@@ -102,7 +102,7 @@ tar:
 		else echo "$${arch} is not supported"; exit 1; \
 		fi; \
 		cp -f $(TARGET_DIR)/zvr_$${UNAME} $(FILE_LIST_TAR); \
-		cp -f $(TARGET_DIR)/zvrboot_$${UNAME} $(FILE_LIST_TAR);
+		cp -f $(TARGET_DIR)/zvrboot_$${UNAME} $(FILE_LIST_TAR); \
 	done
 	cp -f scripts/grub.cfg.5.4.80 $(PKG_TAR_DIR)
 	cp -f scripts/grub.cfg.3.13 $(PKG_TAR_DIR)
