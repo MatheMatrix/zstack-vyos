@@ -82,7 +82,7 @@ do
     [ -z "$1" ] && break;
     case "$1" in
         -V|--version ) PRINT_VERSION='y' && params=(${params[*]/$1});shift;;
-        -- ) shift;;
+        -- ) break;;
     esac
 done
 if [ ! -z "$PRINT_VERSION" ]; then
