@@ -1868,24 +1868,36 @@ func (c *loadBalancerCollector) Update(metricCh chan<- prom.Metric) error {
 		return nil
 	}
 
-	//cleanup what was left over from last time, but now is finished
+	//start goroutine to get data on demand
+	//case 1. The last launched goroutine has received the data and written to the ch and closed the ch.
+	//        action: read the data from ch, push it to cache, start new goroutine
+	//case 2. The last launched goroutine timeout and closed the ch
+	//        action: start new goroutine
+	//case 3. The last launched goroutine is still running, ch is opened
+	//		  action: do nothing(not block)
+	//case 4. The last launched goroutine has been fully processed last time, the data has been read last time,
+	//        and the corresponding ch variable has been set to nil
+	//		  action: start new goroutine
+	//case 5. this func is called first, the corresponding ch variable is initialized as nil
+	//		  action: start new goroutine
 	for listenerUuid, listener := range LbListeners {
 		if listener.getLastCounters().ch != nil {
 			select {
 			case data, ok := <-listener.getLastCounters().ch:
-				if ok {
-					//log.Debugf("save last counter: %s", listenerUuid)
+				if ok { // case 1
 					listener.getLastCounters().counters = data.counters
+					listener.getLastCounters().ch = listener.getLbCounters(listenerUuid, listener)
+				} else { // case 2
+					listener.getLastCounters().ch = listener.getLbCounters(listenerUuid, listener)
 				}
-				listener.getLastCounters().ch = listener.getLbCounters(listenerUuid, listener)
-			default:
-				//do nothing
+			default: //case 3
 			}
-		} else {
+		} else { // case 4 and case 5
 			listener.getLastCounters().ch = listener.getLbCounters(listenerUuid, listener)
 		}
 	}
 
+	//try to read and use the data if there is data in the corresponding ch
 	copiedListeners := make(map[string]Listener, len(LbListeners))
 	for key, value := range LbListeners {
 		copiedListeners[key] = value
@@ -1913,6 +1925,7 @@ func (c *loadBalancerCollector) Update(metricCh chan<- prom.Metric) error {
 		time.Sleep(time.Duration(1) * time.Second)
 	}
 
+	//if there is still goroutines running(not finished), use last cached data
 	for listenerUuid, listener := range copiedListeners {
 		if listener.getLastCounters().counters != nil {
 			//log.Debugf("use last cached counters: %s", listenerUuid)
