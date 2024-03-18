@@ -12,9 +12,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	log "github.com/sirupsen/logrus"
 	"zstack-vyos/server"
 	"zstack-vyos/utils"
+
+	log "github.com/sirupsen/logrus"
 )
 
 type KeepAlivedStatus int
@@ -326,9 +327,10 @@ type KeepalivedConf struct {
 	BackupScript        string
 	ScriptPath          string
 	PrimaryBackupScript string
+	Vips               []nicVipPair
 }
 
-func NewKeepalivedConf(hearbeatNic, LocalIp, PeerIp string, MonitorIps []string, Interval int) *KeepalivedConf {
+func NewKeepalivedConf(hearbeatNic, LocalIp, PeerIp string, MonitorIps []string, Interval int, vips []nicVipPair) *KeepalivedConf {
 	kc := &KeepalivedConf{
 		HeartBeatNic:        hearbeatNic,
 		Interval:            Interval,
@@ -339,6 +341,7 @@ func NewKeepalivedConf(hearbeatNic, LocalIp, PeerIp string, MonitorIps []string,
 		BackupScript:        KeepalivedScriptNotifyBackup,
 		ScriptPath:          KeepalivedScriptPath,
 		PrimaryBackupScript: ConntrackScriptPrimaryBackup,
+		Vips: 	vips,
 	}
 
 	return kc
@@ -440,6 +443,57 @@ vrrp_instance vyos-ha {
 	notify_master "{{.MasterScript}} MASTER"
 	notify_backup "{{.BackupScript}} BACKUP"
 	notify_fault "{{.BackupScript}} FAULT"
+}
+`
+
+const tKeepalivedSlbConf = `# This file is auto-generated, edit with caution!
+global_defs {
+	vrrp_garp_master_refresh 60
+	vrrp_check_unicast_src
+	script_user root
+}
+
+vrrp_script monitor_zvr {
+       script "{{.ScriptPath}}/check_zvr.sh"        # cheaper than pidof
+       interval 2                      # check every 2 seconds
+       fall 2                          # require 2 failures for KO
+       rise 2                          # require 2 successes for OK
+}
+
+{{ range .MonitorIps }}
+vrrp_script monitor_{{.}} {
+	script "{{$.ScriptPath}}/check_monitor_{{.}}.sh"
+	interval 2
+	weight -2
+	fall 3
+	rise 3
+}
+{{ end }}
+
+vrrp_instance vyos-ha {
+	state BACKUP
+	interface {{.HeartBeatNic}}
+	virtual_router_id 50
+	priority 100
+	advert_int {{.Interval}}
+	nopreempt
+
+	unicast_src_ip {{.LocalIp}}
+	unicast_peer {
+		{{.PeerIp}}
+	}
+
+	track_script {
+		monitor_zvr
+{{ range .MonitorIps }}
+                monitor_{{.}}
+{{ end }}
+	}
+	virtual_ipaddress {
+{{ range .Vips }}
+            {{.Vip}}/{{.Prefix}}
+{{ end }}
+	}
 }
 `
 
@@ -705,6 +759,26 @@ func KeepalivedEntryPoint() {
 	})
 
 	server.RegisterSyncCommandHandler(KEEPALIVED_GARP_PATH, garpHandler)
+}
+
+func (k *KeepalivedConf) BuildSlbConf() error {
+	tmpl, err := template.New("keepalived.conf").Parse(tKeepalivedSlbConf)
+	utils.PanicOnError(err)
+
+	var buf bytes.Buffer
+	err = tmpl.Execute(&buf, k)
+	utils.PanicOnError(err)
+
+	err = ioutil.WriteFile(KeepalivedConfigFile, buf.Bytes(), 0644)
+	utils.PanicOnError(err)
+
+	// generate conntrackd.conf
+	buf.Reset()
+	tmpl, err = template.New("conntrackd.conf").Parse(tConntrackdConf)
+	utils.PanicOnError(err)
+	err = tmpl.Execute(&buf, k)
+	utils.PanicOnError(err)
+	return ioutil.WriteFile(ConntrackdConfigFile, buf.Bytes(), 0644)
 }
 
 var keepAlivedStatus KeepAlivedStatus

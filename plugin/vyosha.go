@@ -2,13 +2,14 @@ package plugin
 
 import (
 	"fmt"
-	log "github.com/sirupsen/logrus"
 	"io/ioutil"
 	"strconv"
 	"strings"
 	"time"
 	"zstack-vyos/server"
 	"zstack-vyos/utils"
+
+	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -150,9 +151,13 @@ func setVyosHa(cmd *setVyosHaCmd) interface{} {
 	checksum, err := getFileChecksum(KeepalivedConfigFile)
 	utils.PanicOnError(err)
 
-	keepalivedConf := NewKeepalivedConf(heartbeatNicNme, cmd.LocalIp, cmd.PeerIp, cmd.Monitors, cmd.Keepalive)
-	keepalivedConf.BuildCheckScript()
-	keepalivedConf.BuildConf()
+	keepalivedConf := NewKeepalivedConf(heartbeatNicNme, cmd.LocalIp, cmd.PeerIp, cmd.Monitors, cmd.Keepalive, pairs)
+	if utils.IsSLB() {
+		keepalivedConf.BuildSlbConf()
+	} else {
+		keepalivedConf.BuildCheckScript()
+	    keepalivedConf.BuildConf()
+	}
 	newCheckSum, err := getFileChecksum(KeepalivedConfigFile)
 	utils.PanicOnError(err)
 	/* if keepalived is not started, RestartKeepalived will also start keepalived */

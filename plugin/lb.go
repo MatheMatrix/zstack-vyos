@@ -35,6 +35,7 @@ const (
 	DELETE_LB_PATH            = "/lb/delete"
 	CREATE_CERTIFICATE_PATH   = "/certificate/create"
 	DELETE_CERTIFICATE_PATH   = "/certificate/delete"
+	CREATE_CERTIFICATES_PATH   = "/certificates/create"
 
 	LB_MODE_HTTPS = "https"
 
@@ -126,6 +127,10 @@ type lbInfo struct {
 type certificateInfo struct {
 	Uuid        string `json:"uuid"`
 	Certificate string `json:"certificate"`
+}
+
+type certificatesCmd struct {
+	Certs        map[string]string `json:"certs"`
 }
 
 type deleteCertificateCmd struct {
@@ -1663,11 +1668,22 @@ func createCertificateHandler(ctx *server.CommandContext) interface{} {
 	certificate := &certificateInfo{}
 	ctx.GetCommand(certificate)
 
-	return createCertificate(certificate)
+	return createCertificate(certificate.Uuid, []byte(certificate.Certificate))
 }
 
-func createCertificate(certificate *certificateInfo) interface{} {
-	certificatePath := makeCertificatePath(certificate.Uuid)
+func createCertificatesHandler(ctx *server.CommandContext) interface{} {
+	certificates := &certificatesCmd{}
+	ctx.GetCommand(certificates)
+
+	for uuid, cert := range certificates.Certs {
+		createCertificate(uuid, []byte(cert))
+	}
+
+	return nil
+}
+
+func createCertificate(uuid string, certificate []byte) interface{} {
+	certificatePath := makeCertificatePath(uuid)
 	if e, _ := utils.PathExists(certificatePath); e {
 		/* certificate create api may be called multiple times */
 		return nil
@@ -1675,7 +1691,7 @@ func createCertificate(certificate *certificateInfo) interface{} {
 
 	err := utils.MkdirForFile(certificatePath, 0755)
 	utils.PanicOnError(err)
-	err = ioutil.WriteFile(certificatePath, []byte(certificate.Certificate), 0755)
+	err = os.WriteFile(certificatePath, certificate, 0755)
 	utils.PanicOnError(err)
 
 	return nil
@@ -2209,4 +2225,5 @@ func LbEntryPoint() {
 	server.RegisterAsyncCommandHandler(DELETE_LB_PATH, server.VyosLock(deleteLb))
 	server.RegisterAsyncCommandHandler(CREATE_CERTIFICATE_PATH, server.VyosLock(createCertificateHandler))
 	server.RegisterAsyncCommandHandler(DELETE_CERTIFICATE_PATH, server.VyosLock(deleteCertificateHandler))
+	server.RegisterAsyncCommandHandler(CREATE_CERTIFICATES_PATH, server.VyosLock(createCertificatesHandler))
 }
