@@ -287,7 +287,7 @@ func getKeepAlivedStatusTask() {
 
 					if newHaStatus == KeepAlivedStatus_Backup {
 						upNics := NonManagementUpNics()
-						if len(upNics) > 0 {
+						if len(upNics) > 0 && !utils.IsSLB() {
 							log.Warnf("nic %s is up when keepalived state is backup", upNics)
 							server.VyosLockInterface(callStatusChangeScripts)()
 						}
