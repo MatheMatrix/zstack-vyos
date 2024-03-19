@@ -3,8 +3,9 @@ package plugin
 import (
 	"fmt"
 
-	log "github.com/sirupsen/logrus"
 	"zstack-vyos/utils"
+
+	log "github.com/sirupsen/logrus"
 )
 
 func configureNicByLinux(nicList []utils.NicInfo) interface{} {
@@ -22,7 +23,7 @@ func configureNicByLinux(nicList []utils.NicInfo) interface{} {
 		utils.PanicOnError(err)
 		utils.SetNicOption(nicname)
 		/* avoid both master and backup interface up when add nic */
-		if !IsMaster() {
+		if !IsMaster() && !utils.IsSLB() { /* slb don't need set interface down */
 			log.Debugf("set interface %s down", nicname)
 			err := utils.IpLinkSetDown(nicname)
 			utils.Assertf(err == nil, "IpLinkSetDown[%s] error: %+v", nicname, err)

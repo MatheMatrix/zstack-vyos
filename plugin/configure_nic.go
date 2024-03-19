@@ -4,10 +4,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/pkg/errors"
-	log "github.com/sirupsen/logrus"
 	"zstack-vyos/server"
 	"zstack-vyos/utils"
+
+	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -358,7 +359,7 @@ func configureNicByVyos(nicList []utils.NicInfo) interface{} {
 			tree.Setf("interfaces ethernet %s description '%s'", nicname, makeAlias(nic))
 		}
 
-		if !IsMaster() {
+		if !IsMaster() && !utils.IsSLB() { /* slb don't need interface down */
 			tree.Setf("interfaces ethernet %s disable", nicname)
 		}
 		tree.Apply(false)

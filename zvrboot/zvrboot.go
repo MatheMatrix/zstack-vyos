@@ -403,7 +403,7 @@ func configureVyos() {
 	}
 
 	setNicTree := server.NewParserFromShowConfiguration().Tree
-	if haStatus != utils.NOHA {
+	if haStatus != utils.NOHA && !utils.IsSLB() {
 		/* for vpc ha router, set interface down, it will be up when ha selection is finished */
 		for _, nic := range nics {
 			if nic.name != "eth0" {
