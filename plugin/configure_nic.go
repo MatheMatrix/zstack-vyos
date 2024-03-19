@@ -646,6 +646,10 @@ func ConfigureNicEntryPoint() {
 	nicIps := utils.GetBootStrapNicInfo()
 	for _, nic := range nicIps {
 		nicsMap[nic.Name] = nic
+		if (utils.IsSLB()) {
+			/* fix http://jira.zstack.io/browse/ZSTAC-64193 */
+			utils.IpLinkSetUp(nic.Name)
+		}
 	}
 
 	server.RegisterAsyncCommandHandler(VR_CONFIGURE_NIC, server.VyosLock(configureNicHandler))
