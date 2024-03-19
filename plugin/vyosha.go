@@ -2,12 +2,13 @@ package plugin
 
 import (
 	"fmt"
-	"io/ioutil"
 	"strconv"
 	"strings"
 	"time"
 	"zstack-vyos/server"
 	"zstack-vyos/utils"
+
+	"os"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -152,11 +153,16 @@ func setVyosHa(cmd *setVyosHaCmd) interface{} {
 	utils.PanicOnError(err)
 
 	keepalivedConf := NewKeepalivedConf(heartbeatNicNme, cmd.LocalIp, cmd.PeerIp, cmd.Monitors, cmd.Keepalive, pairs)
+	keepalivedConf.BuildCheckScript()
 	if utils.IsSLB() {
+		knc := KeepalivedNotify {
+			VrUuid: utils.GetVirtualRouterUuid(),
+		}
+		knc.CreateSlbMasterScript()
+		knc.CreateSlbBackupScript()
 		keepalivedConf.BuildSlbConf()
 	} else {
-		keepalivedConf.BuildCheckScript()
-	    keepalivedConf.BuildConf()
+		keepalivedConf.BuildConf()
 	}
 	newCheckSum, err := getFileChecksum(KeepalivedConfigFile)
 	utils.PanicOnError(err)
@@ -245,7 +251,7 @@ func NonManagementUpNics() []string {
 
 		if strings.Contains(nic.Name, "eth") {
 			path := fmt.Sprintf("/sys/class/net/%s/operstate", nic.Name)
-			operstate, err := ioutil.ReadFile(path)
+			operstate, err := os.ReadFile(path)
 			if err != nil {
 				continue
 			}
@@ -340,6 +346,10 @@ type vyosNicVipPairs struct {
 }
 
 func generateNotityScripts() {
+	if utils.IsSLB(){
+		/* slb don't need such script */
+		return
+	}
 	/* only vip on management nic will be added in master script and will be deleted in backup script */
 	mgmtVip := []nicVipPair{}
 	for _, p := range haVipPairs.pairs {

@@ -15,6 +15,8 @@ import (
 	"zstack-vyos/server"
 	"zstack-vyos/utils"
 
+	"io/fs"
+
 	log "github.com/sirupsen/logrus"
 )
 
@@ -171,10 +173,16 @@ sudo ip link set up dev {{$name}} || true
 #(/bin/bash {{.PrimaryBackupScript}} primary) &
 
 #notify Mn node
-(curl -H "Content-Type: application/json" -H "commandpath: /vpc/hastatus" -X POST -d '{"virtualRouterUuid": "{{.VrUuid}}", "haStatus":"Master"}' {{.CallBackUrl}}) &
+(curl -A "zstack zvr" -H "Content-Type: application/json" -H "commandpath: /vpc/hastatus" -X POST -d '{"virtualRouterUuid": "{{.VrUuid}}", "haStatus":"Master"}' {{.CallBackUrl}}) &
 
 #this is for debug
 ip add
+`
+
+const tKeepalivedNotifySlbMaster = `#!/bin/sh
+# This file is auto-generated, DO NOT EDIT! DO NOT EDIT!! DO NOT EDIT!!!
+#notify Mn node
+(curl -A "zstack zvr" -H "Content-Type: application/json" -H "commandpath: /vpc/hastatus" -X POST -d '{"virtualRouterUuid": "{{.VrUuid}}", "haStatus":"Master"}' {{.CallBackUrl}}) &
 `
 
 const tKeepalivedNotifyBackup = `#!/bin/sh
@@ -194,9 +202,15 @@ sudo ip add del {{.Vip}}/{{.Prefix}} dev {{.NicName}} || true
 sudo ip link set down dev {{$name}} || true
 {{ end }}
 #notify Mn node
-(curl -H "Content-Type: application/json" -H "commandpath: /vpc/hastatus" -X POST -d '{"virtualRouterUuid": "{{.VrUuid}}", "haStatus":"Backup"}' {{.CallBackUrl}}) &
+(curl  -A "zstack zvr" -H "Content-Type: application/json" -H "commandpath: /vpc/hastatus" -X POST -d '{"virtualRouterUuid": "{{.VrUuid}}", "haStatus":"Backup"}' {{.CallBackUrl}}) &
 #this is for debug
 ip add
+`
+
+const tKeepalivedNotifySLbBackup = `#!/bin/sh
+# This file is auto-generated, DO NOT EDIT! DO NOT EDIT!! DO NOT EDIT!!!
+#notify Mn node
+(curl -A "zstack zvr" -H "Content-Type: application/json" -H "commandpath: /vpc/hastatus" -X POST -d '{"virtualRouterUuid": "{{.VrUuid}}", "haStatus":"Backup"}' {{.CallBackUrl}}) &
 `
 
 func NewKeepalivedNotifyConf(vyosHaVips, mgmtVips []nicVipPair) *KeepalivedNotify {
@@ -317,6 +331,44 @@ func (k *KeepalivedNotify) CreateBackupScript() error {
 	return nil
 }
 
+func (k *KeepalivedNotify) CreateSlbMasterScript() error {
+	tmpl, err := template.New("master.conf").Parse(tKeepalivedNotifySlbMaster)
+	utils.PanicOnError(err)
+
+	var buf bytes.Buffer
+	err = tmpl.Execute(&buf, k)
+	utils.PanicOnError(err)
+
+	err = os.WriteFile(KeepalivedScriptNotifyMaster, buf.Bytes(), 0755)
+	utils.PanicOnError(err)
+
+	log.Debugf("%s: %s", KeepalivedScriptNotifyMaster, buf.String())
+
+	return nil
+}
+
+func (k *KeepalivedNotify) CreateSlbBackupScript() error {
+	err := os.WriteFile(ConntrackScriptPrimaryBackup, []byte(primaryBackupScript), 0750)
+	utils.PanicOnError(err)
+
+	tmpl, err := template.New("backup.conf").Parse(tKeepalivedNotifySLbBackup)
+	utils.PanicOnError(err)
+	if err != nil {
+		return err
+	}
+
+	var buf bytes.Buffer
+	err = tmpl.Execute(&buf, k)
+	utils.PanicOnError(err)
+
+	err = os.WriteFile(KeepalivedScriptNotifyBackup, buf.Bytes(), 0755)
+	utils.PanicOnError(err)
+
+	log.Debugf("%s: %s", KeepalivedScriptNotifyBackup, buf.String())
+
+	return nil
+}
+
 type KeepalivedConf struct {
 	HeartBeatNic        string
 	Interval            int
@@ -327,7 +379,7 @@ type KeepalivedConf struct {
 	BackupScript        string
 	ScriptPath          string
 	PrimaryBackupScript string
-	Vips               []nicVipPair
+	Vips                []nicVipPair
 }
 
 func NewKeepalivedConf(hearbeatNic, LocalIp, PeerIp string, MonitorIps []string, Interval int, vips []nicVipPair) *KeepalivedConf {
@@ -341,7 +393,7 @@ func NewKeepalivedConf(hearbeatNic, LocalIp, PeerIp string, MonitorIps []string,
 		BackupScript:        KeepalivedScriptNotifyBackup,
 		ScriptPath:          KeepalivedScriptPath,
 		PrimaryBackupScript: ConntrackScriptPrimaryBackup,
-		Vips: 	vips,
+		Vips:                vips,
 	}
 
 	return kc
@@ -494,6 +546,9 @@ vrrp_instance vyos-ha {
             {{.Vip}}/{{.Prefix}}
 {{ end }}
 	}
+
+	notify_master "{{.MasterScript}} MASTER"
+	notify_backup "{{.BackupScript}} BACKUP"
 }
 `
 
@@ -503,13 +558,13 @@ sudo /usr/bin/pgrep -u %s -f %s > /dev/null
 `
 	zvr_bin := filepath.Join(utils.GetThirdPartyBinPath(), "zvr")
 	check_zvr := fmt.Sprintf(check_zvr_tmp, utils.GetZvrUser(), zvr_bin)
-	err := ioutil.WriteFile(KeepalivedScriptPath+"check_zvr.sh", []byte(check_zvr), 0644)
+	err := os.WriteFile(KeepalivedScriptPath+"check_zvr.sh", []byte(check_zvr), fs.FileMode(0644))
 	utils.PanicOnError(err)
 
 	for _, ip := range k.MonitorIps {
 		check_monitor := fmt.Sprintf("#! /bin/bash\nsudo /bin/ping %s -w 1 -c 1 > /dev/null", ip)
 		script_name := fmt.Sprintf("check_monitor_%s.sh", ip)
-		err := ioutil.WriteFile(KeepalivedScriptPath+script_name, []byte(check_monitor), 0644)
+		err := os.WriteFile(KeepalivedScriptPath+script_name, []byte(check_monitor), 0644)
 		utils.PanicOnError(err)
 	}
 	return nil
