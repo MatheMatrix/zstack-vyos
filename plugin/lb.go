@@ -816,6 +816,10 @@ func (this *HaproxyListener) postActionListenerServiceStart() (err error) {
 	nicname, err := utils.GetNicNameByMac(this.lb.PublicNic)
 	utils.PanicOnError(err)
 	if utils.IsSkipVyosIptables() {
+		if this.lb.Vip == "" {
+			/* TODO: add ipv6 tables */
+			return nil
+		}
 		table := utils.NewIpTables(utils.FirewallTable)
 		rule, _ := this.getSynIptablesRule()
 		table.RemoveIpTableRule([]*utils.IpTableRule{rule})
@@ -906,9 +910,15 @@ func (this *HaproxyListener) stopListenerService() (err error) {
 		err = nil
 	}
 
-	t := utils.ConnectionTrackTuple{IsNat: false, IsDst: true, Ip: this.lb.Vip, Protocol: "tcp",
-		PortStart: this.lb.LoadBalancerPort, PortEnd: this.lb.LoadBalancerPort}
-	t.CleanConnTrackConnection()
+	if this.lb.Vip != "" {
+		t := utils.ConnectionTrackTuple{IsNat: false, IsDst: true, Ip: this.lb.Vip, Protocol: "tcp",
+			PortStart: this.lb.LoadBalancerPort, PortEnd: this.lb.LoadBalancerPort}
+		t.CleanConnTrackConnection()
+	} else {
+		t := utils.ConnectionTrackTuple{IsNat: false, IsDst: true, Ip: this.lb.Vip6, Protocol: "tcp",
+			PortStart: this.lb.LoadBalancerPort, PortEnd: this.lb.LoadBalancerPort}
+		t.CleanConnTrackConnection()
+	}
 
 	return err
 }
@@ -928,7 +938,8 @@ func (this *HaproxyListener) postActionListenerServiceStop() (ret int, err error
 		}
 		cleanInternalFirewallRule(tree, this.firewallDes)
 		tree.Apply(false)
-	} else {
+	} else if (this.lb.Vip != "" ) {
+		/* TODO add ip6 tables */
 		table := utils.NewIpTables(utils.FirewallTable)
 		var rules []*utils.IpTableRule
 		r, _ := this.getIptablesRule()
@@ -982,6 +993,11 @@ func (this *HaproxyListener) postActionListenerServiceStop() (ret int, err error
 func (this *HaproxyListener) getIptablesRule() ([]*utils.IpTableRule, string) {
 	nicname, err := utils.GetNicNameByMac(this.lb.PublicNic)
 	utils.PanicOnError(err)
+	
+	if (this.lb.Vip == "" ) {
+		return []*utils.IpTableRule{}, nicname
+	}
+
 	rule := utils.NewIpTableRule(utils.GetRuleSetName(nicname, utils.RULESET_LOCAL))
 	rule.SetAction(utils.IPTABLES_ACTION_RETURN).SetComment(utils.LbRuleComment)
 	rule.SetProto(utils.IPTABLES_PROTO_TCP).SetDstPort(fmt.Sprintf("%d", this.lb.LoadBalancerPort)).SetDstIp(this.lb.Vip + "/32")
@@ -1003,6 +1019,7 @@ func (this *HaproxyListener) getIcmpIptablesRule() ([]*utils.IpTableRule, string
 func (this *HaproxyListener) getSynIptablesRule() (*utils.IpTableRule, string) {
 	nicname, err := utils.GetNicNameByMac(this.lb.PublicNic)
 	utils.PanicOnError(err)
+
 	rule := utils.NewIpTableRule(utils.GetRuleSetName(nicname, utils.RULESET_LOCAL))
 	rule.SetAction(utils.IPTABLES_ACTION_DROP).SetComment(utils.LbRuleComment)
 	rule.SetDstIp(this.lb.Vip + "/32").SetProto(utils.IPTABLES_PROTO_TCP).SetDstPort(fmt.Sprintf("%d", this.lb.LoadBalancerPort))
@@ -1304,6 +1321,9 @@ func (this *GBListener) getIcmpIptablesRule() ([]*utils.IpTableRule, string) {
 
 func (this *GBListener) postActionListenerServiceStart() (err error) {
 	if utils.IsSkipVyosIptables() {
+		if (this.lb.Vip == "" ) { /* TODO: add ip6 tables */
+			return nil;
+		}
 		table := utils.NewIpTables(utils.FirewallTable)
 
 		rules, _ := this.getIptablesRule()
@@ -1375,7 +1395,7 @@ func (this *GBListener) getIptablesRule() ([]*utils.IpTableRule, string) {
 	nicname, err := utils.GetNicNameByMac(this.lb.PublicNic)
 	utils.PanicOnError(err)
 	var rules []*utils.IpTableRule
-
+		
 	rule := utils.NewIpTableRule(utils.GetRuleSetName(nicname, utils.RULESET_LOCAL))
 	rule.SetAction(utils.IPTABLES_ACTION_ACCEPT).SetComment(utils.LbRuleComment)
 	rule.SetDstPort(this.apiPort).SetProto(utils.IPTABLES_PROTO_TCP)
@@ -1427,7 +1447,7 @@ func (this *GBListener) postActionListenerServiceStop() (ret int, err error) {
 		}
 		cleanInternalFirewallRule(tree, this.firewallDes)
 		tree.Apply(false)
-	} else {
+	} else if (this.lb.Vip != "" ) {
 		table := utils.NewIpTables(utils.FirewallTable)
 		rules, _ := this.getIptablesRule()
 		table.RemoveIpTableRule(rules)

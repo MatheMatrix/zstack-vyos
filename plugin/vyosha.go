@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 	"time"
@@ -34,6 +35,7 @@ type macVipPair struct {
 	NicVip   string `json:"nicVip"`
 	Netmask  string `json:"netmask"`
 	Category string `json:"category"`
+	PrefixLen int `json:"prefixLen"`
 }
 
 var (
@@ -65,16 +67,20 @@ func setVyosHa(cmd *setVyosHaCmd) interface{} {
 		table := utils.NewIpTables(utils.FirewallTable)
 		var rules []*utils.IpTableRule
 
-		rule := utils.NewIpTableRule(utils.GetRuleSetName(heartbeatNicNme, utils.RULESET_LOCAL))
-		rule.SetAction(utils.IPTABLES_ACTION_ACCEPT).SetComment(utils.SystemTopRule)
-		rule.SetProto(utils.IPTABLES_PROTO_VRRP).SetSrcIp(cmd.PeerIp + "/32")
-		rules = append(rules, rule)
+		parsedIP := net.ParseIP(cmd.PeerIp)
+		/* todo: we need ip6tables */
+		if parsedIP != nil && parsedIP.To4() != nil{
+			rule := utils.NewIpTableRule(utils.GetRuleSetName(heartbeatNicNme, utils.RULESET_LOCAL))
+			rule.SetAction(utils.IPTABLES_ACTION_ACCEPT).SetComment(utils.SystemTopRule)
+			rule.SetProto(utils.IPTABLES_PROTO_VRRP).SetSrcIp(cmd.PeerIp + "/32")
+			rules = append(rules, rule)
 
-		rule = utils.NewIpTableRule(utils.GetRuleSetName(heartbeatNicNme, utils.RULESET_LOCAL))
-		rule.SetAction(utils.IPTABLES_ACTION_ACCEPT).SetComment(utils.SystemTopRule)
-		rule.SetProto(utils.IPTABLES_PROTO_UDP).SetSrcIp(cmd.PeerIp + "/32").SetDstPort("3780")
-		rules = append(rules, rule)
-		table.AddIpTableRules(rules)
+			rule = utils.NewIpTableRule(utils.GetRuleSetName(heartbeatNicNme, utils.RULESET_LOCAL))
+			rule.SetAction(utils.IPTABLES_ACTION_ACCEPT).SetComment(utils.SystemTopRule)
+			rule.SetProto(utils.IPTABLES_PROTO_UDP).SetSrcIp(cmd.PeerIp + "/32").SetDstPort("3780")
+			rules = append(rules, rule)
+			table.AddIpTableRules(rules)
+		}
 
 		if err := table.Apply(); err != nil {
 			log.Debugf("apply vrrp firewall table failed")
@@ -82,7 +88,7 @@ func setVyosHa(cmd *setVyosHaCmd) interface{} {
 		}
 
 		natTable := utils.NewIpTables(utils.NatTable)
-		rule = utils.NewIpTableRule(utils.RULESET_SNAT.String())
+		rule := utils.NewIpTableRule(utils.RULESET_SNAT.String())
 		rule.SetAction(utils.IPTABLES_ACTION_RETURN).SetComment(utils.SystemTopRule)
 		rule.SetProto(utils.IPTABLES_PROTO_VRRP)
 		natTable.AddIpTableRules([]*utils.IpTableRule{rule})
@@ -129,9 +135,13 @@ func setVyosHa(cmd *setVyosHaCmd) interface{} {
 	for _, p := range cmd.Vips {
 		nicname, err := utils.GetNicNameByMac(p.NicMac)
 		utils.PanicOnError(err)
-		cidr, err := utils.NetmaskToCIDR(p.Netmask)
-		utils.PanicOnError(err)
-		pairs = append(pairs, nicVipPair{NicName: nicname, Vip: p.NicVip, Prefix: cidr})
+		prefix := p.PrefixLen
+		parsedIP := net.ParseIP(p.NicVip)
+		if parsedIP != nil && parsedIP.To4() != nil{
+			prefix, err = utils.NetmaskToCIDR(p.Netmask)
+			utils.PanicOnError(err)
+		}
+		pairs = append(pairs, nicVipPair{NicName: nicname, Vip: p.NicVip, Prefix: prefix})
 
 		/* if vip is same to nic Ip, there is no need to add firewall again */
 		if nicIp := getNicIp(nicname); nicIp == p.NicVip {
