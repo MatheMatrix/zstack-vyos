@@ -233,7 +233,7 @@ func configureNicFirewall(nics []utils.NicInfo) {
 
 			parsedIP := net.ParseIP(nic.Ip)
 			/* todo: we need ip6tables */
-			if parsedIP != nil && parsedIP.To16() != nil{
+			if parsedIP != nil && parsedIP.To16() == nil{
 				continue
 			}
 
