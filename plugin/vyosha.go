@@ -24,18 +24,20 @@ type setVyosHaCmd struct {
 	Keepalive    int          `json:"keepalive"`
 	HeartbeatNic string       `json:"heartbeatNic"`
 	LocalIp      string       `json:"localIp"`
+	LocalIpV6    string       `json:"localIpV6"`
 	PeerIp       string       `json:"peerIp"`
+	PeerIpV6     string       `json:"peerIpV6"`
 	Monitors     []string     `json:"monitors"`
 	Vips         []macVipPair `json:"vips"`
 	CallbackUrl  string       `json:"callbackUrl"`
 }
 
 type macVipPair struct {
-	NicMac   string `json:"nicMac"`
-	NicVip   string `json:"nicVip"`
-	Netmask  string `json:"netmask"`
-	Category string `json:"category"`
-	PrefixLen int `json:"prefixLen"`
+	NicMac    string `json:"nicMac"`
+	NicVip    string `json:"nicVip"`
+	Netmask   string `json:"netmask"`
+	Category  string `json:"category"`
+	PrefixLen int    `json:"prefixLen"`
 }
 
 var (
@@ -69,7 +71,7 @@ func setVyosHa(cmd *setVyosHaCmd) interface{} {
 
 		parsedIP := net.ParseIP(cmd.PeerIp)
 		/* todo: we need ip6tables */
-		if parsedIP != nil && parsedIP.To4() != nil{
+		if parsedIP != nil && parsedIP.To4() != nil {
 			rule := utils.NewIpTableRule(utils.GetRuleSetName(heartbeatNicNme, utils.RULESET_LOCAL))
 			rule.SetAction(utils.IPTABLES_ACTION_ACCEPT).SetComment(utils.SystemTopRule)
 			rule.SetProto(utils.IPTABLES_PROTO_VRRP).SetSrcIp(cmd.PeerIp + "/32")
@@ -137,7 +139,7 @@ func setVyosHa(cmd *setVyosHaCmd) interface{} {
 		utils.PanicOnError(err)
 		prefix := p.PrefixLen
 		parsedIP := net.ParseIP(p.NicVip)
-		if parsedIP != nil && parsedIP.To4() != nil{
+		if parsedIP != nil && parsedIP.To4() != nil {
 			prefix, err = utils.NetmaskToCIDR(p.Netmask)
 			utils.PanicOnError(err)
 		}
@@ -162,10 +164,10 @@ func setVyosHa(cmd *setVyosHaCmd) interface{} {
 	checksum, err := getFileChecksum(KeepalivedConfigFile)
 	utils.PanicOnError(err)
 
-	keepalivedConf := NewKeepalivedConf(heartbeatNicNme, cmd.LocalIp, cmd.PeerIp, cmd.Monitors, cmd.Keepalive, pairs)
+	keepalivedConf := NewKeepalivedConf(heartbeatNicNme, cmd.LocalIp, cmd.LocalIpV6, cmd.PeerIp, cmd.PeerIpV6, cmd.Monitors, cmd.Keepalive, pairs)
 	keepalivedConf.BuildCheckScript()
 	if utils.IsSLB() {
-		knc := KeepalivedNotify {
+		knc := KeepalivedNotify{
 			VrUuid: utils.GetVirtualRouterUuid(),
 		}
 		knc.CreateSlbMasterScript()
@@ -356,7 +358,7 @@ type vyosNicVipPairs struct {
 }
 
 func generateNotityScripts() {
-	if utils.IsSLB(){
+	if utils.IsSLB() {
 		/* slb don't need such script */
 		return
 	}
