@@ -72,7 +72,7 @@ func addSecondaryIpFirewall(nicname, ip string, tree *server.VyosConfigTree) {
 	if utils.IsSkipVyosIptables() {
 		parsedIP := net.ParseIP(ip)
 		/* todo: we need ip6tables */
-		if parsedIP != nil && parsedIP.To16() != nil{
+		if parsedIP != nil && parsedIP.To16() != nil {
 			return
 		}
 		rule := utils.NewIpTableRule(utils.GetRuleSetName(nicname, utils.RULESET_LOCAL))
@@ -231,9 +231,8 @@ func configureNicFirewall(nics []utils.NicInfo) {
 		for _, nic := range nics {
 			nicname, _ := utils.GetNicNameByMac(nic.Mac)
 
-			parsedIP := net.ParseIP(nic.Ip)
 			/* todo: we need ip6tables */
-			if parsedIP != nil && parsedIP.To16() == nil{
+			if !utils.IsIpv4Address(nic.Ip) {
 				continue
 			}
 
@@ -659,7 +658,7 @@ func ConfigureNicEntryPoint() {
 	nicIps := utils.GetBootStrapNicInfo()
 	for _, nic := range nicIps {
 		nicsMap[nic.Name] = nic
-		if (utils.IsSLB()) {
+		if utils.IsSLB() {
 			/* fix http://jira.zstack.io/browse/ZSTAC-64193 */
 			utils.IpLinkSetUp(nic.Name)
 		}
