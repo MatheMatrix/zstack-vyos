@@ -2,7 +2,6 @@ package plugin
 
 import (
 	"fmt"
-	"net"
 	"strings"
 
 	"zstack-vyos/server"
@@ -70,11 +69,11 @@ func makeNicFirewallDescription(nicname, ip string) string {
 
 func addSecondaryIpFirewall(nicname, ip string, tree *server.VyosConfigTree) {
 	if utils.IsSkipVyosIptables() {
-		parsedIP := net.ParseIP(ip)
 		/* todo: we need ip6tables */
-		if parsedIP != nil && parsedIP.To16() != nil{
+		if !utils.IsIpv4Address(ip) {
 			return
 		}
+
 		rule := utils.NewIpTableRule(utils.GetRuleSetName(nicname, utils.RULESET_LOCAL))
 		rule.SetComment(utils.SystemTopRule).SetAction(utils.IPTABLES_ACTION_ACCEPT)
 		rule.SetDstIp(ip + "/32").SetState([]string{utils.IPTABLES_STATE_RELATED, utils.IPTABLES_STATE_ESTABLISHED})
@@ -231,9 +230,8 @@ func configureNicFirewall(nics []utils.NicInfo) {
 		for _, nic := range nics {
 			nicname, _ := utils.GetNicNameByMac(nic.Mac)
 
-			parsedIP := net.ParseIP(nic.Ip)
 			/* todo: we need ip6tables */
-			if parsedIP != nil && parsedIP.To16() == nil{
+			if !utils.IsIpv4Address(nic.Ip) {
 				continue
 			}
 
@@ -659,7 +657,7 @@ func ConfigureNicEntryPoint() {
 	nicIps := utils.GetBootStrapNicInfo()
 	for _, nic := range nicIps {
 		nicsMap[nic.Name] = nic
-		if (utils.IsSLB()) {
+		if utils.IsSLB() {
 			/* fix http://jira.zstack.io/browse/ZSTAC-64193 */
 			utils.IpLinkSetUp(nic.Name)
 		}
