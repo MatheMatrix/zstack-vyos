@@ -622,6 +622,12 @@ func (rules *interfaceQosRules) InterfaceQosRuleAddRule(rule *qosRule) interface
 		rules.classIdMap[classId] = []string{rule.ip}
 		if rule.sharedQosUuid != "" {
 			rules.sharedClassIdMap[rule.sharedQosUuid] = classId
+			if oldVipRules, vipOk := rules.rules[rule.ip]; vipOk {
+				log.Debugf("Deleting old rules for IP %s due to new sharedQosUuid", rule.ip)
+				for _, oldRule := range oldVipRules.portRules {
+					rules.InterfaceQosRuleDelRule(*oldRule)
+				}
+			}
 		}
 	}
 	rule.AddRule(name, rules.direct)
