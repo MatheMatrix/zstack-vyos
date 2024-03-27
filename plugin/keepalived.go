@@ -374,26 +374,40 @@ type KeepalivedConf struct {
 	Interval            int
 	MonitorIps          []string
 	LocalIp             string
+	LocalIpV4           string
 	PeerIp              string
+	PeerIpV6            string
 	MasterScript        string
 	BackupScript        string
 	ScriptPath          string
 	PrimaryBackupScript string
 	Vips                []nicVipPair
+	VipV4               *nicVipPair
+	VipV6               *nicVipPair
 }
 
-func NewKeepalivedConf(hearbeatNic, LocalIp, PeerIp string, MonitorIps []string, Interval int, vips []nicVipPair) *KeepalivedConf {
+func NewKeepalivedConf(hearbeatNic, LocalIp, LocalIpV6, PeerIp, PeerIpV6 string, MonitorIps []string, Interval int, vips []nicVipPair) *KeepalivedConf {
+	var vipV4, vipV6 *nicVipPair
+	if len(vips) == 2 {
+		vipV4 = &vips[0]
+		vipV6 = &vips[1]
+	}
+
 	kc := &KeepalivedConf{
 		HeartBeatNic:        hearbeatNic,
 		Interval:            Interval,
 		MonitorIps:          MonitorIps,
 		LocalIp:             LocalIp,
+		LocalIpV4:           LocalIpV6,
 		PeerIp:              PeerIp,
+		PeerIpV6:            PeerIpV6,
 		MasterScript:        KeepalivedScriptNotifyMaster,
 		BackupScript:        KeepalivedScriptNotifyBackup,
 		ScriptPath:          KeepalivedScriptPath,
 		PrimaryBackupScript: ConntrackScriptPrimaryBackup,
 		Vips:                vips,
+		VipV4:               vipV4,
+		VipV6:               vipV6,
 	}
 
 	return kc
@@ -545,6 +559,92 @@ vrrp_instance vyos-ha {
 {{ range .Vips }}
             {{.Vip}}/{{.Prefix}}
 {{ end }}
+	}
+
+	notify_master "{{.MasterScript}} MASTER"
+	notify_backup "{{.BackupScript}} BACKUP"
+}
+`
+
+const tKeepalivedSlbDualStackConf = `# This file is auto-generated, edit with caution!
+global_defs {
+	vrrp_garp_master_refresh 60
+	vrrp_check_unicast_src
+	script_user root
+}
+
+vrrp_script monitor_zvr {
+       script "{{.ScriptPath}}/check_zvr.sh"        # cheaper than pidof
+       interval 2                      # check every 2 seconds
+       fall 2                          # require 2 failures for KO
+       rise 2                          # require 2 successes for OK
+}
+
+{{ range .MonitorIps }}
+vrrp_script monitor_{{.}} {
+	script "{{$.ScriptPath}}/check_monitor_{{.}}.sh"
+	interval 2
+	weight -2
+	fall 3
+	rise 3
+}
+{{ end }}
+
+vrrp_sync_group vyos_group {
+	group {
+	  vyos-ha
+	  vyos-ha-v6
+	}
+  }
+
+vrrp_instance vyos-ha {
+	state BACKUP
+	interface {{.HeartBeatNic}}
+	virtual_router_id 50
+	priority 100
+	advert_int {{.Interval}}
+	nopreempt
+
+	unicast_src_ip {{.LocalIp}}
+	unicast_peer {
+		{{.PeerIp}}
+	}
+
+	track_script {
+		monitor_zvr
+{{ range .MonitorIps }}
+                monitor_{{.}}
+{{ end }}
+	}
+	virtual_ipaddress {
+            {{.VipV4}}/{{.VipV4.Prefix}}
+	}
+
+	notify_master "{{.MasterScript}} MASTER"
+	notify_backup "{{.BackupScript}} BACKUP"
+}
+
+vrrp_instance vyos-ha-v6 {
+	state BACKUP
+	interface {{.HeartBeatNic}}
+	virtual_router_id 50
+	priority 100
+	advert_int {{.Interval}}
+	nopreempt
+
+	unicast_src_ip {{.LocalIpV6}}
+	unicast_peer {
+		{{.PeerIpV6}}
+	}
+
+	track_script {
+		monitor_zvr
+{{ range .MonitorIps }}
+                monitor_{{.}}
+{{ end }}
+	}
+	virtual_ipaddress {
+            {{.VipV6}}/{{.VipV6.Prefix}}
 	}
 
 	notify_master "{{.MasterScript}} MASTER"
@@ -817,7 +917,13 @@ func KeepalivedEntryPoint() {
 }
 
 func (k *KeepalivedConf) BuildSlbConf() error {
-	tmpl, err := template.New("keepalived.conf").Parse(tKeepalivedSlbConf)
+	var tmpl *template.Template
+	var err error
+	if len(k.Vips) == 2 {
+		tmpl, err = template.New("keepalived.conf").Parse(tKeepalivedSlbDualStackConf)
+	} else {
+		tmpl, err = template.New("keepalived.conf").Parse(tKeepalivedSlbConf)
+	}
 	utils.PanicOnError(err)
 
 	var buf bytes.Buffer
