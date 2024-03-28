@@ -374,7 +374,7 @@ type KeepalivedConf struct {
 	Interval            int
 	MonitorIps          []string
 	LocalIp             string
-	LocalIpV4           string
+	LocalIpV6           string
 	PeerIp              string
 	PeerIpV6            string
 	MasterScript        string
@@ -398,7 +398,7 @@ func NewKeepalivedConf(hearbeatNic, LocalIp, LocalIpV6, PeerIp, PeerIpV6 string,
 		Interval:            Interval,
 		MonitorIps:          MonitorIps,
 		LocalIp:             LocalIp,
-		LocalIpV4:           LocalIpV6,
+		LocalIpV6:           LocalIpV6,
 		PeerIp:              PeerIp,
 		PeerIpV6:            PeerIpV6,
 		MasterScript:        KeepalivedScriptNotifyMaster,
@@ -617,7 +617,7 @@ vrrp_instance vyos-ha {
 {{ end }}
 	}
 	virtual_ipaddress {
-            {{.VipV4}}/{{.VipV4.Prefix}}
+            {{.VipV4.Vip}}/{{.VipV4.Prefix}}
 	}
 
 	notify_master "{{.MasterScript}} MASTER"
@@ -644,7 +644,7 @@ vrrp_instance vyos-ha-v6 {
 {{ end }}
 	}
 	virtual_ipaddress {
-            {{.VipV6}}/{{.VipV6.Prefix}}
+            {{.VipV6.Vip}}/{{.VipV6.Prefix}}
 	}
 
 	notify_master "{{.MasterScript}} MASTER"
