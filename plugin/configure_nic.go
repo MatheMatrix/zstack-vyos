@@ -230,11 +230,6 @@ func configureNicFirewall(nics []utils.NicInfo) {
 		for _, nic := range nics {
 			nicname, _ := utils.GetNicNameByMac(nic.Mac)
 
-			/* todo: we need ip6tables */
-			if !utils.IsIpv4Address(nic.Ip) {
-				continue
-			}
-
 			if nic.Category == "Private" {
 				err := utils.InitNicFirewall(nicname, nic.Ip, false, utils.IPTABLES_ACTION_REJECT)
 				utils.PanicOnError(err)
