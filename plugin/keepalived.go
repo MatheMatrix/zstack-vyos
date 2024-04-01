@@ -658,13 +658,13 @@ sudo /usr/bin/pgrep -u %s -f %s > /dev/null
 `
 	zvr_bin := filepath.Join(utils.GetThirdPartyBinPath(), "zvr")
 	check_zvr := fmt.Sprintf(check_zvr_tmp, utils.GetZvrUser(), zvr_bin)
-	err := os.WriteFile(KeepalivedScriptPath+"check_zvr.sh", []byte(check_zvr), fs.FileMode(0644))
+	err := os.WriteFile(filepath.Join(KeepalivedScriptPath, "check_zvr.sh"), []byte(check_zvr), fs.FileMode(0644))
 	utils.PanicOnError(err)
 
 	for _, ip := range k.MonitorIps {
 		check_monitor := fmt.Sprintf("#! /bin/bash\nsudo /bin/ping %s -w 1 -c 1 > /dev/null", ip)
-		script_name := fmt.Sprintf("check_monitor_%s.sh", ip)
-		err := os.WriteFile(KeepalivedScriptPath+script_name, []byte(check_monitor), 0644)
+		script_name := fmt.Sprintf("/check_monitor_%s.sh", ip)
+		err := os.WriteFile(filepath.Join(KeepalivedScriptPath, script_name), []byte(check_monitor), 0644)
 		utils.PanicOnError(err)
 	}
 	return nil
