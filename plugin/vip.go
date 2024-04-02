@@ -579,6 +579,19 @@ func (rules *interfaceQosRules) InterfaceQosRuleAddRule(rule *qosRule) interface
 			log.Debugf("Deleting old rules for IP %s due to new sharedQosUuid", rule.ip)
 			for _, oldRule := range oldVipRules.portRules {
 				rules.InterfaceQosRuleDelRule(*oldRule)
+				/* all rules of interface has been deleted */
+				if len(rules.rules) == 0 {
+					rules.InterfaceQosRuleInit(rules.direct)
+				}
+				log.Debugf("AddRuleToInterface create map for ip %s", rule.ip)
+				if len(rules.rules) >= TC_MAX_FILTER {
+					utils.PanicOnError(fmt.Errorf("VipQos Reach the max number %d of interface %s ifbname %s",
+						TC_MAX_FILTER, rules.name, rules.ifbName))
+				}
+				prioId := rules.prioBitMap.FindFirstAvailable()
+				rules.prioBitMap.AddNumber(prioId)
+				rules.rules[rule.ip] = newVipQosRules(make(map[uint16]*qosRule), rule.ip, prioId, rule.vipUuid)
+				rules.rules[rule.ip].VipQosRulesInit(name)
 			}
 		}
 	}
