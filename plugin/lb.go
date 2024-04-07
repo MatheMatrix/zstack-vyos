@@ -23,7 +23,7 @@ import (
 	"zstack-vyos/utils"
 
 	cidrman "github.com/EvilSuperstars/go-cidrman"
-	haproxy "github.com/bcicen/go-haproxy"
+	haproxy "github.com/ruansteve/go-haproxy"
 	"github.com/fatih/structs"
 	prom "github.com/prometheus/client_golang/prometheus"
 	log "github.com/sirupsen/logrus"
