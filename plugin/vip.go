@@ -580,7 +580,9 @@ func (rules *interfaceQosRules) InterfaceQosRuleAddRule(rule *qosRule) interface
 			for _, oldRule := range oldVipRules.portRules {
 				rules.InterfaceQosRuleDelRule(*oldRule)
 			}
-			rules.InterfaceQosRuleInit(rules.direct)
+			if _, exists := rules.sharedClassIdMap[rule.sharedQosUuid]; !exists {
+				rules.InterfaceQosRuleInit(rules.direct)
+			}
 			log.Debugf("AddRuleToInterface create map for ip %s", rule.ip)
 			if len(rules.rules) >= TC_MAX_FILTER {
 				utils.PanicOnError(fmt.Errorf("VipQos Reach the max number %d of interface %s ifbname %s",
