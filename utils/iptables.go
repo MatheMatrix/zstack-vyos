@@ -454,7 +454,7 @@ func (t *IpTables) restore() error {
 		Sudo:    true,
 	}
 
-	//log.Debugf("iptables-restore content: %s", content)
+	log.Debugf("iptables-restore content: %s", content)
 	_, _, _, err = cmd.RunWithReturn()
 	if err != nil {
 		log.Debugf("iptables-restore content: %s\n\niptables-restore failed: %+v", content, err)
@@ -482,7 +482,7 @@ func (t *IpTables) save() error {
 		log.Debugf("iptables-save failed ret = %d, err: %s", ret, err)
 		return fmt.Errorf("iptables-save failed ret = %d, err: %s", ret, err)
 	}
-	//log.Debugf("current iptables %s", o)
+	log.Debugf("current iptables %s", o)
 
 	t.Chains = []*IpTableChain{}
 	t.Rules = []*IpTableRule{}

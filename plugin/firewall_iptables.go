@@ -520,7 +520,7 @@ func applyUserRulesByIpTables(cmd *applyUserRuleCmd) error {
 		} else if ref.Forward == FIREWALL_DIRECTION_IN {
 			rule := utils.NewIpTableRule(utils.VYOS_FWD_ROOT_CHAIN)
 			rule.SetAction(ruleSetName)
-			rule.SetOutNic(nicName)
+			rule.SetInNic(nicName)
 			rules = append(rules, rule)
 		} // local will not be updated
 
