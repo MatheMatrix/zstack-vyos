@@ -375,8 +375,11 @@ func NewDefaultIpTableRule(ruleSetName string, ruleNumber int) *IpTableRule {
 	return &rule
 }
 
-/* firewall comment format: "system rule@eth1.in-1001"
-   return comment, chain name, rule number when success */
+/*
+firewall comment format: "system rule@eth1.in-1001"
+
+	return comment, chain name, rule number when success
+*/
 func parseRuleNumberFromComment(comment string) (string, string, int, error) {
 	fields := strings.Split(comment, "@")
 	if len(fields) < 2 {
@@ -561,26 +564,83 @@ func InitNicFirewall(nic string, ip string, pubNic bool, defaultAction string) e
 	rule.SetDstIp(ip + "/32").SetState([]string{IPTABLES_STATE_RELATED, IPTABLES_STATE_ESTABLISHED})
 	rules = append(rules, rule)
 
-	rule = NewIpTableRule(localChain)
-	rule.SetAction(IPTABLES_ACTION_RETURN).SetComment(SystemTopRule)
-	rule.SetDstIp(ip + "/32").SetProto(IPTABLES_PROTO_ICMP)
-	rules = append(rules, rule)
-
+	managementNodeCidr := GetManagementNodeCidr()
 	if IsMgtNic(nic) {
-		rule = NewIpTableRule(localChain)
-		rule.SetAction(IPTABLES_ACTION_RETURN).SetComment(SystemTopRule)
-		rule.SetDstIp(ip + "/32").SetProto(IPTABLES_PROTO_TCP).SetDstPort("22")
-		rules = append(rules, rule)
+		findIcmpRule := false
+		findSshRule := false
+		findMgtPortRule := false
+		for _, r := range table.Rules {
+			if !strings.Contains(r.GetComment(), SystemTopRule) || r.GetChainName() != localChain || r.GetDstIp() != ip+"/32" {
+				continue
+			}
+			if r.GetProto() == IPTABLES_PROTO_ICMP {
+				r.SetSrcIp(managementNodeCidr).SetAction(IPTABLES_ACTION_RETURN)
+				findIcmpRule = true
+			}
 
-		rule = NewIpTableRule(localChain)
-		rule.SetAction(IPTABLES_ACTION_RETURN).SetComment(SystemTopRule)
-		rule.SetDstIp(ip + "/32").SetProto(IPTABLES_PROTO_TCP).SetDstPort("7272")
-		rules = append(rules, rule)
+			if r.GetProto() == IPTABLES_PROTO_TCP && r.GetDstPort() == "22" {
+				r.SetSrcIp(managementNodeCidr).SetAction(IPTABLES_ACTION_RETURN)
+				findSshRule = true
+			}
+
+			if r.GetProto() == IPTABLES_PROTO_TCP && r.GetDstPort() == "7272" {
+				r.SetSrcIp(managementNodeCidr).SetAction(IPTABLES_ACTION_RETURN)
+				findMgtPortRule = true
+			}
+		}
+
+		if !findIcmpRule {
+			rule = NewIpTableRule(localChain)
+			rule.SetAction(IPTABLES_ACTION_RETURN).SetComment(SystemTopRule)
+			rule.SetSrcIp(managementNodeCidr).SetDstIp(ip + "/32").SetProto(IPTABLES_PROTO_ICMP)
+			rules = append(rules, rule)
+		}
+
+		if !findSshRule {
+			rule = NewIpTableRule(localChain)
+			rule.SetAction(IPTABLES_ACTION_RETURN).SetComment(SystemTopRule)
+			rule.SetSrcIp(managementNodeCidr).SetDstIp(ip + "/32").SetProto(IPTABLES_PROTO_TCP).SetDstPort("22")
+			rules = append(rules, rule)
+		}
+
+		if !findMgtPortRule {
+			rule = NewIpTableRule(localChain)
+			rule.SetAction(IPTABLES_ACTION_RETURN).SetComment(SystemTopRule)
+			rule.SetSrcIp(managementNodeCidr).SetDstIp(ip + "/32").SetProto(IPTABLES_PROTO_TCP).SetDstPort("7272")
+			rules = append(rules, rule)
+		}
 	} else {
-		rule = NewIpTableRule(localChain)
-		rule.SetAction(IPTABLES_ACTION_REJECT).SetRejectType(REJECT_TYPE_ICMP_UNREACHABLE)
-		rule.SetComment(SystemTopRule).SetDstIp(ip + "/32").SetProto(IPTABLES_PROTO_TCP).SetDstPort("22")
-		rules = append(rules, rule)
+		findIcmpRule := false
+		findSshRule := false
+		for _, r := range table.Rules {
+			if !strings.Contains(r.GetComment(), SystemTopRule) || r.GetChainName() != localChain || r.GetDstIp() != ip+"/32" {
+				continue
+			}
+
+			if r.GetProto() == IPTABLES_PROTO_ICMP {
+				r.SetAction(IPTABLES_ACTION_DROP)
+				findIcmpRule = true
+			}
+
+			if r.GetProto() == IPTABLES_PROTO_TCP && r.GetDstPort() == "22" {
+				r.SetAction(IPTABLES_ACTION_DROP)
+				findSshRule = true
+			}
+		}
+
+		if !findIcmpRule {
+			rule = NewIpTableRule(localChain)
+			rule.SetAction(IPTABLES_ACTION_DROP).SetComment(SystemTopRule)
+			rule.SetDstIp(ip + "/32").SetProto(IPTABLES_PROTO_ICMP)
+			rules = append(rules, rule)
+		}
+
+		if !findSshRule {
+			rule = NewIpTableRule(localChain)
+			rule.SetAction(IPTABLES_ACTION_DROP).SetComment(SystemTopRule)
+			rule.SetDstIp(ip + "/32").SetProto(IPTABLES_PROTO_TCP).SetDstPort("22")
+			rules = append(rules, rule)
+		}
 	}
 
 	rule = NewDefaultIpTableRule(localChain, IPTABLES_RULENUMBER_MAX)

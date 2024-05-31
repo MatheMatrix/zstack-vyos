@@ -222,11 +222,9 @@ func checkIptablesRules() {
 
 	table := utils.NewIpTables(utils.FirewallTable)
 	//low version will create ethx.zs.local chain if configure firewall with iptables
-	if !table.CheckChain("eth0.zs.local") {
-		return
+	if table.CheckChain("eth0.zs.local") {
+		deleteRemainingIptableRules()
 	}
-
-	deleteRemainingIptableRules()
 
 	var nics map[string]*nic = make(map[string]*nic)
 	mgmtNic := utils.BootstrapInfo["managementNic"].(map[string]interface{})
@@ -271,9 +269,9 @@ func checkIptablesRules() {
 	for _, nic := range nics {
 		var err error
 		if nic.category == "Private" {
-			err = utils.InitNicFirewall(nic.name, nic.ip, false, utils.IPTABLES_ACTION_REJECT)
+			err = utils.InitNicFirewall(nic.name, nic.ip, false, utils.IPTABLES_ACTION_DROP)
 		} else {
-			err = utils.InitNicFirewall(nic.name, nic.ip, true, utils.IPTABLES_ACTION_REJECT)
+			err = utils.InitNicFirewall(nic.name, nic.ip, true, utils.IPTABLES_ACTION_DROP)
 		}
 		if err != nil {
 			log.Debugf("InitNicFirewall for nic: %s failed", err.Error())
