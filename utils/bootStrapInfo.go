@@ -144,6 +144,14 @@ func IsInManagementCidr(vipStr string) bool {
 	return cidr.Contains(vip)
 }
 
+func GetManagementNodeCidr() string {
+	if _, ok := BootstrapInfo["managementNodeCidr"]; ok {
+		return BootstrapInfo["managementNodeCidr"].(string)
+	}
+
+	return ""
+}
+
 func GetMnNodeIps() map[string]string {
 	mnNodeIps := make(map[string]string)
 	mnNodeIp := BootstrapInfo["managementNodeIp"]

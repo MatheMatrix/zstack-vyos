@@ -453,21 +453,23 @@ func configureVyos() {
 					Gateway: nic.gateway, Gateway6: nic.gateway6}
 			}
 			if nic.category == "Private" {
-				err = utils.InitNicFirewall(nic.name, nic.ip, false, utils.IPTABLES_ACTION_REJECT)
+				err = utils.InitNicFirewall(nic.name, nic.ip, false, utils.IPTABLES_ACTION_DROP)
 			} else {
-				err = utils.InitNicFirewall(nic.name, nic.ip, true, utils.IPTABLES_ACTION_REJECT)
+				err = utils.InitNicFirewall(nic.name, nic.ip, true, utils.IPTABLES_ACTION_DROP)
 			}
 			if err != nil {
 				log.Debugf("InitNicFirewall for nic: %s failed", err.Error())
 			}
 		}
 	} else {
+		managementNodeCidr := bootstrapInfo["managementNodeCidr"].(string)
 		for _, nic := range nics {
 			setNic(nic)
 			if nic.isDefaultRoute {
 				defaultNic = utils.Nic{Name: nic.name, Mac: nic.mac, Ip: nic.ip, Ip6: nic.ip6,
 					Gateway: nic.gateway, Gateway6: nic.gateway6}
 			}
+
 			setNicTree.SetFirewallOnInterface(nic.name, "local",
 				"action accept",
 				"state established enable",
@@ -475,11 +477,20 @@ func configureVyos() {
 				fmt.Sprintf("destination address %v", nic.ip),
 			)
 
-			setNicTree.SetFirewallOnInterface(nic.name, "local",
-				"action accept",
-				"protocol icmp",
-				fmt.Sprintf("destination address %v", nic.ip),
-			)
+			if nic.name == "eth0" {
+				setNicTree.SetFirewallOnInterface(nic.name, "local",
+					fmt.Sprintf("source address %v", managementNodeCidr),
+					"action accept",
+					"protocol icmp",
+					fmt.Sprintf("destination address %v", nic.ip),
+				)
+			} else {
+				setNicTree.SetFirewallOnInterface(nic.name, "local",
+					"action drop",
+					"protocol icmp",
+					fmt.Sprintf("destination address %v", nic.ip),
+				)
+			}
 
 			setNicTree.SetZStackFirewallRuleOnInterface(nic.name, "behind", "in",
 				"action accept",
@@ -497,6 +508,7 @@ func configureVyos() {
 				setNicTree.SetFirewallOnInterface(nic.name, "local",
 					fmt.Sprintf("destination port %v", int(sshport)),
 					fmt.Sprintf("destination address %v", nic.ip),
+					fmt.Sprintf("source address %v", managementNodeCidr),
 					"protocol tcp",
 					"action accept",
 				)
@@ -505,12 +517,12 @@ func configureVyos() {
 					fmt.Sprintf("destination port %v", int(sshport)),
 					fmt.Sprintf("destination address %v", nic.ip),
 					"protocol tcp",
-					"action reject",
+					"action drop",
 				)
 			}
 
-			setNicTree.SetFirewallDefaultAction(nic.name, "local", "reject")
-			setNicTree.SetFirewallDefaultAction(nic.name, "in", "reject")
+			setNicTree.SetFirewallDefaultAction(nic.name, "local", "drop")
+			setNicTree.SetFirewallDefaultAction(nic.name, "in", "drop")
 
 			setNicTree.AttachFirewallToInterface(nic.name, "local")
 			setNicTree.AttachFirewallToInterface(nic.name, "in")
