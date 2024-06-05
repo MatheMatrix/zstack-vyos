@@ -462,7 +462,6 @@ func configureVyos() {
 			}
 		}
 	} else {
-		managementNodeCidr := bootstrapInfo["managementNodeCidr"].(string)
 		for _, nic := range nics {
 			setNic(nic)
 			if nic.isDefaultRoute {
@@ -484,7 +483,6 @@ func configureVyos() {
 
 			if nic.name == "eth0" {
 				setNicTree.SetFirewallOnInterface(nic.name, "local",
-					fmt.Sprintf("source address %v", managementNodeCidr),
 					"action accept",
 					"protocol icmp",
 					fmt.Sprintf("destination address %v", nic.ip),
@@ -513,7 +511,6 @@ func configureVyos() {
 				setNicTree.SetFirewallOnInterface(nic.name, "local",
 					fmt.Sprintf("destination port %v", int(sshport)),
 					fmt.Sprintf("destination address %v", nic.ip),
-					fmt.Sprintf("source address %v", managementNodeCidr),
 					"protocol tcp",
 					"action accept",
 				)
