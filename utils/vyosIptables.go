@@ -564,10 +564,6 @@ func InitNicFirewall(nic string, ip string, pubNic bool, defaultAction string) e
 	rule.SetDstIp(ip + "/32").SetState([]string{IPTABLES_STATE_RELATED, IPTABLES_STATE_ESTABLISHED})
 	rules = append(rules, rule)
 
-	icmpAndSshAction := IPTABLES_ACTION_DROP
-	if !pubNic {
-		icmpAndSshAction = IPTABLES_ACTION_RETURN
-	}
 	managementNodeCidr := GetManagementNodeCidr()
 	if IsMgtNic(nic) {
 		findIcmpRule := false
@@ -622,26 +618,26 @@ func InitNicFirewall(nic string, ip string, pubNic bool, defaultAction string) e
 			}
 
 			if r.GetProto() == IPTABLES_PROTO_ICMP {
-				r.SetAction(icmpAndSshAction)
+				r.SetAction(IPTABLES_ACTION_DROP)
 				findIcmpRule = true
 			}
 
 			if r.GetProto() == IPTABLES_PROTO_TCP && r.GetDstPort() == "22" {
-				r.SetAction(icmpAndSshAction)
+				r.SetAction(IPTABLES_ACTION_DROP)
 				findSshRule = true
 			}
 		}
 
 		if !findIcmpRule {
 			rule = NewIpTableRule(localChain)
-			rule.SetAction(icmpAndSshAction).SetComment(SystemTopRule)
+			rule.SetAction(IPTABLES_ACTION_DROP).SetComment(SystemTopRule)
 			rule.SetDstIp(ip + "/32").SetProto(IPTABLES_PROTO_ICMP)
 			rules = append(rules, rule)
 		}
 
 		if !findSshRule {
 			rule = NewIpTableRule(localChain)
-			rule.SetAction(icmpAndSshAction).SetComment(SystemTopRule)
+			rule.SetAction(IPTABLES_ACTION_DROP).SetComment(SystemTopRule)
 			rule.SetDstIp(ip + "/32").SetProto(IPTABLES_PROTO_TCP).SetDstPort("22")
 			rules = append(rules, rule)
 		}

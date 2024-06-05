@@ -257,10 +257,6 @@ func configureNicFirewall(nics []utils.NicInfo) {
 		tree = server.NewParserFromShowConfiguration().Tree
 		for _, nic := range nics {
 			nicname, _ := utils.GetNicNameByMac(nic.Mac)
-			defaultAction := "drop"
-			if nic.Category == "Private" {
-				defaultAction = "accept"
-			}
 			tree.SetFirewallOnInterface(nicname, "local",
 				"action accept",
 				"state established enable",
@@ -276,7 +272,7 @@ func configureNicFirewall(nics []utils.NicInfo) {
 				)
 			} else {
 				tree.SetFirewallOnInterface(nicname, "local",
-					fmt.Sprintf("action %v", defaultAction),
+					"action drop",
 					"protocol icmp",
 					fmt.Sprintf("destination address %v", nic.Ip),
 				)
@@ -307,7 +303,7 @@ func configureNicFirewall(nics []utils.NicInfo) {
 					fmt.Sprintf("destination port %v", int(utils.GetSshPortFromBootInfo())),
 					fmt.Sprintf("destination address %v", nic.Ip),
 					"protocol tcp",
-					fmt.Sprintf("action %v", defaultAction),
+					"action drop",
 				)
 			}
 
