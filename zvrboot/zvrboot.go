@@ -470,6 +470,11 @@ func configureVyos() {
 					Gateway: nic.gateway, Gateway6: nic.gateway6}
 			}
 
+			defaultAction := "drop"
+			if nic.category == "Private" {
+				defaultAction = "accept"
+			}
+
 			setNicTree.SetFirewallOnInterface(nic.name, "local",
 				"action accept",
 				"state established enable",
@@ -486,7 +491,7 @@ func configureVyos() {
 				)
 			} else {
 				setNicTree.SetFirewallOnInterface(nic.name, "local",
-					"action drop",
+					fmt.Sprintf("action %v", defaultAction),
 					"protocol icmp",
 					fmt.Sprintf("destination address %v", nic.ip),
 				)
@@ -517,7 +522,7 @@ func configureVyos() {
 					fmt.Sprintf("destination port %v", int(sshport)),
 					fmt.Sprintf("destination address %v", nic.ip),
 					"protocol tcp",
-					"action drop",
+					fmt.Sprintf("action %v", defaultAction),
 				)
 			}
 
