@@ -237,6 +237,7 @@ func configureNicFirewall(nics []utils.NicInfo) {
 			}
 		}
 	} else {
+		managementNodeCidr := utils.GetManagementNodeCidr()
 		tree := server.NewParserFromShowConfiguration().Tree
 		for _, nic := range nics {
 			nicname, _ := utils.GetNicNameByMac(nic.Mac)
@@ -270,6 +271,7 @@ func configureNicFirewall(nics []utils.NicInfo) {
 				tree.SetFirewallOnInterface(nicname, "local",
 					"action accept",
 					"protocol icmp",
+					fmt.Sprintf("source address %v", managementNodeCidr),
 					fmt.Sprintf("destination address %v", nic.Ip),
 				)
 			} else {
@@ -296,6 +298,7 @@ func configureNicFirewall(nics []utils.NicInfo) {
 				tree.SetFirewallOnInterface(nicname, "local",
 					fmt.Sprintf("destination port %v", int(utils.GetSshPortFromBootInfo())),
 					fmt.Sprintf("destination address %v", nic.Ip),
+					fmt.Sprintf("source address %v", managementNodeCidr),
 					"protocol tcp",
 					"action accept",
 				)
