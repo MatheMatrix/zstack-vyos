@@ -9,9 +9,10 @@ import (
 	"strconv"
 	"strings"
 
-	log "github.com/sirupsen/logrus"
 	"zstack-vyos/server"
 	"zstack-vyos/utils"
+
+	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -28,10 +29,17 @@ var (
 	/* please follow following rule to change the version:
 	   http://confluence.zstack.io/pages/viewpage.action?pageId=34014178 */
 	VERSION                    = ""
-	VERSION_FILE_PATH          = filepath.Join(ZVR_ROOT_PATH, "version")
-	NETWORK_HEALTH_STATUS_PATH = filepath.Join(ZVR_ROOT_PATH, ".duplicate")
-	NTP_CONF_DIR               = filepath.Join(ZVR_ROOT_PATH, "ntp/conf/")
 )
+
+func getVersionFilePath() string {
+	return filepath.Join(utils.GetZvrRootPath(), "version")
+}
+func getNetworlHealthStatusPath() string {
+	return filepath.Join(utils.GetZvrRootPath(), ".duplicate")
+}
+func getNtpConfDir() string {
+	return filepath.Join(utils.GetZvrRootPath(), "ntp/conf/")
+}
 
 type InitConfig struct {
 	RestartDnsmasqAfterNumberOfSIGUSER1 int               `json:"restartDnsmasqAfterNumberOfSIGUSER1"`
@@ -92,8 +100,8 @@ type fsHealthCheck struct{}
 
 func (check *networkHealthCheck) healthCheck() (status HealthStatus) {
 	status = HealthStatus{Healthy: true, HealthDetail: ""}
-	if e, _ := utils.PathExists(NETWORK_HEALTH_STATUS_PATH); e {
-		f, _ := ioutil.ReadFile(NETWORK_HEALTH_STATUS_PATH)
+	if e, _ := utils.PathExists(getNetworlHealthStatusPath()); e {
+		f, _ := ioutil.ReadFile(getNetworlHealthStatusPath())
 		status.Healthy = false
 		status.HealthDetail = string(f)
 	}
@@ -186,7 +194,7 @@ interface listen ::1
 		conf.WriteString("server " + chronyServer + "\n")
 	}
 
-	ntp_conf_file, err := ioutil.TempFile(NTP_CONF_DIR, "ntpConfig")
+	ntp_conf_file, err := ioutil.TempFile(getNtpConfDir(), "ntpConfig")
 	utils.PanicOnError(err)
 	_, err = ntp_conf_file.Write(conf.Bytes())
 	utils.PanicOnError(err)
@@ -194,16 +202,19 @@ interface listen ::1
 	err = utils.CopyFile(ntp_conf_file.Name(), NTPD_CONFIG_FILE)
 	utils.PanicOnError(err)
 
-	err = utils.ServiceOperation("ntp", "restart")
-	utils.PanicOnError(err)
+	serviceName := "ntpd"
+	if utils.Vyos_version == utils.EULER_22_03 {
+		serviceName = "chronyd"
+	}
+	err = utils.ServiceOperation(serviceName, "restart")
 }
 
 func configTaskScheduler() {
 	if !utils.IsEnableVyosCmd() {
-		sshJob := utils.NewCronjob().SetId(1).SetCommand(utils.Cronjob_file_ssh).SetMinute("*/1")
-		zvrMonitorJob := utils.NewCronjob().SetId(2).SetCommand(utils.Cronjob_file_zvrMonitor).SetMinute("*/1")
-		fileMonitorJob := utils.NewCronjob().SetId(3).SetCommand(fmt.Sprintf("/usr/bin/flock -xn /tmp/file-monitor.lock -c %s", utils.Cronjob_file_fileMonitor)).SetMinute("0").SetHour("*/1")
-		rsyslogJob := utils.NewCronjob().SetId(4).SetCommand(utils.Cronjob_file_rsyslog).SetMinute("*/1")
+		sshJob := utils.NewCronjob().SetId(1).SetCommand(utils.GetCronjobFileSsh()).SetMinute("*/1")
+		zvrMonitorJob := utils.NewCronjob().SetId(2).SetCommand(utils.GetCronjobFileZvrMonitor()).SetMinute("*/1")
+		fileMonitorJob := utils.NewCronjob().SetId(3).SetCommand(fmt.Sprintf("/usr/bin/flock -xn /tmp/file-monitor.lock -c %s", utils.GetCronjobFileMonitor())).SetMinute("0").SetHour("*/1")
+		rsyslogJob := utils.NewCronjob().SetId(4).SetCommand(utils.GetCronjobFileRsyslog()).SetMinute("*/1")
 		topJob := utils.NewCronjob().SetId(5).SetCommand("/usr/bin/top -b -n 1 -H >> /var/log/top.log").SetMinute("*/1")
 
 		cronJobMap := utils.CronjobMap{
@@ -222,15 +233,15 @@ func configTaskScheduler() {
 		}
 		if tree.Get("system task-scheduler task ssh") == nil {
 			tree.Set("system task-scheduler task ssh interval 1")
-			tree.Set(fmt.Sprintf("system task-scheduler task ssh executable path '%s'", utils.Cronjob_file_ssh))
+			tree.Set(fmt.Sprintf("system task-scheduler task ssh executable path '%s'", utils.GetCronjobFileSsh()))
 		}
 		if tree.Get("system task-scheduler task rsyslog") == nil {
 			tree.Set("system task-scheduler task rsyslog interval 1")
-			tree.Set(fmt.Sprintf("system task-scheduler task rsyslog executable path '%s'", utils.Cronjob_file_rsyslog))
+			tree.Set(fmt.Sprintf("system task-scheduler task rsyslog executable path '%s'", utils.GetCronjobFileRsyslog()))
 		}
 		if tree.Get("system task-scheduler task zvr-monitor") == nil {
 			tree.Set("system task-scheduler task zvr-monitor interval 1")
-			tree.Set(fmt.Sprintf("system task-scheduler task zvr-monitor executable path '%s'", utils.Cronjob_file_zvrMonitor))
+			tree.Set(fmt.Sprintf("system task-scheduler task zvr-monitor executable path '%s'", utils.GetCronjobFileZvrMonitor()))
 		}
 		if tree.Get("system task-scheduler task cpu-monitor") == nil {
 			tree.Set("system task-scheduler task cpu-monitor interval 1")
@@ -240,7 +251,7 @@ func configTaskScheduler() {
 		if tree.Get("system task-scheduler task file-monitor") == nil {
 			tree.Set("system task-scheduler task file-monitor interval 1h")
 			tree.Set("system task-scheduler task file-monitor executable path /usr/bin/flock")
-			tree.Set(fmt.Sprintf("system task-scheduler task file-monitor executable arguments '-xn /tmp/file-monitor.lock -c %s'", utils.Cronjob_file_fileMonitor))
+			tree.Set(fmt.Sprintf("system task-scheduler task file-monitor executable arguments '-xn /tmp/file-monitor.lock -c %s'", utils.GetCronjobFileMonitor()))
 		}
 
 		tree.Apply(false)
@@ -367,9 +378,9 @@ func addRouteIfCallbackIpChanged(init bool) {
 	}
 }
 
-func init() {
-	os.MkdirAll(NTP_CONF_DIR, os.ModePerm)
-	ver, err := ioutil.ReadFile(VERSION_FILE_PATH)
+func InitMisc() {
+	os.MkdirAll(getNtpConfDir(), os.ModePerm)
+	ver, err := ioutil.ReadFile(getVersionFilePath())
 	if err == nil {
 		VERSION = strings.TrimSpace(string(ver))
 	}

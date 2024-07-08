@@ -10,11 +10,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pkg/errors"
-	log "github.com/sirupsen/logrus"
 	"zstack-vyos/plugin"
 	"zstack-vyos/server"
 	"zstack-vyos/utils"
+
+	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 )
 
 const ModuleName = "zvr"
@@ -61,10 +62,6 @@ type nic struct {
 	name     string
 	category string
 }
-
-var zvrHomePath = utils.GetUserHomePath()
-var zvrRootPath = utils.GetZvrRootPath()
-var zvrZsConfigPath = utils.GetZvrZsConfigPath()
 
 // Note: there shouldn't be 'daily' etc. in the following config files.
 var logfiles = []string{
@@ -314,13 +311,18 @@ func main() {
 		os.Exit(1)
 	}
 
+	utils.InitVyosVersion()
 	go restartRsyslog()
 	utils.InitLog(options.LogFile, false)
 	utils.InitBootStrapInfo()
-	utils.InitVyosVersion()
 	checkIptablesRules()
 	utils.InitNatRule()
 	initPlugins()
+	plugin.InitKeepalived()
+	plugin.InitLb()
+	plugin.InitMisc()
+	plugin.InitRoute()
+	plugin.InitPmacctd()
 	loadPlugins()
 	setupRotates()
 	server.VyosLockInterface(configureZvrFirewall)()
