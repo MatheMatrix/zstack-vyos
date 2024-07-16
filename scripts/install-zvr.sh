@@ -46,7 +46,7 @@ fi
 
 if [ -f "${ZVR_DATA_DIR}/hooks/00_exec_hooks.sh" ]; then
     sudo chmod +x /home/$USER/zvr/data/hooks/00_exec_hooks.sh
-    sudo /bin/bash /home/$USER/zvr/data/hooks/00_exec_hooks.sh $USER
+    sudo /bin/bash -x /home/$USER/zvr/data/hooks/00_exec_hooks.sh $USER
 fi
 
 exit 0

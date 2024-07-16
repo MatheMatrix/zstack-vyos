@@ -2,11 +2,11 @@
 
 set -x 
 
-CONFIG_FILE="/home/vyos/zvr/data/config/bootup-config.install"
-FILE_LISTS_PATH="/home/vyos/zvr/data/file-lists"
-VYATTA_BIN_PATH="/opt/vyatta/sbin"
-VYOS_ZVR_ROOT_PATH="/home/vyos/zvr"
-LOG_FILE="/var/log/zstack-boot.log"
+CONFIG_FILE="/home/zstack/zvr/data/config/bootup-config_euler2203.install"
+FILE_LISTS_PATH="/home/zstack/zvr/data/file-lists"
+ZVR_BIN_PATH="/usr/local/bin"
+ZVR_ROOT_PATH="/home/zstack/zvr"
+LOG_FILE="/home/zstack/zvr/zstack-boot.log"
 RUNNER_FILE="/usr/local/zstack/.zstack_runner"
 FLAG_X86="X86"
 FLAG_ARM="ARM"
@@ -17,6 +17,7 @@ ARCH=`uname -m`
 function log_info() {
 	echo "$(date -d today '+%Y%m%d %H:%M:%S') - $1"  >> ${LOG_FILE} 2>>${LOG_FILE}
 }
+
 function sync_boot_file {
     file_name=$1
     file_dst=$2
@@ -47,21 +48,20 @@ function sync_boot_file {
     chown ${file_owner} ${file_dst}
 }
 
-echo "$(date -d today '+%Y%m%d %H:%M:%S') - Start Run vyos-postconfig-bootup.script"  > ${LOG_FILE}
-mkdir -p /home/vyos/zvr/data
-mkdir -p /home/vyos/zvr/ssh
-mkdir -p /home/vyos/zvr/keepalived/script
+echo "$(date -d today '+%Y%m%d %H:%M:%S') - Start Run zstack vrouter euler24.03 bootup script"  > ${LOG_FILE}
+mkdir -p /home/zstack/zvr/data
+mkdir -p /home/zstack/zvr/ssh
+mkdir -p /home/zstack/zvr/keepalived/script
 mkdir -p /etc/conntrackd
 mkdir -p /opt/vyatta/etc/config/scripts
-mkdir -p /usr/local/zstack/zsn-agent/bin
-chown vyos:users /home/vyos/ -R
-chmod +x /usr/local/zstack/zsn-agent/bin/zsn-agent
-chmod +x /etc/init.d/zstack-network-agent
-chown vyos:users /usr/local/zstack/zsn-agent/bin/zsn-agent
+mkdir -p /home/zstack/.ssh
+chmod 700 /home/zstack/.ssh/
+chown zstack:zstack /home/zstack/.ssh/
+systemctl restart sshd
 
-sed -i "s%__ZVR_ROOT_PATH__%${VYOS_ZVR_ROOT_PATH}%g"     ${CONFIG_FILE}
-sed -i "s%__BIN_PATH__%${VYATTA_BIN_PATH}%g"             ${CONFIG_FILE}
-sed -i "s%__USER__%vyos%g"                               ${CONFIG_FILE}
+sed -i "s%__ZVR_ROOT_PATH__%${ZVR_ROOT_PATH}%g"     ${CONFIG_FILE}
+sed -i "s%__BIN_PATH__%${ZVR_BIN_PATH}%g"             ${CONFIG_FILE}
+sed -i "s%__USER__%zstack%g"                               ${CONFIG_FILE}
 
 if [ ! -f "${CONFIG_FILE}" ]; then
     log_info "can not find build-image.install, should check data directory"
@@ -102,10 +102,5 @@ else
     log_info "${RUNNER_FILE} is exist, no need sync boot file"
 fi
 
-chown vyos:users /opt/vyatta/sbin/zvr
-ln -s /usr/local/lib/libcrypto.so.1.0.0  /usr/lib/libcrypto.so.1.0.0
-/opt/vyatta/sbin/zvrboot >/home/vyos/zvr/zvrboot.log 2>&1 < /dev/null &
-# disable distributed routing by default
-export ZSNP_TMOUT=-960
-/etc/init.d/zstack-network-agent start
+/usr/local/bin/zvrboot >>/home/zstack/zvr/zvrboot.log 2>&1 < /dev/null &
 exit 0
