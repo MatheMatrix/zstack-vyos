@@ -233,6 +233,7 @@ func WriteDefaultHaScript(defaultNic *Nic) {
 
 	err = os.WriteFile(getHaDefaultRouteScript(), []byte(conent), 0755)
 	PanicOnError(err)
+	SetFileOwner(getHaDefaultRouteScript(), GetZvrUser(), GetZvrUser())
 }
 
 func IsSLB() bool {

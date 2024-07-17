@@ -41,6 +41,7 @@ const PID_ERROR = -1
 
 const (
 	KEEPALIVED_GARP_PATH = "/keepalived/garp"
+	KEEPALIVED_STATE_PATH = "/tmp/keepalived_state"
 )
 
 func (s KeepAlivedStatus) string() string {
@@ -202,6 +203,8 @@ sudo ip link set up dev {{$name}} || true
 #notify Mn node
 (curl -A "zstack zvr" -H "Content-Type: application/json" -H "commandpath: /vpc/hastatus" -X POST -d '{"virtualRouterUuid": "{{.VrUuid}}", "haStatus":"Master"}' {{.CallBackUrl}}) &
 
+#write satet
+echo "MASTER" > /tmp/keepalived_state
 #this is for debug
 ip add
 `
@@ -210,6 +213,8 @@ const tKeepalivedNotifySlbMaster = `#!/bin/sh
 # This file is auto-generated, DO NOT EDIT! DO NOT EDIT!! DO NOT EDIT!!!
 #notify Mn node
 (curl -A "zstack zvr" -H "Content-Type: application/json" -H "commandpath: /vpc/hastatus" -X POST -d '{"virtualRouterUuid": "{{.VrUuid}}", "haStatus":"Master"}' {{.CallBackUrl}}) &
+
+echo "MASTER" > /tmp/keepalived_state
 `
 
 const tKeepalivedNotifyBackup = `#!/bin/sh
@@ -230,6 +235,7 @@ sudo ip link set down dev {{$name}} || true
 {{ end }}
 #notify Mn node
 (curl  -A "zstack zvr" -H "Content-Type: application/json" -H "commandpath: /vpc/hastatus" -X POST -d '{"virtualRouterUuid": "{{.VrUuid}}", "haStatus":"Backup"}' {{.CallBackUrl}}) &
+echo "BACKUP" > /tmp/keepalived_state
 #this is for debug
 ip add
 `
@@ -238,6 +244,7 @@ const tKeepalivedNotifySLbBackup = `#!/bin/sh
 # This file is auto-generated, DO NOT EDIT! DO NOT EDIT!! DO NOT EDIT!!!
 #notify Mn node
 (curl -A "zstack zvr" -H "Content-Type: application/json" -H "commandpath: /vpc/hastatus" -X POST -d '{"virtualRouterUuid": "{{.VrUuid}}", "haStatus":"Backup"}' {{.CallBackUrl}}) &
+echo "BACKUP" > /tmp/keepalived_state
 `
 
 func NewKeepalivedNotifyConf(vyosHaVips, mgmtVips []nicVipPair) *KeepalivedNotify {
@@ -300,7 +307,8 @@ func (k *KeepalivedNotify) generateGarpScript() error {
 	err = tmpl.Execute(&buf, k)
 	utils.PanicOnError(err)
 
-	return ioutil.WriteFile(getKeepalivedScriptMasterDoGARP(), buf.Bytes(), 0755)
+	os.WriteFile(getKeepalivedScriptMasterDoGARP(), buf.Bytes(), 0700)
+	return utils.SetFileOwner(getKeepalivedScriptMasterDoGARP(), utils.GetZvrUser(), utils.GetZvrUser())
 }
 
 func (k *KeepalivedNotify) generateIpv6DadScript() error {
@@ -311,7 +319,8 @@ func (k *KeepalivedNotify) generateIpv6DadScript() error {
 	err = tmpl.Execute(&buf, k)
 	utils.PanicOnError(err)
 
-	return ioutil.WriteFile(getKeepalivedScriptMasterDoIpv6Dad(), buf.Bytes(), 0755)
+	os.WriteFile(getKeepalivedScriptMasterDoIpv6Dad(), buf.Bytes(), 0700)
+	return utils.SetFileOwner(getKeepalivedScriptMasterDoIpv6Dad(), utils.GetZvrUser(), utils.GetZvrUser())
 }
 
 func (k *KeepalivedNotify) CreateMasterScript() error {
@@ -322,8 +331,9 @@ func (k *KeepalivedNotify) CreateMasterScript() error {
 	err = tmpl.Execute(&buf, k)
 	utils.PanicOnError(err)
 
-	err = ioutil.WriteFile(getKeepalivedScriptNotifyMaster(), buf.Bytes(), 0755)
+	err = os.WriteFile(getKeepalivedScriptNotifyMaster(), buf.Bytes(), 0700)
 	utils.PanicOnError(err)
+	utils.SetFileOwner(getKeepalivedScriptNotifyMaster(), utils.GetZvrUser(), utils.GetZvrUser())
 
 	err = k.generateGarpScript()
 	utils.PanicOnError(err)
@@ -337,7 +347,8 @@ func (k *KeepalivedNotify) CreateMasterScript() error {
 }
 
 func (k *KeepalivedNotify) CreateBackupScript() error {
-	err := ioutil.WriteFile(getConntrackScriptPrimaryBackup(), []byte(primaryBackupScript), 0750)
+	err := os.WriteFile(getConntrackScriptPrimaryBackup(), []byte(primaryBackupScript), 0700)
+	utils.SetFileOwner(getConntrackScriptPrimaryBackup(), utils.GetZvrUser(), utils.GetZvrUser())
 	utils.PanicOnError(err)
 
 	tmpl, err := template.New("backup.conf").Parse(tKeepalivedNotifyBackup)
@@ -350,8 +361,9 @@ func (k *KeepalivedNotify) CreateBackupScript() error {
 	err = tmpl.Execute(&buf, k)
 	utils.PanicOnError(err)
 
-	err = ioutil.WriteFile(getKeepalivedScriptNotifyBackup(), buf.Bytes(), 0755)
+	err = os.WriteFile(getKeepalivedScriptNotifyBackup(), buf.Bytes(), 0700)
 	utils.PanicOnError(err)
+	utils.SetFileOwner(getKeepalivedScriptNotifyBackup(), utils.GetZvrUser(), utils.GetZvrUser())
 
 	log.Debugf("%s: %s", getKeepalivedScriptNotifyBackup(), buf.String())
 
@@ -366,8 +378,9 @@ func (k *KeepalivedNotify) CreateSlbMasterScript() error {
 	err = tmpl.Execute(&buf, k)
 	utils.PanicOnError(err)
 
-	err = os.WriteFile(getKeepalivedScriptNotifyMaster(), buf.Bytes(), 0755)
+	err = os.WriteFile(getKeepalivedScriptNotifyMaster(), buf.Bytes(), 0700)
 	utils.PanicOnError(err)
+	utils.SetFileOwner(getKeepalivedScriptNotifyMaster(), utils.GetZvrUser(), utils.GetZvrUser())
 
 	log.Debugf("%s: %s", getKeepalivedScriptNotifyMaster(), buf.String())
 
@@ -375,7 +388,8 @@ func (k *KeepalivedNotify) CreateSlbMasterScript() error {
 }
 
 func (k *KeepalivedNotify) CreateSlbBackupScript() error {
-	err := os.WriteFile(getConntrackScriptPrimaryBackup(), []byte(primaryBackupScript), 0750)
+	err := os.WriteFile(getConntrackScriptPrimaryBackup(), []byte(primaryBackupScript), 0700)
+	utils.SetFileOwner(getConntrackScriptPrimaryBackup(), utils.GetZvrUser(), utils.GetZvrUser())
 	utils.PanicOnError(err)
 
 	tmpl, err := template.New("backup.conf").Parse(tKeepalivedNotifySLbBackup)
@@ -388,8 +402,9 @@ func (k *KeepalivedNotify) CreateSlbBackupScript() error {
 	err = tmpl.Execute(&buf, k)
 	utils.PanicOnError(err)
 
-	err = os.WriteFile(getKeepalivedScriptNotifyBackup(), buf.Bytes(), 0755)
+	err = os.WriteFile(getKeepalivedScriptNotifyBackup(), buf.Bytes(), 0700)
 	utils.PanicOnError(err)
+	utils.SetFileOwner(getKeepalivedScriptNotifyBackup(), utils.GetZvrUser(), utils.GetZvrUser())
 
 	log.Debugf("%s: %s", getKeepalivedScriptNotifyBackup(), buf.String())
 
@@ -407,10 +422,12 @@ type KeepalivedConf struct {
 	MasterScript        string
 	BackupScript        string
 	ScriptPath          string
+	ScriptUser          string
 	PrimaryBackupScript string
 	Vips                []nicVipPair
 	VipV4               *nicVipPair
 	VipV6               *nicVipPair
+	MaxAutoPriority     int 
 }
 
 func NewKeepalivedConf(hearbeatNic, LocalIp, LocalIpV6, PeerIp, PeerIpV6 string, MonitorIps []string, Interval int, vips []nicVipPair) *KeepalivedConf {
@@ -437,10 +454,17 @@ func NewKeepalivedConf(hearbeatNic, LocalIp, LocalIpV6, PeerIp, PeerIpV6 string,
 		MasterScript:        getKeepalivedScriptNotifyMaster(),
 		BackupScript:        getKeepalivedScriptNotifyBackup(),
 		ScriptPath:          getKeepalivedScriptPath(),
+		ScriptUser:          utils.GetZvrUser(),
 		PrimaryBackupScript: getConntrackScriptPrimaryBackup(),
 		Vips:                vips,
 		VipV4:               vipV4,
 		VipV6:               vipV6,
+	}
+
+	if utils.IsEuler2203() {
+		kc.MaxAutoPriority = 99
+	} else {
+		kc.MaxAutoPriority = 0
 	}
 
 	return kc
@@ -499,7 +523,11 @@ const tKeepalivedConf = `# This file is auto-generated, edit with caution!
 global_defs {
 	vrrp_garp_master_refresh 60
 	vrrp_check_unicast_src
-	script_user root
+	script_user {{.ScriptUser}}
+    enable_script_security
+	{{ if ne .MaxAutoPriority 0 }}
+	max_auto_priority  {{.MaxAutoPriority}}
+	{{ end }}
 }
 
 vrrp_script monitor_zvr {
@@ -549,7 +577,11 @@ const tKeepalivedSlbConf = `# This file is auto-generated, edit with caution!
 global_defs {
 	vrrp_garp_master_refresh 60
 	vrrp_check_unicast_src
-	script_user root
+	script_user {{.ScriptUser}}
+    enable_script_security
+	{{ if ne .MaxAutoPriority 0 }}
+	max_auto_priority  {{.MaxAutoPriority}}
+	{{ end }}
 }
 
 vrrp_script monitor_zvr {
@@ -610,7 +642,11 @@ const tKeepalivedSlbDualStackConf = `# This file is auto-generated, edit with ca
 global_defs {
 	vrrp_garp_master_refresh 60
 	vrrp_check_unicast_src
-	script_user root
+	script_user {{.ScriptUser}}
+    enable_script_security
+	{{ if ne .MaxAutoPriority 0 }}
+	max_auto_priority  {{.MaxAutoPriority}}
+	{{ end }}
 }
 
 vrrp_script monitor_zvr {
@@ -694,18 +730,22 @@ vrrp_instance vyos-ha-v6 {
 
 func (k *KeepalivedConf) BuildCheckScript() error {
 	check_zvr_tmp := `#! /bin/bash
-sudo /usr/bin/pgrep -u %s -f %s > /dev/null
+sudo pidof %s > /dev/null
 `
 	zvr_bin := filepath.Join(utils.GetThirdPartyBinPath(), "zvr")
-	check_zvr := fmt.Sprintf(check_zvr_tmp, utils.GetZvrUser(), zvr_bin)
-	err := os.WriteFile(filepath.Join(getKeepalivedScriptPath(), "check_zvr.sh"), []byte(check_zvr), fs.FileMode(0644))
+	check_zvr := fmt.Sprintf(check_zvr_tmp, zvr_bin)
+	check_zvr_file := filepath.Join(getKeepalivedScriptPath(), "check_zvr.sh")
+	err := os.WriteFile(check_zvr_file, []byte(check_zvr), fs.FileMode(0700))
 	utils.PanicOnError(err)
+	utils.SetFileOwner(check_zvr_file, utils.GetZvrUser(), utils.GetZvrUser())
 
 	for _, ip := range k.MonitorIps {
 		check_monitor := fmt.Sprintf("#! /bin/bash\nsudo /bin/ping %s -w 1 -c 1 > /dev/null", ip)
 		script_name := fmt.Sprintf("/check_monitor_%s.sh", ip)
-		err := os.WriteFile(filepath.Join(getKeepalivedScriptPath(), script_name), []byte(check_monitor), 0644)
+		check_monitor_file := filepath.Join(getKeepalivedScriptPath(), script_name)
+		err := os.WriteFile(check_monitor_file, []byte(check_monitor), 0700)
 		utils.PanicOnError(err)
+		utils.SetFileOwner(check_monitor_file, utils.GetZvrUser(), utils.GetZvrUser())
 	}
 	return nil
 }
@@ -718,7 +758,7 @@ func (k *KeepalivedConf) BuildConf() error {
 	err = tmpl.Execute(&buf, k)
 	utils.PanicOnError(err)
 
-	err = ioutil.WriteFile(getKeepalivedConfigFile(), buf.Bytes(), 0644)
+	err = os.WriteFile(getKeepalivedConfigFile(), buf.Bytes(), 0644)
 	utils.PanicOnError(err)
 
 	// generate conntrackd.conf
@@ -727,10 +767,29 @@ func (k *KeepalivedConf) BuildConf() error {
 	utils.PanicOnError(err)
 	err = tmpl.Execute(&buf, k)
 	utils.PanicOnError(err)
-	return ioutil.WriteFile(getConntrackdConfigFile(), buf.Bytes(), 0644)
+	return os.WriteFile(getConntrackdConfigFile(), buf.Bytes(), 0644)
 }
 
 func doRestartKeepalived(action KeepAlivedProcessAction) error {
+	if utils.IsEuler2203() {
+		pid := getKeepalivedPid()
+		if pid == PID_ERROR {
+			os.Remove(KEEPALIVED_STATE_PATH)
+			return utils.ServiceOperation("keepalived", "restart")
+		}
+
+		switch action {
+		case KeepAlivedProcess_Restart:
+			os.Remove(KEEPALIVED_STATE_PATH)
+			return utils.ServiceOperation("keepalived", "restart")
+		case KeepAlivedProcess_Reload:
+			os.Remove(KEEPALIVED_STATE_PATH)
+			return utils.ServiceOperation("keepalived", "reload")
+		}
+
+		return nil
+	}
+
 	/* # ./keepalived -h
 		    Usage: ./keepalived [OPTION...]
 	            -f, --use-file=FILE          Use the specified configuration file
@@ -894,26 +953,12 @@ func getKeepAlivedStatus() KeepAlivedStatus {
 		return keepAlivedStatus
 	}
 
-	pid := getKeepalivedPid()
-	if pid == PID_ERROR {
-		log.Debugf("Error occurs while get keepalived pid, return keepalived status as unkdonw")
+	state, err := os.ReadFile(KEEPALIVED_STATE_PATH)
+	if err != nil {
 		return KeepAlivedStatus_Unknown
 	}
 
-	bash := utils.Bash{
-		// There is race between generating keepalived.data and reading its content.
-		Command: fmt.Sprintf("timeout 1 sudo kill -USR1 %d;sudo grep -A 6 'VRRP Topology' /tmp/keepalived.data | awk -F '=' '/State/{print $2}'",
-			pid),
-		NoLog: true,
-	}
-
-	ret, o, e, err := bash.RunWithReturn()
-	if err != nil || ret != 0 {
-		log.Debugf("get keepalived status %s", e)
-		return KeepAlivedStatus_Unknown
-	}
-
-	switch strings.TrimSpace(o) {
+	switch strings.TrimSpace(string(state)) {
 	case "MASTER":
 		return KeepAlivedStatus_Master
 	case "BACKUP":
@@ -947,7 +992,7 @@ func KeepalivedEntryPoint() {
 	utils.RegisterDiskFullHandler(func(e error) {
 		if utils.IsHaEnabled() && IsMaster() {
 			s := time.Now().Format(time.RFC3339) + " " + e.Error() + "\n"
-			ioutil.WriteFile(_zvr_shm, []byte(s), 0640)
+			os.WriteFile(_zvr_shm, []byte(s), 0640)
 			doRestartKeepalived(KeepAlivedProcess_Restart)
 
 			/* when disk is full, keepalived will restart and zvr process will exit, peer vpc will become the master vpc,
@@ -976,7 +1021,7 @@ func (k *KeepalivedConf) BuildSlbConf() error {
 	err = tmpl.Execute(&buf, k)
 	utils.PanicOnError(err)
 
-	err = ioutil.WriteFile(getKeepalivedConfigFile(), buf.Bytes(), 0644)
+	err = os.WriteFile(getKeepalivedConfigFile(), buf.Bytes(), 0644)
 	utils.PanicOnError(err)
 
 	// generate conntrackd.conf
@@ -985,7 +1030,7 @@ func (k *KeepalivedConf) BuildSlbConf() error {
 	utils.PanicOnError(err)
 	err = tmpl.Execute(&buf, k)
 	utils.PanicOnError(err)
-	return ioutil.WriteFile(getConntrackdConfigFile(), buf.Bytes(), 0644)
+	return os.WriteFile(getConntrackdConfigFile(), buf.Bytes(), 0644)
 }
 
 var keepAlivedStatus KeepAlivedStatus
