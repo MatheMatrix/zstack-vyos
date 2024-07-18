@@ -2,7 +2,7 @@ package utils
 
 import (
 	"fmt"
-	"io/ioutil"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -37,7 +37,7 @@ func (t ZStackRouteTable) flushCommand() string {
 
 func GetZStackRouteTables() []ZStackRouteTable {
 	var tables []ZStackRouteTable
-	content, err := ioutil.ReadFile(POLICY_ROUTE_TABLE_FILE)
+	content, err := os.ReadFile(POLICY_ROUTE_TABLE_FILE)
 	if err != nil {
 		log.Debugf("read file: %s, failed: %s", POLICY_ROUTE_TABLE_FILE, err)
 		return tables
