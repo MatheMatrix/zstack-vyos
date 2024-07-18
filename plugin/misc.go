@@ -260,12 +260,14 @@ func configTaskScheduler() {
 
 func initHandler(ctx *server.CommandContext) interface{} {
 	ctx.GetCommand(initConfig)
-	addRouteIfCallbackIpChanged(true)
-	if initConfig.MgtCidr != "" {
-		mgmtNic := utils.GetMgmtInfoFromBootInfo()
-		nexthop, _ := utils.GetNexthop(initConfig.MgtCidr)
-		if nexthop != mgmtNic["gateway"].(string) {
-			utils.AddRoute(initConfig.MgtCidr, mgmtNic["gateway"].(string))
+	if !utils.IsEuler2203() {
+		addRouteIfCallbackIpChanged(true)
+		if initConfig.MgtCidr != "" {
+			mgmtNic := utils.GetMgmtInfoFromBootInfo()
+			nexthop, _ := utils.GetNexthop(initConfig.MgtCidr)
+			if nexthop != mgmtNic["gateway"].(string) {
+				utils.AddRoute(initConfig.MgtCidr, mgmtNic["gateway"].(string))
+			}
 		}
 	}
 
@@ -290,8 +292,11 @@ func setServiceStatus() []*ServiceStatus {
 func pingHandler(ctx *server.CommandContext) interface{} {
 	serviceHealthList := make(map[string]map[string]string)
 	serviceHealthList[IPSEC_STATUS_NAME] = getIpsecConnsState()
-
-	addRouteIfCallbackIpChanged(false)
+	
+	if !utils.IsEuler2203() {
+		addRouteIfCallbackIpChanged(false)
+	}
+	
 	var haStatus string
 	if !utils.IsHaEnabled() {
 		haStatus = utils.NOHA
@@ -380,7 +385,7 @@ func addRouteIfCallbackIpChanged(init bool) {
 
 func InitMisc() {
 	os.MkdirAll(getNtpConfDir(), os.ModePerm)
-	ver, err := ioutil.ReadFile(getVersionFilePath())
+	ver, err := os.ReadFile(getVersionFilePath())
 	if err == nil {
 		VERSION = strings.TrimSpace(string(ver))
 	}

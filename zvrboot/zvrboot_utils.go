@@ -242,7 +242,7 @@ func configureNicInfo(nic *utils.NicInfo) {
 		err := utils.IpLinkSetDown(nic.Name)
 		utils.Assertf(err == nil, "IpLinkSetDown[%s] error: %+v", nic.Name, err)
 	}
-	if nic.Name == "eth0" {
+	if nic.Name == "eth0" && !utils.IsEuler2203(){
 		mgmtNodeCidr := utils.BootstrapInfo["managementNodeCidr"]
 		if mgmtNodeCidr != nil {
 			mgmtNodeCidrStr := mgmtNodeCidr.(string)
@@ -271,7 +271,45 @@ func configureNicInfo(nic *utils.NicInfo) {
 func configureMgmtNic() {
 	log.Debugf("[configure: interfaces[%s] ... ", mgmtNic.Name)
 
+	if !mgmtNic.IsDefault && utils.IsEuler2203() {
+		/* mgnt is not default, add a mgmt nic to vrf: mgmt */
+		utils.IpLinkSetMaster(mgmtNic.Name, utils.MGMT_VRF)
+	}
+
 	configureNicInfo(mgmtNic)
+
+	if !mgmtNic.IsDefault && utils.IsEuler2203() {
+		/* mgnt is not default, add a  default route to vrf: mgmt */
+		if mgmtNic.Gateway != "" {
+			routeEntry := utils.NewIpRoute().SetGW(mgmtNic.Gateway).SetDev(mgmtNic.Name).SetTable(utils.RT_TABLES_MGMT).SetProto(utils.RT_PROTOS_STATIC)
+			err := utils.IpRouteAdd(routeEntry)
+			utils.Assertf(err == nil, "IpRouteAdd[%+v] error: %+v", routeEntry, err)
+		}
+		/*
+		if mgmtNic.Gateway6 != "" {
+			route6Entry := utils.NewIpRoute().SetGW(mgmtNic.Gateway).SetDev(mgmtNic.Name).SetTable(utils.RT_TABLES_MGMT).SetProto(utils.RT_PROTOS_STATIC)
+			err := utils.IpRouteAdd(route6Entry)
+			utils.Assertf(err == nil, "IpRouteAdd[%+v] error: %+v", route6Entry, err)
+		}*/
+
+		cmds := []string{}
+		cidr, err := utils.NetmaskToCIDR(mgmtNic.Netmask)
+		utils.PanicOnError(err)
+		addr := fmt.Sprintf("%v/%v", mgmtNic.Ip, cidr)
+		iprule1 := utils.ZStackIpRule{To: addr, TableId: utils.RT_TABLES_MGMT}
+		cmds = append(cmds, iprule1.AddBashCommand())
+
+		mgmtNodeCidr := utils.BootstrapInfo["managementNodeCidr"]
+	    if mgmtNodeCidr != nil {
+		   iprule2 := utils.ZStackIpRule{To: mgmtNodeCidr.(string), TableId: utils.RT_TABLES_MGMT}
+		   cmds = append(cmds, iprule2.AddBashCommand())
+		}
+		bash := utils.Bash{
+			Command: strings.Join(cmds, ";"),
+		}
+		bash.Run()
+		bash.PanicIfError()
+	}
 }
 
 func configureAdditionNic() {
