@@ -321,6 +321,11 @@ func keepAlivedCheckTask() {
 		return
 	}
 
+	if utils.IsEuler2203() {
+		/* open euler use systemd to manage keepalived */
+		return
+	}
+
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 	defer func() { keepAlivedCheckStart = false; log.Errorf("!!!!!!!!!keepalived process check task exited") }()
