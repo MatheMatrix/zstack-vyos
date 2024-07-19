@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"html/template"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -832,31 +831,6 @@ func (k *KeepalivedConf) RestartKeepalived(action KeepAlivedProcessAction) error
 	return doRestartKeepalived(action)
 }
 
-func enableKeepalivedLog() {
-	log_file, err := ioutil.TempFile(getKeepalivedConfigPath(), "rsyslog")
-	utils.PanicOnError(err)
-	conf := `$ModLoad imudp
-$UDPServerRun 514
-local2.debug     /var/log/keepalived.log`
-	_, err = log_file.Write([]byte(conf))
-	utils.PanicOnError(err)
-
-	log_rotate_file, err := ioutil.TempFile(getKeepalivedConfigPath(), "rotation")
-	utils.PanicOnError(err)
-	rotate_conf := `/var/log/keepalived.log {
-size 10240k
-rotate 20
-compress
-copytruncate
-notifempty
-missingok
-}`
-	_, err = log_rotate_file.Write([]byte(rotate_conf))
-	utils.PanicOnError(err)
-	utils.SudoMoveFile(log_file.Name(), "/etc/rsyslog.d/keepalived.conf")
-	utils.SudoMoveFile(log_rotate_file.Name(), "/etc/logrotate.d/keepalived")
-}
-
 func checkConntrackdRunning() {
 	if getConntrackdPid() != PID_ERROR {
 		return
@@ -1047,6 +1021,4 @@ func InitKeepalived() {
 	os.Mkdir(getKeepalivedScriptPath(), os.ModePerm)
 	os.Remove(getKeepalivedScriptNotifyMaster())
 	os.Remove(getKeepalivedScriptNotifyBackup())
-
-	enableKeepalivedLog()
 }
