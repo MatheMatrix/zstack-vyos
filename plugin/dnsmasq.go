@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
-	"io/ioutil"
+	"os"
 	"path/filepath"
 	"sort"
 
@@ -154,7 +154,7 @@ func writeDnsmasqHaScriptForVyos() {
 	}
 
 	var content = fmt.Sprintf("pkill -9 dnsmasq; %s", DNSMASQ_BIN_PATH)
-	err := ioutil.WriteFile(getDnsmasqScript(), []byte(content), 0755)
+	err := os.WriteFile(getDnsmasqScript(), []byte(content), 0755)
 	utils.PanicOnError(err)
 }
 
@@ -172,16 +172,16 @@ func templateHandler(d *DnsmasqConf, filepath string, name string, t string) err
 		return err
 	}
 
-	return ioutil.WriteFile(filepath, buf.Bytes(), 0664)
+	return os.WriteFile(filepath, buf.Bytes(), 0664)
 }
 
 func diffConfigFile(srcfile string, dstfile string) bool {
 	var src, dst []byte
 	var err error
-	if src, err = ioutil.ReadFile(srcfile); err != nil {
+	if src, err = os.ReadFile(srcfile); err != nil {
 		return false
 	}
-	if dst, err = ioutil.ReadFile(dstfile); err != nil {
+	if dst, err = os.ReadFile(dstfile); err != nil {
 		return false
 	}
 
