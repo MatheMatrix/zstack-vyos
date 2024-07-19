@@ -958,10 +958,6 @@ func GetIpsecVersionInfo() (string, string) {
 	return ipsecVerMgr.currentVersion, ipsecVerMgr.latestVersion
 }
 
-func init() {
-	initIpsecLogrotate()
-}
-
 func IPsecEntryPoint() {
 	ipsecMap = make(map[string]ipsecInfo, IPSecInfoMaxSize)
 	server.RegisterAsyncCommandHandler(CREATE_IPSEC_CONNECTION, server.VyosLock(createIPsecConnectionHandler))

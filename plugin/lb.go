@@ -1646,9 +1646,7 @@ debug - 7
 func doRefreshLogLevel(level string) {
 	lb_log_file, err := ioutil.TempFile(getLbConfDir(), "rsyslog")
 	utils.PanicOnError(err)
-	conf := fmt.Sprintf(`$ModLoad imudp
-$UDPServerRun 514
-local1.%s     /var/log/haproxy.log`, strings.ToLower(level))
+	conf := fmt.Sprintf(`local1.%s     /var/log/haproxy.log`, strings.ToLower(level))
 	_, err = lb_log_file.Write([]byte(conf))
 	utils.PanicOnError(err)
 
@@ -2192,56 +2190,6 @@ func (this *GBListener) getLbCounters(listenerUuid string, listener Listener) <-
 	return ch
 }
 
-func enableLbLog() {
-	lb_log_file, err := ioutil.TempFile(getLbConfDir(), "rsyslog")
-	utils.PanicOnError(err)
-	conf := `$ModLoad imudp
-$UDPServerRun 514
-local1.info     /var/log/haproxy.log`
-	_, err = lb_log_file.Write([]byte(conf))
-	utils.PanicOnError(err)
-
-	lb_log_rotatoe_file, err := ioutil.TempFile(getLbConfDir(), "rotation")
-	utils.PanicOnError(err)
-	rotate_conf := `/var/log/haproxy.log {
-size 50M
-#daily
-rotate 10
-compress
-copytruncate
-notifempty
-missingok
-}
-/var/log/gobetween*.log {
-size 50M
-#daily
-rotate 10
-compress
-copytruncate
-notifempty
-missingok
-}`
-	_, err = lb_log_rotatoe_file.Write([]byte(rotate_conf))
-	utils.PanicOnError(err)
-
-	/* add log rotate for /var/log/auth.log */
-	auth_rotatoe_file, err := ioutil.TempFile(getLbConfDir(), "auth")
-	utils.PanicOnError(err)
-	auth_rotate_conf := `/var/log/auth.log {
-size 50M
-rotate 10
-compress
-copytruncate
-notifempty
-missingok
-}`
-	_, err = auth_rotatoe_file.Write([]byte(auth_rotate_conf))
-	utils.PanicOnError(err)
-	utils.SudoMoveFile(lb_log_file.Name(), "/etc/rsyslog.d/haproxy.conf")
-	utils.SudoMoveFile(lb_log_rotatoe_file.Name(), "/etc/logrotate.d/haproxy")
-	utils.SudoMoveFile(auth_rotatoe_file.Name(), "/etc/logrotate.d/auth")
-}
-
 func InitLb() {
 	os.Mkdir(getLbRootPath(), os.ModePerm)
 	os.Mkdir(getLbConfDir(), os.ModePerm)
@@ -2249,7 +2197,6 @@ func InitLb() {
 	os.Chmod(getLbPidDir(), os.ModePerm)
 	os.Mkdir(getLbSocketDir(), os.ModePerm|os.ModeSocket)
 	LbListeners = make(map[string]Listener, LISTENER_MAP_SIZE)
-	enableLbLog()
 	RegisterPrometheusCollector(NewLbPrometheusCollector())
 
 	bash := utils.Bash{

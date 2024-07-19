@@ -615,84 +615,8 @@ func startDhcpServer(dhcp dhcpServer) {
 	addDnsNic(nicname)
 }
 
-func enableDhcpLog() {	
-	dhcp_log_file, err := ioutil.TempFile(getDhcpdPath(), "rsyslog")
-	utils.PanicOnError(err)
-	conf := `$ModLoad imudp
-$UDPServerRun 514
-local3.debug     /var/log/dhcp.log`
-	_, err = dhcp_log_file.Write([]byte(conf))
-	utils.PanicOnError(err)
-
-	dhcp_log_rotatoe_file, err := ioutil.TempFile(getDhcpdPath(), "rotation")
-	utils.PanicOnError(err)
-	rotate_conf := `/var/log/dhcp.log {
-size 10240k
-rotate 20
-compress
-copytruncate
-notifempty
-missingok
-}`
-	_, err = dhcp_log_rotatoe_file.Write([]byte(rotate_conf))
-	utils.PanicOnError(err)
-
-	zvr_start_up_log_rotatoe_file, err := ioutil.TempFile(getDhcpdPath(), "zvrStartUpRotation")
-	utils.PanicOnError(err)
-	zvr_start_up_rotate_conf_tmp := `%s {
-size 10240k
-daily
-rotate 10
-compress
-copytruncate
-notifempty
-missingok
-}`
-	zvr_start_up_log_path := filepath.Join(utils.GetZvrRootPath(), "zvrstartup.log")
-	zvr_start_up_rotate_conf := fmt.Sprintf(zvr_start_up_rotate_conf_tmp, zvr_start_up_log_path)
-	_, err = zvr_start_up_log_rotatoe_file.Write([]byte(zvr_start_up_rotate_conf))
-	utils.PanicOnError(err)
-
-	zvr_log_rotatoe_file, err := ioutil.TempFile(getDhcpdPath(), "zvrRotation")
-	utils.PanicOnError(err)
-	zvr_rotate_conf_tmp := `%s {
-size 10240k
-rotate 40
-compress
-copytruncate
-notifempty
-missingok
-}`
-	zvr_log_path := filepath.Join(utils.GetZvrRootPath(), "zvr.log")
-	zvr_rotate_conf := fmt.Sprintf(zvr_rotate_conf_tmp, zvr_log_path)
-	_, err = zvr_log_rotatoe_file.Write([]byte(zvr_rotate_conf))
-	utils.PanicOnError(err)
-
-	zvr_monitor_log_rotatoe_file, err := ioutil.TempFile(getDhcpdPath(), "zvrMonitorRotation")
-	utils.PanicOnError(err)
-	zvr_monitor_rotate_conf_tmp := `%s {
-size 10240k
-rotate 40
-compress
-copytruncate
-notifempty
-missingok
-}`
-	zvr_monitor_log_path := filepath.Join(utils.GetZvrRootPath(), "zvrMonitor.log")
-	zvr_monitor_rotate_conf := fmt.Sprintf(zvr_monitor_rotate_conf_tmp, zvr_monitor_log_path)
-	_, err = zvr_monitor_log_rotatoe_file.Write([]byte(zvr_monitor_rotate_conf))
-	utils.PanicOnError(err)
-
-	utils.SudoMoveFile(dhcp_log_file.Name(), "/etc/rsyslog.d/dhcp.conf")
-	utils.SudoMoveFile(dhcp_log_rotatoe_file.Name(), "/etc/logrotate.d/dhcp")
-	utils.SudoMoveFile(zvr_log_rotatoe_file.Name(), "/etc/logrotate.d/zvr")
-	utils.SudoMoveFile(zvr_monitor_log_rotatoe_file.Name(), "/etc/logrotate.d/zvrMonitor")
-	utils.SudoMoveFile(zvr_start_up_log_rotatoe_file.Name(), "/etc/logrotate.d/zvrstartup")
-}
-
 func DhcpEntryPoint() {
 	os.Mkdir(getDhcpdPath(), os.ModePerm)
-	enableDhcpLog()
 	server.RegisterAsyncCommandHandler(ADD_DHCP_PATH, server.VyosLock(addDhcpHandler))
 	server.RegisterAsyncCommandHandler(REMOVE_DHCP_PATH, server.VyosLock(removeDhcpHandler))
 	server.RegisterAsyncCommandHandler(REFRESH_DHCP_SERVER_PATH, server.VyosLock(refreshDhcpServer))

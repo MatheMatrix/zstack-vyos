@@ -215,15 +215,17 @@ func configTaskScheduler() {
 		zvrMonitorJob := utils.NewCronjob().SetId(2).SetCommand(utils.GetCronjobFileZvrMonitor()).SetMinute("*/1")
 		fileMonitorJob := utils.NewCronjob().SetId(3).SetCommand(fmt.Sprintf("/usr/bin/flock -xn /tmp/file-monitor.lock -c %s", utils.GetCronjobFileMonitor())).SetMinute("0").SetHour("*/1")
 		rsyslogJob := utils.NewCronjob().SetId(4).SetCommand(utils.GetCronjobFileRsyslog()).SetMinute("*/1")
-		topJob := utils.NewCronjob().SetId(5).SetCommand("/usr/bin/top -b -n 1 -H >> /var/log/top.log").SetMinute("*/1")
-
+		
 		cronJobMap := utils.CronjobMap{
-			1: sshJob,
 			2: zvrMonitorJob,
 			3: fileMonitorJob,
-			4: rsyslogJob,
-			5: topJob,
 		}
+
+		if !utils.IsEuler2203() {
+			cronJobMap[1] = sshJob
+			cronJobMap[4] = rsyslogJob
+		}
+
 		err := cronJobMap.ConfigService()
 		utils.PanicOnError(err)
 	} else {
@@ -243,11 +245,12 @@ func configTaskScheduler() {
 			tree.Set("system task-scheduler task zvr-monitor interval 1")
 			tree.Set(fmt.Sprintf("system task-scheduler task zvr-monitor executable path '%s'", utils.GetCronjobFileZvrMonitor()))
 		}
+		/*
 		if tree.Get("system task-scheduler task cpu-monitor") == nil {
 			tree.Set("system task-scheduler task cpu-monitor interval 1")
 			tree.Set("system task-scheduler task cpu-monitor executable path /usr/bin/top")
 			tree.Set("system task-scheduler task cpu-monitor executable arguments '-b -n 1 -H >> /var/log/top.log'")
-		}
+		} */
 		if tree.Get("system task-scheduler task file-monitor") == nil {
 			tree.Set("system task-scheduler task file-monitor interval 1h")
 			tree.Set("system task-scheduler task file-monitor executable path /usr/bin/flock")
