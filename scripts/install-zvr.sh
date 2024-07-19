@@ -22,6 +22,7 @@ if [ $? -ne 0 -a x"$ARCH" = x"aarch64" -a x"$USER" = x"vyos" ];then
 fi
 sudo mkdir -p /var/run/dnsmasq/
 sudo chmod 777 /var/run/dnsmasq/
+sudo rm -rf /home/vyos/zvr/ntp/conf/ntpConfig* ##old bug, tempfile is not removed
 
 OSVERSION=`uname -r`
 if [ "$OSVERSION" = "3.13.11-1-amd64-vyos" ]; then
