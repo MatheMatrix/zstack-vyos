@@ -279,6 +279,21 @@ func configureMgmtNic() {
 	configureNicInfo(mgmtNic)
 
 	if !mgmtNic.IsDefault && utils.IsEuler2203() {
+		/* if there is no mgmt table in /etc/iproutes2/rt_tables, added it */
+		rtTables := utils.GetZStackRouteTables()
+		found := false
+		for _, table := range rtTables {
+			if table.TableId == utils.RT_TABLES_MGMT {
+				found = true
+				break
+			}
+		}
+		if !found {
+			mgmtTable := utils.ZStackRouteTable{Alias: "mgmt", TableId: utils.RT_TABLES_MGMT}
+			rtTables = append(rtTables, mgmtTable)
+			utils.SyncZStackRouteTables(rtTables)
+		}
+
 		/* mgnt is not default, add a  default route to vrf: mgmt */
 		if mgmtNic.Gateway != "" {
 			routeEntry := utils.NewIpRoute().SetGW(mgmtNic.Gateway).SetDev(mgmtNic.Name).SetTable(utils.RT_TABLES_MGMT).SetProto(utils.RT_PROTOS_STATIC)
