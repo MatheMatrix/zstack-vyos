@@ -321,14 +321,12 @@ func configTaskScheduler() {
 
 func initHandler(ctx *server.CommandContext) interface{} {
 	ctx.GetCommand(initConfig)
-	if !utils.IsEuler2203() {
-		addRouteIfCallbackIpChanged(true)
-		if initConfig.MgtCidr != "" {
-			mgmtNic := utils.GetMgmtInfoFromBootInfo()
-			nexthop, _ := utils.GetNexthop(initConfig.MgtCidr)
-			if nexthop != mgmtNic["gateway"].(string) {
-				utils.AddRoute(initConfig.MgtCidr, mgmtNic["gateway"].(string))
-			}
+	addRouteIfCallbackIpChanged(true)
+	if initConfig.MgtCidr != "" {
+		mgmtNic := utils.GetMgmtInfoFromBootInfo()
+		nexthop, _ := utils.GetNexthop(initConfig.MgtCidr)
+		if nexthop != mgmtNic["gateway"].(string) {
+			utils.AddRoute(initConfig.MgtCidr, mgmtNic["gateway"].(string))
 		}
 	}
 
@@ -354,9 +352,7 @@ func pingHandler(ctx *server.CommandContext) interface{} {
 	serviceHealthList := make(map[string]map[string]string)
 	serviceHealthList[IPSEC_STATUS_NAME] = getIpsecConnsState()
 	
-	if !utils.IsEuler2203() {
-		addRouteIfCallbackIpChanged(false)
-	}
+	addRouteIfCallbackIpChanged(false)
 	
 	var haStatus string
 	if !utils.IsHaEnabled() {

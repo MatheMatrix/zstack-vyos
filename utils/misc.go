@@ -175,9 +175,12 @@ func SetNicOption(devName string) {
 
 func ServiceOperation(name string, operation string) error {
 	var command string
-	if IsVYOS() {
+	if !HasSystemctl() {
 		/* init service name is different from systemctl, remove last 'd' */
-		name = name[:len(name)-2]
+		/* rsyslog service name is rsyslog, not rsyslogd */
+		if name != "rsyslog" {
+			name = name[:len(name)-2]
+		}
 		command = fmt.Sprintf("/etc/init.d/%s %s", name, operation)
 	} else {
 		command = fmt.Sprintf("systemctl %s %s", operation, name)
@@ -189,4 +192,16 @@ func ServiceOperation(name string, operation string) error {
 	}
 
 	return bash.Run()
+}
+
+func HasSystemctl() bool {
+	bash := Bash{
+		Command: "which systemctl",
+	}
+
+	if ret, _, _, err := bash.RunWithReturn(); ret == 0 && err == nil {
+		return true
+	}
+
+	return false
 }

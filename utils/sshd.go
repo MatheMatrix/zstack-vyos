@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 
 	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -74,7 +75,10 @@ func (s *SshdInfo) ConfigService() error {
 
 	text := sshdTemplate
 
-	if runtime.GOARCH == "arm64" {
+	if IsEuler2203() {
+		log.Debugf("use euler ")
+		text = sshdTemplateEuler
+	} else if runtime.GOARCH == "arm64" {
 		text = sshdTemplateArm
 		_ = Retry(func() error {
 			var e error
@@ -86,8 +90,6 @@ func (s *SshdInfo) ConfigService() error {
 				return errors.New("ssh is not configured, wait 5 seconds")
 			}
 		}, 5, 5)
-	} else if Vyos_version == EULER_22_03 {
-		text = sshdTemplateEuler
 	}
 
 	if tmpl, err = template.New("ssh.conf").Parse(text); err != nil {
