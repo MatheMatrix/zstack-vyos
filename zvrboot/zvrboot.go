@@ -700,7 +700,7 @@ func main() {
 		waitVirtioPortOnline()
 		parseKvmBootInfo()
 	}
-	log.Debugf("zvrboot main")
+	log.Debugf("zvrboot main: os %s, kernel version: %s", utils.Vyos_version, utils.Kernel_version)
 	utils.InitBootStrapInfo()
 	if utils.IsEnableVyosCmd() {
 		configureVyos()

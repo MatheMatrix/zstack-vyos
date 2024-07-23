@@ -120,7 +120,7 @@ func setupRotates() {
 }
 
 func restartRsyslog() {
-	exec.Command("sudo", "/etc/init.d/rsyslog", "restart").Run()
+	utils.ServiceOperation("rsyslog", "restart")
 }
 
 var options server.Options
@@ -312,8 +312,9 @@ func main() {
 	}
 
 	utils.InitVyosVersion()
-	go restartRsyslog()
 	utils.InitLog(options.LogFile, false)
+	log.Debugf("zvr main: os %s, kernel version: %s", utils.Vyos_version, utils.Kernel_version)
+	go restartRsyslog()
 	utils.InitBootStrapInfo()
 	checkIptablesRules()
 	utils.InitNatRule()

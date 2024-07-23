@@ -102,7 +102,7 @@ func CleanTestEnvForUT() {
 
 func restoreConfigure() {
 	bash := Bash{
-		Command: fmt.Sprintf("iptables-restore < %s", getIptablesRuleFileUt()),
+		Command: fmt.Sprintf("iptables-restore -w < %s", getIptablesRuleFileUt()),
 		Sudo:    true,
 	}
 	bash.Run()
