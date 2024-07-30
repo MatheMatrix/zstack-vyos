@@ -179,7 +179,7 @@ func ServiceOperation(name string, operation string) error {
 		/* init service name is different from systemctl, remove last 'd' */
 		/* rsyslog service name is rsyslog, not rsyslogd */
 		if name != "rsyslog" {
-			name = name[:len(name)-2]
+			name = name[:len(name)-1]
 		}
 		command = fmt.Sprintf("/etc/init.d/%s %s", name, operation)
 	} else {

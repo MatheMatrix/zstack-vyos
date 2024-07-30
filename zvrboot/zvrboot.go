@@ -670,8 +670,12 @@ func configureVyos() {
 }
 
 func startZvr() {
+	path := "/etc/init.d/zstack-virtualrouteragent"
+	if utils.IsEuler2203() {
+		path = "/usr/local/bin/zstack-virtualrouteragent"
+	}
 	b := utils.Bash{
-		Command: "bash -x /usr/local/bin/zstack-virtualrouteragent restart >> /tmp/agentRestart.log 2>&1",
+		Command:  fmt.Sprintf("bash -x %s restart >> /tmp/agentRestart.log 2>&1", path),
 	}
 	b.Run()
 	b.PanicIfError()

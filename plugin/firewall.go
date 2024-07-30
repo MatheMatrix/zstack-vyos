@@ -906,7 +906,7 @@ func FirewallEntryPoint() {
 	server.RegisterAsyncCommandHandler(fwDeleteRuleSetPath, server.VyosLock(deleteRuleSetHandler))
 	server.RegisterAsyncCommandHandler(fwAttachRulesetPath, server.VyosLock(attachRuleSetHandler))
 	server.RegisterAsyncCommandHandler(fwDetachRuleSetPath, server.VyosLock(detachRuleSetHandler))
-	if (utils.Vyos_version != utils.EULER_22_03) {
+	if !utils.IsEuler2203() {
 		moveLowPriorityRulesToTheBack()
 	}
 }

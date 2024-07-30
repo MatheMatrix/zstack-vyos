@@ -306,8 +306,13 @@ func (k *KeepalivedNotify) generateGarpScript() error {
 	err = tmpl.Execute(&buf, k)
 	utils.PanicOnError(err)
 
-	os.WriteFile(getKeepalivedScriptMasterDoGARP(), buf.Bytes(), 0700)
-	return utils.SetFileOwner(getKeepalivedScriptMasterDoGARP(), utils.GetZvrUser(), utils.GetZvrUser())
+	
+	if utils.IsEuler2203() {
+		os.WriteFile(getKeepalivedScriptMasterDoGARP(), buf.Bytes(), 0700)
+		return utils.SetFileOwner(getKeepalivedScriptMasterDoGARP(), utils.GetZvrUser(), utils.GetZvrUser())
+	} else {
+		return os.WriteFile(getKeepalivedScriptMasterDoGARP(), buf.Bytes(), 0755)
+	}
 }
 
 func (k *KeepalivedNotify) generateIpv6DadScript() error {
@@ -318,8 +323,12 @@ func (k *KeepalivedNotify) generateIpv6DadScript() error {
 	err = tmpl.Execute(&buf, k)
 	utils.PanicOnError(err)
 
-	os.WriteFile(getKeepalivedScriptMasterDoIpv6Dad(), buf.Bytes(), 0700)
-	return utils.SetFileOwner(getKeepalivedScriptMasterDoIpv6Dad(), utils.GetZvrUser(), utils.GetZvrUser())
+	if utils.IsEuler2203() {
+		os.WriteFile(getKeepalivedScriptMasterDoIpv6Dad(), buf.Bytes(), 0700)
+		return utils.SetFileOwner(getKeepalivedScriptMasterDoIpv6Dad(), utils.GetZvrUser(), utils.GetZvrUser())
+	} else {
+		return os.WriteFile(getKeepalivedScriptMasterDoIpv6Dad(), buf.Bytes(), 0755)
+	}
 }
 
 func (k *KeepalivedNotify) CreateMasterScript() error {
@@ -330,9 +339,14 @@ func (k *KeepalivedNotify) CreateMasterScript() error {
 	err = tmpl.Execute(&buf, k)
 	utils.PanicOnError(err)
 
-	err = os.WriteFile(getKeepalivedScriptNotifyMaster(), buf.Bytes(), 0700)
-	utils.PanicOnError(err)
-	utils.SetFileOwner(getKeepalivedScriptNotifyMaster(), utils.GetZvrUser(), utils.GetZvrUser())
+	if utils.IsEuler2203() {
+		err = os.WriteFile(getKeepalivedScriptNotifyMaster(), buf.Bytes(), 0700)
+		utils.PanicOnError(err)
+		utils.SetFileOwner(getKeepalivedScriptNotifyMaster(), utils.GetZvrUser(), utils.GetZvrUser())
+	} else {
+		err = os.WriteFile(getKeepalivedScriptNotifyMaster(), buf.Bytes(), 0755)
+		utils.PanicOnError(err)
+	}
 
 	err = k.generateGarpScript()
 	utils.PanicOnError(err)
@@ -346,9 +360,14 @@ func (k *KeepalivedNotify) CreateMasterScript() error {
 }
 
 func (k *KeepalivedNotify) CreateBackupScript() error {
-	err := os.WriteFile(getConntrackScriptPrimaryBackup(), []byte(primaryBackupScript), 0700)
-	utils.SetFileOwner(getConntrackScriptPrimaryBackup(), utils.GetZvrUser(), utils.GetZvrUser())
-	utils.PanicOnError(err)
+	if utils.IsEuler2203() {
+		err := os.WriteFile(getConntrackScriptPrimaryBackup(), []byte(primaryBackupScript), 0700)
+		utils.PanicOnError(err)
+		utils.SetFileOwner(getConntrackScriptPrimaryBackup(), utils.GetZvrUser(), utils.GetZvrUser())
+	} else {
+		err := os.WriteFile(getConntrackScriptPrimaryBackup(), []byte(primaryBackupScript), 0755)
+		utils.PanicOnError(err)
+	}
 
 	tmpl, err := template.New("backup.conf").Parse(tKeepalivedNotifyBackup)
 	utils.PanicOnError(err)
@@ -360,9 +379,15 @@ func (k *KeepalivedNotify) CreateBackupScript() error {
 	err = tmpl.Execute(&buf, k)
 	utils.PanicOnError(err)
 
-	err = os.WriteFile(getKeepalivedScriptNotifyBackup(), buf.Bytes(), 0700)
-	utils.PanicOnError(err)
-	utils.SetFileOwner(getKeepalivedScriptNotifyBackup(), utils.GetZvrUser(), utils.GetZvrUser())
+	if utils.IsEuler2203() {
+		err = os.WriteFile(getKeepalivedScriptNotifyBackup(), buf.Bytes(), 0700)
+		utils.PanicOnError(err)
+		utils.SetFileOwner(getKeepalivedScriptNotifyBackup(), utils.GetZvrUser(), utils.GetZvrUser())
+	} else {
+		err = os.WriteFile(getKeepalivedScriptNotifyBackup(), buf.Bytes(), 0755)
+		utils.PanicOnError(err)
+	}
+	
 
 	log.Debugf("%s: %s", getKeepalivedScriptNotifyBackup(), buf.String())
 
@@ -377,9 +402,14 @@ func (k *KeepalivedNotify) CreateSlbMasterScript() error {
 	err = tmpl.Execute(&buf, k)
 	utils.PanicOnError(err)
 
-	err = os.WriteFile(getKeepalivedScriptNotifyMaster(), buf.Bytes(), 0700)
-	utils.PanicOnError(err)
-	utils.SetFileOwner(getKeepalivedScriptNotifyMaster(), utils.GetZvrUser(), utils.GetZvrUser())
+	if utils.IsEuler2203() {
+		err = os.WriteFile(getKeepalivedScriptNotifyMaster(), buf.Bytes(), 0700)
+		utils.PanicOnError(err)
+		utils.SetFileOwner(getKeepalivedScriptNotifyMaster(), utils.GetZvrUser(), utils.GetZvrUser())
+	} else {
+		err = os.WriteFile(getKeepalivedScriptNotifyMaster(), buf.Bytes(), 0755)
+		utils.PanicOnError(err)
+	}
 
 	log.Debugf("%s: %s", getKeepalivedScriptNotifyMaster(), buf.String())
 
@@ -387,9 +417,14 @@ func (k *KeepalivedNotify) CreateSlbMasterScript() error {
 }
 
 func (k *KeepalivedNotify) CreateSlbBackupScript() error {
-	err := os.WriteFile(getConntrackScriptPrimaryBackup(), []byte(primaryBackupScript), 0700)
-	utils.SetFileOwner(getConntrackScriptPrimaryBackup(), utils.GetZvrUser(), utils.GetZvrUser())
-	utils.PanicOnError(err)
+	if utils.IsEuler2203() {
+		err := os.WriteFile(getConntrackScriptPrimaryBackup(), []byte(primaryBackupScript), 0700)
+		utils.PanicOnError(err)
+		utils.SetFileOwner(getConntrackScriptPrimaryBackup(), utils.GetZvrUser(), utils.GetZvrUser())
+	} else {
+		err := os.WriteFile(getConntrackScriptPrimaryBackup(), []byte(primaryBackupScript), 0755)
+		utils.PanicOnError(err)
+	}
 
 	tmpl, err := template.New("backup.conf").Parse(tKeepalivedNotifySLbBackup)
 	utils.PanicOnError(err)
@@ -401,9 +436,14 @@ func (k *KeepalivedNotify) CreateSlbBackupScript() error {
 	err = tmpl.Execute(&buf, k)
 	utils.PanicOnError(err)
 
-	err = os.WriteFile(getKeepalivedScriptNotifyBackup(), buf.Bytes(), 0700)
-	utils.PanicOnError(err)
-	utils.SetFileOwner(getKeepalivedScriptNotifyBackup(), utils.GetZvrUser(), utils.GetZvrUser())
+	if utils.IsEuler2203() {
+		err = os.WriteFile(getKeepalivedScriptNotifyBackup(), buf.Bytes(), 0700)
+		utils.PanicOnError(err)
+		utils.SetFileOwner(getKeepalivedScriptNotifyBackup(), utils.GetZvrUser(), utils.GetZvrUser())
+	} else {
+		err = os.WriteFile(getKeepalivedScriptNotifyBackup(), buf.Bytes(), 0755)
+		utils.PanicOnError(err)
+	}
 
 	log.Debugf("%s: %s", getKeepalivedScriptNotifyBackup(), buf.String())
 
@@ -464,6 +504,7 @@ func NewKeepalivedConf(hearbeatNic, LocalIp, LocalIpV6, PeerIp, PeerIpV6 string,
 		kc.MaxAutoPriority = 99
 	} else {
 		kc.MaxAutoPriority = 0
+		kc.ScriptUser = "root"
 	}
 
 	return kc
@@ -734,17 +775,27 @@ sudo pidof %s > /dev/null
 	zvr_bin := filepath.Join(utils.GetThirdPartyBinPath(), "zvr")
 	check_zvr := fmt.Sprintf(check_zvr_tmp, zvr_bin)
 	check_zvr_file := filepath.Join(getKeepalivedScriptPath(), "check_zvr.sh")
-	err := os.WriteFile(check_zvr_file, []byte(check_zvr), fs.FileMode(0700))
-	utils.PanicOnError(err)
-	utils.SetFileOwner(check_zvr_file, utils.GetZvrUser(), utils.GetZvrUser())
+	if utils.IsEuler2203() {
+		err := os.WriteFile(check_zvr_file, []byte(check_zvr), fs.FileMode(0700))
+		utils.PanicOnError(err)
+		utils.SetFileOwner(check_zvr_file, utils.GetZvrUser(), utils.GetZvrUser())
+	} else {
+		err := os.WriteFile(check_zvr_file, []byte(check_zvr), fs.FileMode(0644))
+		utils.PanicOnError(err)
+	}
 
 	for _, ip := range k.MonitorIps {
 		check_monitor := fmt.Sprintf("#! /bin/bash\nsudo /bin/ping %s -w 1 -c 1 > /dev/null", ip)
 		script_name := fmt.Sprintf("/check_monitor_%s.sh", ip)
 		check_monitor_file := filepath.Join(getKeepalivedScriptPath(), script_name)
-		err := os.WriteFile(check_monitor_file, []byte(check_monitor), 0700)
-		utils.PanicOnError(err)
-		utils.SetFileOwner(check_monitor_file, utils.GetZvrUser(), utils.GetZvrUser())
+		if utils.IsEuler2203() {
+			err := os.WriteFile(check_monitor_file, []byte(check_monitor), 0700)
+			utils.PanicOnError(err)
+			utils.SetFileOwner(check_monitor_file, utils.GetZvrUser(), utils.GetZvrUser())
+		} else {
+			err := os.WriteFile(check_monitor_file, []byte(check_monitor), 0644)
+			utils.PanicOnError(err)
+		}
 	}
 	return nil
 }
@@ -768,6 +819,7 @@ func (k *KeepalivedConf) BuildConf() error {
 	utils.PanicOnError(err)
 	return os.WriteFile(getConntrackdConfigFile(), buf.Bytes(), 0644)
 }
+
 
 func doRestartKeepalived(action KeepAlivedProcessAction) error {
 	if utils.IsEuler2203() {
@@ -927,11 +979,24 @@ func getKeepAlivedStatus() KeepAlivedStatus {
 		return keepAlivedStatus
 	}
 
-	state, err := os.ReadFile(KEEPALIVED_STATE_PATH)
-	if err != nil {
+	pid := getKeepalivedPid()
+	if pid == PID_ERROR {
+		log.Debugf("Error occurs while get keepalived pid, return keepalived status as unkdonw")
 		return KeepAlivedStatus_Unknown
 	}
 
+	bash := utils.Bash{
+		// There is race between generating keepalived.data and reading its content.
+		Command: fmt.Sprintf("timeout 1 sudo kill -USR1 %d;sudo grep -A 6 'VRRP Topology' /tmp/keepalived.data | awk -F '=' '/State/{print $2}'",
+			pid),
+		NoLog: true,
+	}
+
+	ret, state, e, err := bash.RunWithReturn()
+	if err != nil || ret != 0 {
+		log.Debugf("get keepalived status %s", e)
+	}
+	
 	switch strings.TrimSpace(string(state)) {
 	case "MASTER":
 		return KeepAlivedStatus_Master
