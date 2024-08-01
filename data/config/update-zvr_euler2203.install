@@ -8,6 +8,7 @@ zvr-monitor.sh          __ZVR_ROOT_PATH__/ssh/zvr-monitor.sh            0755    
 zvr-reboot.sh           __ZVR_ROOT_PATH__/ssh/zvr-reboot.sh             0755     __USER__:users
 file-monitor.sh         __ZVR_ROOT_PATH__/ssh/file-monitor.sh           0755     __USER__:users
 zstack-virtualrouteragent        /etc/init.d/zstack-virtualrouteragent  0755     root:root
+rsyslog_euler.conf           /etc/rsyslog.conf                     0644     root:root
 rsyslog.haproxy            /etc/rsyslog.d/haproxy.conf                     0600     root:root
 rsyslog.keepalived        /etc/rsyslog.d/keepalived.conf                     0600     root:root
 rsyslog.dhcp        /etc/rsyslog.d/dhcp.conf                     0600     root:root
