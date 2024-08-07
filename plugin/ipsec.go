@@ -63,7 +63,7 @@ func getHaIpsecScript() string {
 }
 
 func getIpsecTempScript() string {
-	return  filepath.Join(utils.GetZvrRootPath(), "keepalived/script/ipsec.sh")
+	return  filepath.Join(utils.GetZvrRootPath(), "keepalived/temp/ipsec.sh")
 }
 
 type ipsecInfo struct {
@@ -142,7 +142,7 @@ func writeIpsecHaScript(enable bool) {
 		utils.PanicOnError(err)
 	} else {
 		conent := "echo 'no ipsec configured'"
-		err := ioutil.WriteFile(getHaIpsecScript(), []byte(conent), 0755)
+		err := os.WriteFile(getHaIpsecScript(), []byte(conent), 0755)
 		utils.PanicOnError(err)
 	}
 }
