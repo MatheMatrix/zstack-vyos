@@ -1646,7 +1646,9 @@ debug - 7
 func doRefreshLogLevel(level string) {
 	lb_log_file, err := ioutil.TempFile(getLbConfDir(), "rsyslog")
 	utils.PanicOnError(err)
-	conf := fmt.Sprintf(`local1.%s     /var/log/haproxy.log`, strings.ToLower(level))
+	conf := fmt.Sprintf(`$ModLoad imudp
+$UDPServerRun 514
+local1.%s     /var/log/haproxy.log`, strings.ToLower(level))
 	_, err = lb_log_file.Write([]byte(conf))
 	utils.PanicOnError(err)
 

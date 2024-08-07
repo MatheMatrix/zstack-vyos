@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 
 	"github.com/pkg/errors"
-	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -76,7 +75,6 @@ func (s *SshdInfo) ConfigService() error {
 	text := sshdTemplate
 
 	if IsEuler2203() {
-		log.Debugf("use euler ")
 		text = sshdTemplateEuler
 	} else if runtime.GOARCH == "arm64" {
 		text = sshdTemplateArm

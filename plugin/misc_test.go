@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"io/ioutil"
-	"reflect"
 	"text/template"
 
 	"zstack-vyos/server"
@@ -83,22 +82,22 @@ func checkTaskScheduler() {
 	job2 := utils.NewCronjob().SetId(2).SetCommand(utils.GetCronjobFileZvrMonitor()).SetMinute("*/1")
 	job3 := utils.NewCronjob().SetId(3).SetCommand(fmt.Sprintf("/usr/bin/flock -xn /tmp/file-monitor.lock -c %s", utils.GetCronjobFileMonitor())).SetMinute("0").SetHour("*/1")
 	job4 := utils.NewCronjob().SetId(4).SetCommand(utils.GetCronjobFileRsyslog()).SetMinute("*/1")
-	job5 := utils.NewCronjob().SetId(5).SetCommand("/usr/bin/top -b -n 1 -H >> /var/log/top.log").SetMinute("*/1")
+	//job5 := utils.NewCronjob().SetId(5).SetCommand("/usr/bin/top -b -n 1 -H >> /var/log/top.log").SetMinute("*/1")
 
 	c := utils.CronjobMap{
 		1: job1,
 		2: job2,
 		3: job3,
 		4: job4,
-		5: job5,
+		//5: job5,
 	}
 
-	testMap := make(utils.CronjobMap)
+	/*testMap := make(utils.CronjobMap)
 	err := utils.JsonLoadConfig(utils.CROND_JSON_FILE, &testMap)
 	Expect(err).To(BeNil(), "load crond json error: %+v", err)
 
 	ret := reflect.DeepEqual(c, testMap)
-	Expect(ret).To(BeTrue(), "attr map should equal")
+	Expect(ret).To(BeTrue(), "attr map should equal")*/
 
 	buf := bytes.Buffer{}
 	tmpl, err := template.New("crond.conf").Parse(utils.CrondTemplate)

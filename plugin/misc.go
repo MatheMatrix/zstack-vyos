@@ -265,6 +265,7 @@ interface listen ::1
 	utils.PanicOnError(err)
 
 	err = utils.ServiceOperation("ntpd", "restart")
+	utils.PanicOnError(err)
 }
 
 func configTaskScheduler() {

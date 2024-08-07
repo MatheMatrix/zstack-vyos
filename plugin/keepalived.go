@@ -493,8 +493,8 @@ func NewKeepalivedConf(hearbeatNic, LocalIp, LocalIpV6, PeerIp, PeerIpV6 string,
 		MasterScript:        getKeepalivedScriptNotifyMaster(),
 		BackupScript:        getKeepalivedScriptNotifyBackup(),
 		ScriptPath:          getKeepalivedScriptPath(),
-		ScriptUser:          utils.GetZvrUser(),
 		PrimaryBackupScript: getConntrackScriptPrimaryBackup(),
+		ScriptUser:          utils.GetZvrUser(),
 		Vips:                vips,
 		VipV4:               vipV4,
 		VipV6:               vipV6,
@@ -926,7 +926,7 @@ func callStatusChangeScripts() {
 	if keepAlivedStatus == KeepAlivedStatus_Master {
 		nics, _ := utils.GetAllNics()
 
-		if utils.IsVYOS() {
+		if utils.IsEnableVyosCmd() {
 			tree := server.NewParserFromShowConfiguration().Tree
 			for _, nic := range nics {
 				tree.Deletef("interfaces ethernet %s disable", nic.Name)
