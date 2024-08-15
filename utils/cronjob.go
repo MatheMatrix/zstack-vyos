@@ -3,7 +3,7 @@ package utils
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
+	"os"
 	"path/filepath"
 	"text/template"
 
@@ -127,9 +127,12 @@ func (c CronjobMap) ConfigService() error {
 	cronjobAttrs := make(CronjobMap)
 
 	if err := JsonLoadConfig(getCrondJsonFile(), &cronjobAttrs); err != nil {
-		return err
+		/* ignore the error */
+		log.Debugf("local cronjob failed: %v", err)
 	}
 
+	i := 0
+	newCronjobAttrs := make(CronjobMap)
 	for k, v := range c {
 		if v.isDelete {
 			log.Debugf("cronjob[%d] will be delete", k)
@@ -140,16 +143,20 @@ func (c CronjobMap) ConfigService() error {
 				continue
 			}
 			log.Debugf("cronjob[%d] will be add", k)
-			cronjobAttrs[k] = v
+			newCronjobAttrs[i] =v
+			i++
 		}
 	}
 	if tmpl, err = template.New("crond.conf").Parse(CrondTemplate); err != nil {
+		log.Debugf("CrondTemplate parse failed: %v", err)
 		return err
 	}
-	if err = tmpl.Execute(&buf, cronjobAttrs); err != nil {
+	if err = tmpl.Execute(&buf, newCronjobAttrs); err != nil {
+		log.Debugf("CrondTemplate Execute failed: %v", err)
 		return err
 	}
-	if err = ioutil.WriteFile(getCrondConfigFileTemp(), buf.Bytes(), 0664); err != nil {
+	if err = os.WriteFile(getCrondConfigFileTemp(), buf.Bytes(), 0664); err != nil {
+		log.Debugf("CrondTemplate WriteFile failed: %v", err)
 		return err
 	}
 	bash := Bash{
