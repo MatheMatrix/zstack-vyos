@@ -1216,8 +1216,12 @@ func setPidRLimit(confpath string) error {
 }
 
 func startGobetween(confpath, pidpath string) (int, error) {
+	goBetweenPath := "/opt/vyatta/sbin/gobetween"
+	if (utils.IsEuler2203()) {
+		goBetweenPath = "/usr/local/bin/gobetween"
+	}
 	bash := utils.Bash{
-		Command: fmt.Sprintf("/opt/vyatta/sbin/gobetween -c %s >/dev/null 2>&1&echo $! >%s; cat %s", confpath, pidpath, pidpath),
+		Command: fmt.Sprintf("%s -c %s >/dev/null 2>&1&echo $! >%s; cat %s", goBetweenPath, confpath, pidpath, pidpath),
 		Sudo:    true,
 	}
 
