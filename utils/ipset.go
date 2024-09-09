@@ -10,6 +10,7 @@ import (
 const (
 	IPSET_TYPE_HASH_IP  = "hash:ip"
 	IPSET_TYPE_HASH_NET = "hash:net"
+	IPSET_TYPE_HASH_IP_PORT = "hash:ip,port"
 )
 
 /*
@@ -64,6 +65,21 @@ func GetCurrentIpSet() ([]*IpSet, error) {
 	return ipSets.Ipsets, nil
 }
 
+func GetIpSet(name string) *IpSet {
+	ipsets, err := GetCurrentIpSet()
+	if err != nil {
+		return nil
+	}
+
+	for _, set := range ipsets {
+		if set.Name == name {
+			return set
+		}
+	}
+
+	return nil
+}
+
 func NewIPSet(name, ipsetType string) *IpSet {
 	return &IpSet{Name: name, IpSetType: ipsetType}
 }
@@ -115,6 +131,20 @@ func (s *IpSet) AddMember(members []string) error {
 	}
 
 	return nil
+}
+
+func (s *IpSet) CheckMember(members string) bool {
+	cmd := Bash{
+		Command: fmt.Sprintf("ipset test %s %s", s.Name, members),
+		Sudo:    true,
+	}
+
+	ret, _, _, err := cmd.RunWithReturn()
+	if err != nil || ret != 0 {
+		return false
+	}
+	
+	return true
 }
 
 func (s *IpSet) DeleteMember(members []string) error {

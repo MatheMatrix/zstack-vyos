@@ -450,7 +450,7 @@ func (t *IpTables) restore() error {
 	}
 
 	cmd := Bash{
-		Command: fmt.Sprintf("iptables-restore  -w --table=%s < %s", t.Name, tmpFile.Name()),
+		Command: fmt.Sprintf("iptables-restore --table=%s < %s", t.Name, tmpFile.Name()),
 		Sudo:    true,
 	}
 

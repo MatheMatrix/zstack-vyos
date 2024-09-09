@@ -467,7 +467,7 @@ func (rules *interfaceQosRules) InterfaceQosRuleInit(direct direction) interface
 
 		if !utils.IsEnableVyosCmd() {
 			if !utils.IpLinkIsExist(rules.ifbName) {
-				err := utils.IpLinkAdd(rules.ifbName, "ifb")
+				err := utils.IpLinkAdd(rules.ifbName, utils.IpLinkTypeIfb.String())
 				utils.PanicOnError(err)
 			}
 			_ = utils.IpLinkSetUp(rules.ifbName)

@@ -115,6 +115,7 @@ func GetMgmtInfoFromBootInfo() map[string]interface{} {
 	return mgmtNic
 }
 
+
 func IsSkipVyosIptables() bool {
 	if (!IsVYOS()) {
 		return true
@@ -291,7 +292,16 @@ func GetHaStatus() (status string) {
 }
 
 func IsRuingUT() bool {
-	return strings.Contains(os.Args[0], fmt.Sprintf("%s/vyos_ut/zstack-vyos/", GetUserHomePath()))
+	info, err := os.Stat("/home/vyos/vyos_ut/")
+	if err != nil {
+		return false
+	}
+	
+	if info.IsDir() {
+		return true
+	} else {
+		return false
+	}
 }
 
 func IsEnableVyosCmd() bool {

@@ -12,6 +12,7 @@ import (
 
 	"zstack-vyos/server"
 	"zstack-vyos/utils"
+	"zstack-vyos/plugin"
 
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -696,7 +697,7 @@ func main() {
 	}
 
 	utils.InitVyosVersion()
-	utils.InitLog(getZvrbootLogPath(), false)
+	utils.InitLog(getZvrbootLogPath(), utils.IsRuingUT())
 	waitIptablesServiceOnline()
 	if isOnVMwareHypervisor() {
 		parseEsxBootInfo()
@@ -711,6 +712,7 @@ func main() {
 	} else {
 		configureSystem()
 	}
+	utils.Truncate(plugin.IPVS_HEALTH_CHECK_CONFIG_FILE, 0)
 	startZvr()
 	log.Debugf("successfully configured the sysmtem and bootstrap the zstack virtual router agents")
 }
