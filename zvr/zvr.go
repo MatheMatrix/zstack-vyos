@@ -312,7 +312,7 @@ func main() {
 	}
 
 	utils.InitVyosVersion()
-	utils.InitLog(options.LogFile, false)
+	utils.InitLog(options.LogFile, utils.IsRuingUT())
 	log.Debugf("zvr main: os %s, kernel version: %s", utils.Vyos_version, utils.Kernel_version)
 	go restartRsyslog()
 	utils.InitBootStrapInfo()
@@ -324,6 +324,7 @@ func main() {
 	plugin.InitMisc()
 	plugin.InitRoute()
 	plugin.InitPmacctd()
+	plugin.InitIpvs()
 	loadPlugins()
 	setupRotates()
 	server.VyosLockInterface(configureZvrFirewall)()

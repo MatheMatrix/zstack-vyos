@@ -69,7 +69,7 @@ func configureNicByLinux(nicList []utils.NicInfo) interface{} {
 	return nil
 }
 
-func configureNicDefaultActionByLinux(cmd *configureNicCmd) interface{} {
+func configureNicDefaultActionByLinux(cmd *ConfigureNicCmd) interface{} {
 	var nicname string
 	for _, nic := range cmd.Nics {
 		err := utils.Retry(func() error {

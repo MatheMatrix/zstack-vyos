@@ -20,7 +20,7 @@ const (
 	RESTART_KEEPALIVED_PATH = "/restartKeepalived"
 )
 
-type setVyosHaCmd struct {
+type SetVyosHaCmd struct {
 	Keepalive    int          `json:"keepalive"`
 	HeartbeatNic string       `json:"heartbeatNic"`
 	LocalIp      string       `json:"localIp"`
@@ -28,11 +28,11 @@ type setVyosHaCmd struct {
 	PeerIp       string       `json:"peerIp"`
 	PeerIpV6     string       `json:"peerIpV6"`
 	Monitors     []string     `json:"monitors"`
-	Vips         []macVipPair `json:"vips"`
+	Vips         []MacVipPair `json:"vips"`
 	CallbackUrl  string       `json:"callbackUrl"`
 }
 
-type macVipPair struct {
+type MacVipPair struct {
 	NicMac    string `json:"nicMac"`
 	NicVip    string `json:"nicVip"`
 	Netmask   string `json:"netmask"`
@@ -46,25 +46,30 @@ var (
 	keepAlivedCheckStart     = false
 )
 
+var vyosHaKeepalivedConf *KeepalivedConf
+
 type syncVpcRouterHaRsp struct {
 	HaStatus string `json:"haStatus"`
 }
 
 func setVyosHaHandler(ctx *server.CommandContext) interface{} {
-	cmd := &setVyosHaCmd{}
+	cmd := &SetVyosHaCmd{}
 	ctx.GetCommand(cmd)
 
-	return setVyosHa(cmd)
+	return SetVyosHa(cmd)
 }
 
-func setVyosHa(cmd *setVyosHaCmd) interface{} {
+func SetVyosHa(cmd *SetVyosHaCmd) interface{} {
 	if cmd.PeerIp == "" {
 		cmd.PeerIp = cmd.LocalIp
 	}
 
-	heartbeatNicNme, _ := utils.GetNicNameByMac(cmd.HeartbeatNic)
+	heartbeatNicNme, err := utils.GetNicNameByMac(cmd.HeartbeatNic)
+	utils.PanicOnError(err)
+
 	/* add firewall */
 	if utils.IsSkipVyosIptables() {
+		log.Debugf("vyosha configure firewall by linux")
 		table := utils.NewIpTables(utils.FirewallTable)
 		var rules []*utils.IpTableRule
 
@@ -160,29 +165,58 @@ func setVyosHa(cmd *setVyosHaCmd) interface{} {
 	if cmd.PeerIp == "" {
 		cmd.PeerIp = cmd.LocalIp
 	}
-	checksum, err := getFileChecksum(getKeepalivedConfigFile())
+	checksum, err := getFileChecksum(GetKeepalivedConfigFile())
 	utils.PanicOnError(err)
 
-	keepalivedConf := NewKeepalivedConf(heartbeatNicNme, cmd.LocalIp, cmd.LocalIpV6, cmd.PeerIp, cmd.PeerIpV6, cmd.Monitors, cmd.Keepalive, pairs)
-	keepalivedConf.BuildCheckScript()
+	pairs4 := []nicVipPair{}
+	pairs6 := []nicVipPair{}
+	for _, p := range pairs {
+		parsedIP := net.ParseIP(p.Vip)
+		if parsedIP != nil && parsedIP.To4() != nil {
+			pairs4 = append(pairs4, p)
+		} else if (parsedIP != nil && parsedIP.To16() != nil) {
+			pairs6 = append(pairs6, p)
+		}
+	}
+
+	instances := []*KeepalivedInstance{}
+	instance := NewKeepalivedInstance(KeepalivedInstIpv4.String(), heartbeatNicNme, cmd.LocalIp, cmd.PeerIp, cmd.Monitors, cmd.Keepalive, pairs4)
+	if !utils.IsSLB() {
+		/* vpc does not used keepalived manager vip */
+		instance.Vips = []nicVipPair{}
+	} else {
+		/* slb does not  use monitor ip and fault script */
+		instance.MonitorIps = []string{}
+		instance.FaultScript = ""
+	}
+	instances = append(instances, instance)
+	
+	if  utils.IsSLB() && len(pairs) == 2 {
+		instance6 := NewKeepalivedInstance(KeepalivedInstIpV6.String(), heartbeatNicNme, cmd.LocalIpV6, cmd.PeerIpV6, cmd.Monitors, cmd.Keepalive, pairs6)
+		instance6.MonitorIps = []string{}
+		instance6.FaultScript = ""
+		instances = append(instances, instance6)
+	}
+	
+	vyosHaKeepalivedConf = NewKeepalivedConf(instances)
+	vyosHaKeepalivedConf.BuildConf()
+
+	vyosHaKeepalivedConf.BuildCheckScript()
 	if utils.IsSLB() {
 		knc := KeepalivedNotify{
 			VrUuid: utils.GetVirtualRouterUuid(),
 		}
 		knc.CreateSlbMasterScript()
 		knc.CreateSlbBackupScript()
-		keepalivedConf.BuildSlbConf()
-	} else {
-		keepalivedConf.BuildConf()
-	}
-	newCheckSum, err := getFileChecksum(getKeepalivedConfigFile())
+	} 
+	newCheckSum, err := getFileChecksum(GetKeepalivedConfigFile())
 	utils.PanicOnError(err)
 	/* if keepalived is not started, RestartKeepalived will also start keepalived */
 	if newCheckSum != checksum {
-		keepalivedConf.RestartKeepalived(KeepAlivedProcess_Reload)
+		vyosHaKeepalivedConf.RestartKeepalived(KeepAlivedProcess_Reload)
 	} else {
 		log.Debugf("keepalived configure file unchanged")
-		keepalivedConf.RestartKeepalived(KeepAlivedProcess_Skip)
+		vyosHaKeepalivedConf.RestartKeepalived(KeepAlivedProcess_Skip)
 	}
 
 	if !getKeepAlivedStatusStart {
@@ -278,10 +312,6 @@ func NonManagementUpNics() []string {
 }
 
 func getKeepAlivedStatusTask() {
-	if utils.IsRuingUT() {
-		return
-	}
-
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 	defer func() { getKeepAlivedStatusStart = false; log.Errorf("!!!!!!!!!keepalived status check task exited") }()
@@ -290,8 +320,10 @@ func getKeepAlivedStatusTask() {
 	for {
 		select {
 		case <-ticker.C:
+			log.Debugf("keepalived status check task ticker triggered")
 			if utils.IsHaEnabled() {
 				newHaStatus := getKeepAlivedStatus()
+				log.Debugf("get keepalived status %s", newHaStatus.string())
 				if newHaStatus == KeepAlivedStatus_Unknown || newHaStatus == keepAlivedStatus {
 					/* sometime keepalived is in backup state, but nic is up,
 					   we need to call notify script to correct it */
@@ -317,10 +349,6 @@ func getKeepAlivedStatusTask() {
 }
 
 func keepAlivedCheckTask() {
-	if utils.IsRuingUT() {
-		return
-	}
-
 	if utils.IsEuler2203() {
 		/* open euler use systemd to manage keepalived */
 		return
@@ -362,6 +390,10 @@ type vyosNicVipPairs struct {
 }
 
 func generateNotityScripts() {
+	if utils.IsRuingUT() {
+		return
+	}
+	
 	if utils.IsSLB() {
 		/* slb don't need such script */
 		return

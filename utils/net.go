@@ -89,6 +89,12 @@ func (nic Nic) String() string {
 	return string(s)
 }
 
+type nicArray []Nic
+
+func (a nicArray) Len() int           { return len(a) }
+func (a nicArray) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a nicArray) Less(i, j int) bool { return a[i].Name > a[j].Name }
+
 func GetAllNics() (map[string]Nic, error) {
 	const ROOT = "/sys/class/net"
 
