@@ -320,7 +320,6 @@ func getKeepAlivedStatusTask() {
 	for {
 		select {
 		case <-ticker.C:
-			log.Debugf("keepalived status check task ticker triggered")
 			if utils.IsHaEnabled() {
 				newHaStatus := getKeepAlivedStatus()
 				log.Debugf("get keepalived status %s", newHaStatus.string())

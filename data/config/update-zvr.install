@@ -48,7 +48,7 @@ uacctd           __BIN_PATH__/uacctd                    0755      __USER__:users
 goprlimit        __BIN_PATH__/goprlimit                 0755      __USER__:users
 zvr_x86_64       __BIN_PATH__/zvr                       0755      __USER__:users
 pmacct           __ZVR_ROOT_PATH__/pmacct/pmacct        0755      __USER__:users
-ipvsHealtCheck_x86_64       __BIN_PATH__/ipvsHealtCheck                       0755      __USER__:users
+ipvsHealthCheck_x86_64       __BIN_PATH__/ipvsHealthCheck                       0755      __USER__:users
 
 [[ARM]]
 # this files just for aarch64

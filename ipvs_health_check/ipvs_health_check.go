@@ -5,8 +5,12 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"os"
+	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"zstack-vyos/plugin"
@@ -25,6 +29,7 @@ type IpvsHealthCheckBackendServer struct {
 
 var logFile string
 var confFile string
+var pidFile string
 
 var gHealthCheckMap map[string]*IpvsHealthCheckBackendServer
 var healthCheckLock sync.Mutex
@@ -32,6 +37,9 @@ var healthCheckLock sync.Mutex
 func parseCommandOptions() {
 	flag.StringVar(&logFile, "log", plugin.IPVS_HEALTH_CHECK_LOG_FILE, "ipvs health check The log file path")
 	flag.StringVar(&confFile, "f", plugin.IPVS_HEALTH_CHECK_CONFIG_FILE, "ipvs health check config file path")
+	flag.StringVar(&pidFile, "p", plugin.IPVS_HEALTH_CHECK_PID_FILE, "ipvs health check pid file path")
+
+	flag.Parse()
 }
 
 func (bs *IpvsHealthCheckBackendServer) getBackendKey() string {
@@ -41,6 +49,9 @@ func (bs *IpvsHealthCheckBackendServer) getBackendKey() string {
 func (bs *IpvsHealthCheckBackendServer) doHealthCheck() {
 	if bs.HealthCheckProtocl == "udp" {
 		bs.doUdpCheck()
+	} else {
+		log.Debugf("unknow health check protocol %s", bs.HealthCheckProtocl)
+		bs.result <- false
 	}
 }
 
@@ -117,7 +128,7 @@ func (bs *IpvsHealthCheckBackendServer) UnInstall()  {
 		backedIp = fmt.Sprintf("[%s]", backedIp)
 	}
 	cmd := fmt.Sprintf("ipvsadm -d %s %s:%s -r %s:%s", proto, frontIp, bs.FrontPort, backedIp, bs.BackendPort)
-	if (num ==1) {
+	if (num <= 1) {
 		/* last active backend is down, delete the service */
 		cmd = fmt.Sprintf("ipvsadm -D %s %s:%s", proto, frontIp, bs.FrontPort)
 	}
@@ -190,8 +201,7 @@ func (bs *IpvsHealthCheckBackendServer) Stop() {
 	bs.UnInstall()
 }
 
-func handleEvents(events <-chan fsnotify.Event, errors <-chan error, wg *sync.WaitGroup) {
-	defer wg.Done()
+func handleEvents(events <-chan fsnotify.Event, errors <-chan error) {
 	log.Debugf("handleEvents task")
 	for {
 		select {
@@ -288,11 +298,47 @@ func setConfFileForUT(path string) {
 	confFile = path
 }
 
-func main() {
-	var wg sync.WaitGroup
+func writePidToFile(pidFilePath string) error {
+	pid := os.Getpid()
+	pidStr := strconv.Itoa(pid)
 	
+	file, err := os.Create(pidFilePath)
+	if err != nil {
+		return fmt.Errorf("can not create pid file: %v", err)
+	}
+	defer file.Close()
+	
+	_, err = file.WriteString(pidStr+"\n")
+	if err != nil {
+		return fmt.Errorf("can not write pid file: %v", err)
+	}
+	
+	return nil
+}
+	
+func main() {
 	parseCommandOptions()
 	utils.InitLog(logFile, utils.IsRuingUT())
+	
+	if pid, _ := utils.ReadPid(pidFile); pid != 0 {
+		if utils.ProcessExists(pid) == nil {
+			log.Debugf("ipvs health check already running, pid %d", pid)
+			return 
+		}
+	}
+	writePidToFile(pidFile)
+	
+	interruptChan := make(chan os.Signal, 1)
+	signal.Notify(interruptChan, syscall.SIGUSR1, syscall.SIGUSR2)
+	
+	go func() {
+		for sig := range interruptChan {
+			switch sig {
+				case syscall.SIGUSR1:
+				case syscall.SIGUSR2:
+			}
+		}
+	}()
 	
 	gHealthCheckMap = map[string]*IpvsHealthCheckBackendServer{}
 	watcher, err := fsnotify.NewWatcher()
@@ -302,10 +348,9 @@ func main() {
 	loadAndStartHealthChecker()
 	
 	watcher.Add(confFile)
-	wg.Add(1)
-	go handleEvents(watcher.Events, watcher.Errors, &wg)
+	go handleEvents(watcher.Events, watcher.Errors)
 
 	// 主线程不能退出
-	wg.Wait()
+	select{}
 	log.Debugf("ipvs healcheck exit")
 }

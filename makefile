@@ -70,7 +70,7 @@ package: clean
 		else echo "$${arch} is not supported"; exit 1; \
 		fi; \
 		CGO_ENABLED=0 $(GO_BUILD) -o $(TARGET_DIR)/zvr_$${UNAME} -ldflags="${LDFLAGS}" zvr/zvr.go; \
-		CGO_ENABLED=0 $(GO_BUILD) -o $(TARGET_DIR)/ipvsHealtCheck_$${UNAME} -ldflags="${LDFLAGS}" ipvs_health_check/*.go; \
+		CGO_ENABLED=0 $(GO_BUILD) -o $(TARGET_DIR)/ipvsHealthCheck_$${UNAME} -ldflags="${LDFLAGS}" ipvs_health_check/*.go; \
 		CGO_ENABLED=0 $(GO_BUILD) -o $(TARGET_DIR)/zvrboot_$${UNAME} -ldflags="${LDFLAGS}" zvrboot/zvrboot.go zvrboot/zvrboot_utils.go; \
 	done
 	mkdir -p $(PKG_ZVR_DIR)
@@ -84,7 +84,7 @@ package: clean
   		else echo "$${arch} is not supported"; exit 1; \
   		fi; \
 		cp -f $(TARGET_DIR)/zvr_$${UNAME} $(FILE_LIST_ZVR); \
-		cp -f $(TARGET_DIR)/ipvsHealtCheck_$${UNAME} $(FILE_LIST_ZVR); \
+		cp -f $(TARGET_DIR)/ipvsHealthCheck_$${UNAME} $(FILE_LIST_ZVR); \
 		cp -f $(TARGET_DIR)/zvrboot_$${UNAME} $(PKG_ZVRBOOT_DIR); \
 	done
 	cp -f scripts/grub.cfg.5.4.80 $(PKG_ZVR_DIR)
@@ -105,7 +105,7 @@ tar: clean
 		else echo "$${arch} is not supported"; exit 1; \
 		fi; \
 		CGO_ENABLED=0 $(GO_BUILD) -o $(TARGET_DIR)/zvr_$${UNAME} -ldflags="${LDFLAGS}" zvr/zvr.go; \
-		CGO_ENABLED=0 $(GO_BUILD) -o $(TARGET_DIR)/ipvsHealtCheck_$${UNAME} -ldflags="${LDFLAGS}" ipvs_health_check/*.go; \
+		CGO_ENABLED=0 $(GO_BUILD) -o $(TARGET_DIR)/ipvsHealthCheck_$${UNAME} -ldflags="${LDFLAGS}" ipvs_health_check/*.go; \
 		CGO_ENABLED=0 $(GO_BUILD) -o $(TARGET_DIR)/zvrboot_$${UNAME} -ldflags="${LDFLAGS}" zvrboot/zvrboot.go zvrboot/zvrboot_utils.go; \
 	done
 	for arch in ${ARCH}; do \
@@ -115,7 +115,7 @@ tar: clean
 		else echo "$${arch} is not supported"; exit 1; \
 		fi; \
 		cp -f $(TARGET_DIR)/zvr_$${UNAME} $(FILE_LIST_TAR); \
-		cp -f $(TARGET_DIR)/ipvsHealtCheck_$${UNAME} $(FILE_LIST_TAR); \
+		cp -f $(TARGET_DIR)/ipvsHealthCheck_$${UNAME} $(FILE_LIST_TAR); \
 		cp -f $(TARGET_DIR)/zvrboot_$${UNAME} $(FILE_LIST_TAR); \
 	done
 	cp -f scripts/grub.cfg.5.4.80 $(PKG_TAR_DIR)
