@@ -156,6 +156,12 @@ func (ipvs *IpvsConf) ipvsadmSave() *IpvsConf {
 	}
 
 	ipvs.ParseIpvs(o)
+	for _, fs := range ipvs.Services {
+		log.Debugf("IpvsConf: frontend: %+v", fs)
+		for _, bs := range fs.BackendServers {
+			log.Debugf("\t\tbackend: %+v", bs)
+		}
+	}
 	return ipvs
 }
 
@@ -254,7 +260,6 @@ func (ipvs *IpvsConf) ParseIpvs(content string) error {
 			param.balancerAlgorithm = scheduler
 			
 			service = NewIpvsFrontService(info, param, ip,  map[string]*IpvsBackendServer{})
-			log.Debugf("frontend from command %+v", service)
 			services[service.getFrontendServiceKey()] = service
 		} else if items[0] == "-a" {
 			backendIpPorts := strings.Split(items[4], ":")
@@ -264,8 +269,7 @@ func (ipvs *IpvsConf) ParseIpvs(content string) error {
 			service.ConnectionType = items[5]
 			weight := items[7]
 			backend := NewIpvsBackendServer(backendIp,  backendPort, weight, service)
-			log.Debugf("backend from command %+v", backend)
-			service.BackendServers[backend.getBackendKey()] = backend
+			service.BackendServers[backend.GetBackendKey()] = backend
 		}
 	}
 
@@ -475,7 +479,7 @@ func RefreshIpvsService(lbs map[string]LbInfo) error {
 					if lbParam.healthCheckPort == 0 {
 						server.healthCheckPort = lb.InstancePort
 					}
-					fs4.BackendServers[server.getBackendKey()] = server
+					fs4.BackendServers[server.GetBackendKey()] = server
 				}
 				
 				if lb.Vip6 != "" {
@@ -483,7 +487,7 @@ func RefreshIpvsService(lbs map[string]LbInfo) error {
 					if lbParam.healthCheckPort == 0 {
 						server.healthCheckPort = lb.InstancePort
 					}
-					fs6.BackendServers[server.getBackendKey()] = server
+					fs6.BackendServers[server.GetBackendKey()] = server
 				}
 			}
 		}
@@ -537,8 +541,13 @@ func DelIpvsService(lbs map[string]LbInfo) {
 }
 
 
-func (bs *IpvsBackendServer) getBackendKey() string {
-	return bs.ProtocolType + "-" + bs.FrontIp + "-" + bs.FrontPort + "-" + bs.BackendIp + "-" + bs.BackendPort
+func (bs *IpvsBackendServer) GetBackendKey() string {
+	proto := "udp"
+	if strings.ToLower(bs.ProtocolType) == "tcp" || strings.ToLower(bs.ProtocolType) == "-t" {
+		proto = "tcp"
+	}
+	
+	return proto + "-" + bs.FrontIp + "-" + bs.FrontPort + "-" + bs.BackendIp + "-" + bs.BackendPort
 }
 
 func getIpvsBackend(proto, frontIp, frontPort, backendIp, backendPort string) *IpvsBackendServer {
@@ -666,7 +675,6 @@ UDP  172.25.116.175:8080                 0        0        0        0        0
 			bs.Counter.Status = 1
 			bs.Counter.bytesIn, _ = strconv.ParseUint(strings.Trim(items[5], " "), 10, 64)
 			bs.Counter.bytesOut, _ = strconv.ParseUint(strings.Trim(items[6], " "), 10, 64)
-			log.Debugf("backend server %p %+v", bs, bs)
 		} else {
 			frontIp = ""
 			frontPort = ""
@@ -721,16 +729,9 @@ TCP  172.25.116.175:80 rr
 			bs.Counter.concurrentSessionNumber = bs.Counter.sessionNumber
 			bs.Counter.refusedSessionNumber, _ = strconv.ParseUint(strings.Trim(items[5], " "), 10, 64)
 			bs.Counter.totalSessionNumber = bs.Counter.sessionNumber + bs.Counter.refusedSessionNumber
-			log.Debugf("backend server 2 %p %+v", bs, bs)
 		} else {
 			frontIp = ""
 			frontPort = ""
-		}
-	}
-
-	for _, fs := range gIpvsConf.Services {
-		for _, bs := range fs.BackendServers {
-			log.Debugf("ipvs conf backend server %p %+v", bs, bs)
 		}
 	}
 }

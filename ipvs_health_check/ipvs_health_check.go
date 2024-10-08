@@ -43,7 +43,12 @@ func parseCommandOptions() {
 }
 
 func (bs *IpvsHealthCheckBackendServer) getBackendKey() string {
-	return bs.ProtocolType + "-" + bs.FrontIp + "-" + bs.FrontPort + "-" + bs.BackendIp + "-" + bs.BackendPort
+	proto := "udp"
+	if strings.ToLower(bs.ProtocolType) == "tcp" || strings.ToLower(bs.ProtocolType) == "-t" {
+		proto = "tcp"
+	}
+	
+	return proto + "-" + bs.FrontIp + "-" + bs.FrontPort + "-" + bs.BackendIp + "-" + bs.BackendPort
 }
 
 func (bs *IpvsHealthCheckBackendServer) doHealthCheck() {
@@ -61,8 +66,12 @@ func (bs *IpvsHealthCheckBackendServer) Install()  {
 	healthCheckLock.Lock()
 	defer healthCheckLock.Unlock()
 	num :=0
-	for _, bs := range gHealthCheckMap {
-		if bs.status {
+	for _, gbs := range gHealthCheckMap {
+		if bs.FrontIp != gbs.FrontIp || bs.FrontPort != gbs.FrontPort || bs.ProtocolType != gbs.ProtocolType {
+			continue
+		}
+		
+		if gbs.status {
 			num++
 		}
 	}
@@ -106,8 +115,12 @@ func (bs *IpvsHealthCheckBackendServer) UnInstall()  {
 	healthCheckLock.Lock()
 	defer healthCheckLock.Unlock()
 	num := 0
-	for _, bs := range gHealthCheckMap {
-		if bs.status {
+	for _, gbs := range gHealthCheckMap {
+		if bs.FrontIp != gbs.FrontIp || bs.FrontPort != gbs.FrontPort || bs.ProtocolType != gbs.ProtocolType {
+			continue
+		}
+		
+		if gbs.status {
 			num++
 		}
 	}
