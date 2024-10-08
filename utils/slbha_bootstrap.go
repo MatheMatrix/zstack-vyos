@@ -1,7 +1,6 @@
 package utils
 
-func SetupSlbHaBootStrap()(NicInfo, NicInfo, NicInfo) {
-	/* we use mac vtap nic to simlate slb instance nic */
+func GetSlbHaBootStrap()(NicInfo, NicInfo, NicInfo) {
 	err := IpLinkAdd("ut-mgt", IpLinkTypeVeth.String())
 	PanicOnError(err)
 	mgtMac, _ := IpLinkGetMAC("ut-mgt")
@@ -122,8 +121,7 @@ func SetupSlbHaBootStrap()(NicInfo, NicInfo, NicInfo) {
 }
 
 func DestroySlbHaBootStrap() {
-	err := IpLinkDel("ut-mgt")
-	PanicOnError(err)
+	IpLinkDel("ut-mgt")
 	IpLinkDel("ut-pub")
 	IpLinkDel("ut-pri")
 }

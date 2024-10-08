@@ -140,7 +140,15 @@ func IpLinkAdd(linkName string, linkType string) error {
 			LinkAttrs: netlink.LinkAttrs{
 				Name: linkName,
 			},
-			PeerName: linkName+"-peer",
+			PeerName: peerName,
+		}
+		
+		if _, err = netlink.LinkByName(linkName); err == nil {
+			IpLinkDel(linkName)
+		}
+
+		if _, err = netlink.LinkByName(peerName); err == nil {
+			IpLinkDel(peerName)
 		}
 		
 		if err := netlink.LinkAdd(veth); err != nil {
@@ -397,23 +405,4 @@ func IpLinkSetMaster(linkName string, masterName string) error {
 
 		return netlink.LinkSetMaster(l, master)
 	}
-}
-
-func AddVethPair(name1, name2 string) error {
-	veth := &netlink.Veth{
-		LinkAttrs: netlink.LinkAttrs{
-			Name: name1,
-		},
-		PeerName: name2,
-	}
-	
-	if err := netlink.LinkAdd(veth); err != nil {
-		return err
-	}
-	
-	if err := netlink.LinkSetUp(veth); err != nil {
-		return err
-	}
-
-	return nil
 }

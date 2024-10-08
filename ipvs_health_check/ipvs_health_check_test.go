@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 	"zstack-vyos/plugin"
 	"zstack-vyos/utils"
@@ -46,7 +45,7 @@ var _ = Describe("ipvs health check test", func() {
 	
 	It("ipvs health check: prepare env", func() {
 		utils.InitLog(utils.GetVyosUtLogDir()+"ipvs_health_check.log", true)
-		mgtNicForUT, pubNicForUT, priNicForUT = utils.SetupSlbHaBootStrap()
+		mgtNicForUT, pubNicForUT, priNicForUT = utils.GetSlbHaBootStrap()
 		nicCmd := &plugin.ConfigureNicCmd {
 			Nics: []utils.NicInfo{mgtNicForUT},
 		}
@@ -68,6 +67,44 @@ var _ = Describe("ipvs health check test", func() {
 		utils.PanicOnError(err)
 	})
 
+	It("ipvs health check: test start process", func() {
+		binPath := plugin.IPVS_HEALTH_CHECK_BIN_FILE
+		if utils.IsVYOS() {
+			binPath = plugin.IPVS_HEALTH_CHECK_BIN_FILE_VYOS
+		}
+	
+		b := utils.Bash{
+			Command: fmt.Sprintf("nohup %s -f %s -log %s -p %s > /dev/null 2>&1 &", binPath, 
+				plugin.IPVS_HEALTH_CHECK_CONFIG_FILE, plugin.IPVS_HEALTH_CHECK_LOG_FILE,
+				plugin.IPVS_HEALTH_CHECK_PID_FILE),
+			Sudo: true,
+		}
+		err := b.Run()
+		Expect(err).To(BeNil(), "start ipvs health check again failed")
+		pid, _ := utils.FindFirstPID(binPath)
+		Expect(pid > 0).To(BeTrue(), "pid should be greater than 0")
+		
+		b.Run()
+		pid1, _ := utils.FindFirstPID(binPath)
+		Expect(pid == pid1).To(BeTrue(), "same process")
+
+		b = utils.Bash{
+			Command: fmt.Sprintf("pkill -9 ipvsHealthCheck; nohup %s -f %s -log %s -p %s > /dev/null 2>&1 &", binPath, 
+				plugin.IPVS_HEALTH_CHECK_CONFIG_FILE, plugin.IPVS_HEALTH_CHECK_LOG_FILE,
+				plugin.IPVS_HEALTH_CHECK_PID_FILE),
+			Sudo: true,
+		}
+		b.Run()
+		pid, _ = utils.FindFirstPID(binPath)
+		Expect(pid > 0).To(BeTrue(), "pid should be greater than 0")
+
+		b = utils.Bash{
+			Command: "pkill -9 ipvsHealthCheck",
+			Sudo: true,
+		}
+		b.Run()
+	})
+
 	It("ipvs health check: test loadAndStartHealthChecker", func() {
 		setHealthCheckMapForUT(map[string]*IpvsHealthCheckBackendServer{})
 		fs := plugin.IpvsHealthCheckFrontService{
@@ -85,16 +122,14 @@ var _ = Describe("ipvs health check test", func() {
 		conf := plugin.IpvsHealthCheckConf{
 			Services: []*plugin.IpvsHealthCheckFrontService{&fs}}
 			
-		var wg sync.WaitGroup
 		watcher, err := fsnotify.NewWatcher()
 		utils.PanicOnError(err)
 		defer watcher.Close()
 
 		setConfFileForUT(plugin.IPVS_HEALTH_CHECK_CONFIG_FILE)
 		watcher.Add(plugin.IPVS_HEALTH_CHECK_CONFIG_FILE)
-		wg.Add(1)
 		
-		go handleEvents(watcher.Events, watcher.Errors, &wg)
+		go handleEvents(watcher.Events, watcher.Errors)
 		/* 更新 配置文件 */
 		utils.JsonStoreConfig(plugin.IPVS_HEALTH_CHECK_CONFIG_FILE, conf)
 		time.Sleep(time.Duration(2*time.Second))

@@ -32,6 +32,7 @@ const(
 	IPVS_HEALTH_CHECK_BIN_FILE_VYOS = "/opt/vyatta/sbin/ipvsHealthCheck"
 	IPVS_HEALTH_CHECK_CONFIG_FILE = "/etc/ipvs/healthcheck.conf"
 	IPVS_HEALTH_CHECK_LOG_FILE = "/var/log/ipvs_health_check.log"
+	IPVS_HEALTH_CHECK_PID_FILE = "/var/run/ipvs_health_check.pid"
 )
 
 func (cType IpvsConnectionType) String() string {
@@ -135,7 +136,8 @@ type IpvsConf struct{
 	Services map[string]*IpvsFrontendService
 }
 
-var gIpvsConf IpvsConf
+var gIpvsConf *IpvsConf
+var ipvsHealthCheckPidMon *utils.PidMon
 
 func getIpvsConf() string {
 	return filepath.Join(getLbConfDir(), "ipvs.conf")
@@ -309,7 +311,9 @@ func NewIpvsConfFromSave() *IpvsConf {
 func (conf *IpvsConf) SaveIpvsHealthCheckFile() error {
 	hcConf := IpvsHealthCheckConf{}
 	hcConf.FromIpvsConf(conf)
-	return utils.JsonStoreConfig(IPVS_HEALTH_CHECK_CONFIG_FILE, hcConf)
+	err := utils.JsonStoreConfig(IPVS_HEALTH_CHECK_CONFIG_FILE, hcConf)
+	
+	return err
 }
 
 type IpvsHealthCheckBackendServer struct {
@@ -417,7 +421,8 @@ func (hcConf *IpvsHealthCheckConf) FromIpvsConf(conf *IpvsConf) *IpvsHealthCheck
 	return hcConf
 }
 
-func (fs IpvsFrontendService) EnableIpvsLog() (err error) {
+func (fs *IpvsFrontendService) EnableIpvsLog() (err error) {
+	
 	ipset := utils.GetIpSet(IPVS_LOG_IPSET_NAME)
 	ipset.Member = []string{}
 	protol := "udp"
@@ -430,7 +435,7 @@ func (fs IpvsFrontendService) EnableIpvsLog() (err error) {
 	return nil
 }
 
-func (fs IpvsFrontendService) DisableIpvsLog() (err error) {
+func (fs *IpvsFrontendService) DisableIpvsLog() (err error) {
 	ipset := utils.GetIpSet(IPVS_LOG_IPSET_NAME)
 	ipset.Member = []string{}
 	protol := "udp"
@@ -484,7 +489,7 @@ func RefreshIpvsService(lbs map[string]LbInfo) error {
 		}
 	}
 
-	gIpvsConf := &IpvsConf{Services: services}
+	gIpvsConf = &IpvsConf{Services: services}
 	/* save health check config file */
 	err := gIpvsConf.SaveIpvsHealthCheckFile()
 	utils.PanicOnError(err)
@@ -547,6 +552,7 @@ func getIpvsBackend(proto, frontIp, frontPort, backendIp, backendPort string) *I
 		}
 	}
 	
+	log.Debugf("backend not found for :%s-%s-%s-%s-%s-%s", proto, frontIp, frontPort, backendIp, backendPort)
 	return nil
 }
 
@@ -557,6 +563,7 @@ func GetIpvsFrontService(listenerUuid string) *IpvsFrontendService {
 		}
 	}
 	
+	log.Debugf("frontend not found for listenerUuid :%s", listenerUuid)
 	return nil
 }
 
@@ -595,7 +602,6 @@ func UpdateIpvsMetrics(c *loadBalancerCollector, ch chan<- prom.Metric) (err err
 }
 
 func UpdateIpvsCounters() {
-	
 	for _, fs := range gIpvsConf.Services {
 		for _, bs := range fs.BackendServers {
 			/* if it can not be updated by ipvsadm -L -n --stats, it's down*/
@@ -729,6 +735,10 @@ TCP  172.25.116.175:80 rr
 	}
 }
 
+func StopIpvsHealthCheck() {
+	ipvsHealthCheckPidMon.Destroy()
+}
+
 func InitIpvs() {
 	/* add ipvs ipset */
 	eipIpset = utils.NewIPSet(IPVS_LOG_IPSET_NAME, utils.IPSET_TYPE_HASH_IP_PORT)
@@ -754,23 +764,28 @@ func InitIpvs() {
 	if utils.IsVYOS() {
 		binPath = IPVS_HEALTH_CHECK_BIN_FILE_VYOS
 	}
-	pid, _ := utils.FindFirstPIDByPSExtern(true, IPVS_HEALTH_CHECK_BIN_FILE)
+	pid, _ := utils.FindFirstPIDByPSExtern(true, binPath)
 	if pid < 0 {
+		log.Debugf("start ipvs health check")
 		b := utils.Bash{
-			Command: fmt.Sprintf("%s -f %s -log %s &", binPath, 
-				IPVS_HEALTH_CHECK_CONFIG_FILE, IPVS_HEALTH_CHECK_LOG_FILE),
+			Command: fmt.Sprintf("nohup %s -f %s -log %s -p %s > /dev/null 2>&1 &", binPath, 
+				IPVS_HEALTH_CHECK_CONFIG_FILE, IPVS_HEALTH_CHECK_LOG_FILE,
+				IPVS_HEALTH_CHECK_PID_FILE),
 			Sudo: true,
 		}
 		err := b.Run()
 		utils.PanicOnError(err)
 	}
 
-	pid, _ = utils.FindFirstPIDByPSExtern(true, IPVS_HEALTH_CHECK_BIN_FILE)
-	pm := utils.NewPidMon(pid, func() int {
+	pid, _ = utils.FindFirstPIDByPSExtern(true, binPath)
+	log.Debugf("ipvs health check pid %d", pid)
+	
+	ipvsHealthCheckPidMon = utils.NewPidMon(pid, func() int {
 		log.Warnf("start ipvs health check in PidMon")
-		b := utils.Bash{
-			Command: fmt.Sprintf("%s -f %s -log %s &", binPath, 
-				IPVS_HEALTH_CHECK_CONFIG_FILE, IPVS_HEALTH_CHECK_LOG_FILE),
+		b := utils.Bash {
+			Command: fmt.Sprintf("nohup %s -f %s -log %s -p %s > /dev/null 2>&1 &", binPath, 
+				IPVS_HEALTH_CHECK_CONFIG_FILE, IPVS_HEALTH_CHECK_LOG_FILE,
+				IPVS_HEALTH_CHECK_PID_FILE),
 			Sudo: true,
 		}
 		err := b.Run()
@@ -788,5 +803,5 @@ func InitIpvs() {
 		return pid
 	})
 	log.Debugf("created lvs health check PidMon")
-	pm.Start()
+	ipvsHealthCheckPidMon.Start()
 }

@@ -32,7 +32,7 @@ logrotate.ipvsHealthCheck /etc/logrotate.d/ipvsHealthCheck                      
 # format: [source file]  [dst file]  [file mode]  [file owner]
 #
 zvr_x86_64       __BIN_PATH__/zvr                       0755      __USER__:users
-ipvsHealtCheck_x86_64       __BIN_PATH__/ipvsHealtCheck                       0755      __USER__:users
+ipvsHealthCheck_x86_64       __BIN_PATH__/ipvsHealthCheck                       0755      __USER__:users
 
 [[ARM]]
 # this files just for aarch64

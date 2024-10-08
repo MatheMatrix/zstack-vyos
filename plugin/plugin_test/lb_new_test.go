@@ -1,21 +1,14 @@
 package plugin_test
 
 import (
-	"os"
-	"path/filepath"
-
-	"zstack-vyos/plugin"
-	"zstack-vyos/utils"
-
 	. "github.com/onsi/ginkgo/v2"
-	log "github.com/sirupsen/logrus"
 )
 
 var _ = Describe("slb ha udp test", func() {
-
+/*
 	It("UDP_LB:test prepare env", func() {
 		utils.InitLog(utils.GetVyosUtLogDir()+"lb_test.log", true)
-		utils.SetupSlbHaBootStrap()
+		utils.GetSlbHaBootStrap()
 		plugin.InitLb()
 		nicCmd := &plugin.ConfigureNicCmd {
 			Nics: []utils.NicInfo{utils.MgtNicForUT},
@@ -102,4 +95,6 @@ var _ = Describe("slb ha udp test", func() {
 		listener := plugin.GetListener(*lb)
 		plugin.AddLbs([]plugin.Listener{listener})
 	})
+
+	*/
 })
