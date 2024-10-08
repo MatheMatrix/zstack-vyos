@@ -1,6 +1,19 @@
 package utils
 
-func GetSlbHaBootStrap()(NicInfo, NicInfo, NicInfo) {
+import (
+	"sync"
+)
+
+var slbHaCreated bool
+var slbHaLock sync.Mutex
+
+func SetupSlbHaBootStrap()(NicInfo, NicInfo, NicInfo) {
+	slbHaLock.Lock()
+	defer slbHaLock.Unlock()
+	if slbHaCreated {
+		return MgtNicForUT, PubNicForUT, PriNicForUT
+	}
+	
 	err := IpLinkAdd("ut-mgt", IpLinkTypeVeth.String())
 	PanicOnError(err)
 	mgtMac, _ := IpLinkGetMAC("ut-mgt")
@@ -117,11 +130,17 @@ func GetSlbHaBootStrap()(NicInfo, NicInfo, NicInfo) {
         },
 	}
 
+	slbHaCreated = true
 	return MgtNicForUT, PubNicForUT, PriNicForUT
 }
 
 func DestroySlbHaBootStrap() {
+	slbHaLock.Lock()
+	defer slbHaLock.Unlock()
+	
 	IpLinkDel("ut-mgt")
 	IpLinkDel("ut-pub")
 	IpLinkDel("ut-pri")
+
+	slbHaCreated = false
 }

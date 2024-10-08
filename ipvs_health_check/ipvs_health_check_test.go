@@ -10,12 +10,16 @@ import (
 	"github.com/fsnotify/fsnotify"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	log "github.com/sirupsen/logrus"
 )
 
 var _ = Describe("ipvs health check test", func() {
 
 	var mgtNicForUT, pubNicForUT, priNicForUT utils.NicInfo
 	bs1 := IpvsHealthCheckBackendServer{}
+	bs1.LbUuid ="lbUuid"
+	bs1.ListenerUuid = "listenerUuid"
 	bs1.ConnectionType = plugin.IpvsConnectionTypeNAT.String()
 	bs1.ProtocolType = "udp"
 	bs1.Scheduler = plugin.IpvsSchedulerRR.String()
@@ -33,19 +37,31 @@ var _ = Describe("ipvs health check test", func() {
 	bs1.MaxConnection = 2000000
 	bs1.MinConnection = 1
 
+	// bs1, bs2 has same front ip and port
+	// bs3, bs4 has same front ip and port
 	bs2 := bs1
 	bs2.BackendIp = "192.168.3.11"
 	bs2.BackendPort = "8081"
+
+	bs3 := bs1
+	bs3.ListenerUuid = "listenerUuid2"
+	bs3.FrontPort=  "81"
+
+	bs4 := bs2
+	bs4.ListenerUuid = "listenerUuid2"
+	bs4.FrontPort=  "81"
 	
 	ctx1, cancel1 := context.WithCancel(context.Background())
 	ctx2, cancel2 := context.WithCancel(context.Background())
 	bsMap  := map[string]*IpvsHealthCheckBackendServer{}
 	bsMap[bs1.getBackendKey()] = &bs1
 	bsMap[bs2.getBackendKey()] = &bs2
+	bsMap[bs3.getBackendKey()] = &bs3
+	bsMap[bs4.getBackendKey()] = &bs4
 	
 	It("ipvs health check: prepare env", func() {
 		utils.InitLog(utils.GetVyosUtLogDir()+"ipvs_health_check.log", true)
-		mgtNicForUT, pubNicForUT, priNicForUT = utils.GetSlbHaBootStrap()
+		mgtNicForUT, pubNicForUT, priNicForUT = utils.SetupSlbHaBootStrap()
 		nicCmd := &plugin.ConfigureNicCmd {
 			Nics: []utils.NicInfo{mgtNicForUT},
 		}
@@ -119,8 +135,22 @@ var _ = Describe("ipvs health check test", func() {
 			BackendServers: []*plugin.IpvsHealthCheckBackendServer{&bs1.IpvsHealthCheckBackendServer,
 				&bs2.IpvsHealthCheckBackendServer},
 		}
+
+		fs1 := plugin.IpvsHealthCheckFrontService{
+			LbUuid: bs3.LbUuid,
+			ListenerUuid: bs3.ListenerUuid,
+			
+			ConnectionType: plugin.IpvsConnectionTypeNAT.String(),
+			ProtocolType: "udp",
+			Scheduler: plugin.IpvsSchedulerRR.String(),
+			FrontIp: bs3.FrontIp,
+			FrontPort: bs3.FrontPort,
+			BackendServers: []*plugin.IpvsHealthCheckBackendServer{&bs3.IpvsHealthCheckBackendServer,
+				&bs4.IpvsHealthCheckBackendServer},
+		}
+		
 		conf := plugin.IpvsHealthCheckConf{
-			Services: []*plugin.IpvsHealthCheckFrontService{&fs}}
+			Services: []*plugin.IpvsHealthCheckFrontService{&fs, &fs1}}
 			
 		watcher, err := fsnotify.NewWatcher()
 		utils.PanicOnError(err)
@@ -133,25 +163,25 @@ var _ = Describe("ipvs health check test", func() {
 		/* 更新 配置文件 */
 		utils.JsonStoreConfig(plugin.IPVS_HEALTH_CHECK_CONFIG_FILE, conf)
 		time.Sleep(time.Duration(2*time.Second))
-		Expect( len(getHealthCheckMapForUT()) == 2).To(BeTrue(), fmt.Sprintf("2 backend server, actual %d", len(gHealthCheckMap)))
+		Expect( len(getHealthCheckMapForUT()) == 4).To(BeTrue(), fmt.Sprintf("4 backend server, actual %d", len(gHealthCheckMap)))
 		
 		fs.BackendServers = []*plugin.IpvsHealthCheckBackendServer{&bs2.IpvsHealthCheckBackendServer}
 		/* 更新 配置文件 */
 		utils.JsonStoreConfig(plugin.IPVS_HEALTH_CHECK_CONFIG_FILE, conf)
 		time.Sleep(time.Duration(2*time.Second))
-		Expect( len(getHealthCheckMapForUT()) == 1).To(BeTrue(), fmt.Sprintf("1 backend server, actual %d", len(gHealthCheckMap)))
+		Expect( len(getHealthCheckMapForUT()) == 3).To(BeTrue(), fmt.Sprintf("1 backend server, actual %d", len(gHealthCheckMap)))
 		
 		fs.BackendServers = []*plugin.IpvsHealthCheckBackendServer{&bs2.IpvsHealthCheckBackendServer, 
 			&bs1.IpvsHealthCheckBackendServer}
 		/* 更新 配置文件 */
 		utils.JsonStoreConfig(plugin.IPVS_HEALTH_CHECK_CONFIG_FILE, conf)
 		time.Sleep(time.Duration(2*time.Second))
-		Expect( len(getHealthCheckMapForUT()) == 2).To(BeTrue(), fmt.Sprintf("2 backend server, actual %d", len(gHealthCheckMap)))
+		Expect( len(getHealthCheckMapForUT()) == 4).To(BeTrue(), fmt.Sprintf("2 backend server, actual %d", len(gHealthCheckMap)))
 		
 		bs2.HealthCheckPort = 9090
 		utils.JsonStoreConfig(plugin.IPVS_HEALTH_CHECK_CONFIG_FILE, conf)
 		time.Sleep(time.Duration(2*time.Second))
-		Expect( len(getHealthCheckMapForUT()) == 2).To(BeTrue(), fmt.Sprintf("2 backend server, actual %d", len(gHealthCheckMap)))
+		Expect( len(getHealthCheckMapForUT()) == 4).To(BeTrue(), fmt.Sprintf("2 backend server, actual %d", len(gHealthCheckMap)))
 		for _, bs := range getHealthCheckMapForUT() {
 			if bs.getBackendKey() == bs2.getBackendKey() {
 				Expect(bs.HealthCheckPort == 9090).To(BeTrue(), fmt.Sprintf("bs2 HealthCheckPort should be 9090 , actual %d", bs.HealthCheckPort))
@@ -159,6 +189,7 @@ var _ = Describe("ipvs health check test", func() {
 		}
 
 		fs.BackendServers = []*plugin.IpvsHealthCheckBackendServer{}
+		fs1.BackendServers = []*plugin.IpvsHealthCheckBackendServer{}
 		/* 更新 配置文件 */
 		utils.JsonStoreConfig(plugin.IPVS_HEALTH_CHECK_CONFIG_FILE, conf)
 		time.Sleep(time.Duration(2*time.Second))
@@ -268,6 +299,9 @@ var _ = Describe("ipvs health check test", func() {
 		Expect( len(ipvsConf.Services) == 0).To(BeTrue(), "0 ipvs service")
 
 		/*start udp server for bs1, bs2 again */
+		go bs3.Start()
+		go bs4.Start()
+		
 		ctx1, cancel1 = context.WithCancel(context.Background())
 		ctx2, cancel2 = context.WithCancel(context.Background())
 		go utils.StartUdpServer(bs1.BackendIp, 8080, ctx1)
@@ -275,29 +309,44 @@ var _ = Describe("ipvs health check test", func() {
 		time.Sleep(time.Duration(wait) * time.Second)
 		Expect(bs1.status).To(BeTrue(), "bs1 is up")
 		Expect(bs2.status).To(BeTrue(), "bs2 is ip")
+		Expect(bs3.status).To(BeTrue(), "bs3 is ip")
+		Expect(bs4.status).To(BeTrue(), "bs4 is ip")
 		ipvsConf = plugin.NewIpvsConfFromSave()
-		Expect( len(ipvsConf.Services) == 1).To(BeTrue(), "1 ipvs service")
+		Expect( len(ipvsConf.Services) == 2).To(BeTrue(), "2 ipvs service")
 		foundBs1 = false
 		foundBs2 = false
+		foundBs3 := false
+		foundBs4 := false
 		for _, fs := range ipvsConf.Services {
 			for _, bs := range fs.BackendServers {
-				if bs.BackendIp == bs1.BackendIp && bs.BackendPort == bs1.BackendPort {
+				log.Debugf("bs key: %s: bs1 key: %s", bs.GetBackendKey(), bs1.getBackendKey())
+				if bs.GetBackendKey() == bs1.getBackendKey() {
 					foundBs1 = true
-				} else if bs.BackendIp == bs2.BackendIp && bs.BackendPort == bs2.BackendPort {
+				} else if bs.GetBackendKey() == bs2.getBackendKey() {
 					foundBs2 = true
+				} else if bs.GetBackendKey() == bs3.getBackendKey() {
+					foundBs3 = true
+				} else if bs.GetBackendKey() == bs4.getBackendKey() {
+					foundBs4 = true
 				}
 			}
 			Expect( len(fs.BackendServers) == 2).To(BeTrue(), "2 backends is up")
 		}
 		Expect( foundBs1).To(BeTrue(), "bs1 is up")
 		Expect( foundBs2).To(BeTrue(), "bs2 is up")
+		Expect( foundBs3).To(BeTrue(), "bs3 is up")
+		Expect( foundBs4).To(BeTrue(), "bs4 is up")
 		
 		/*stop bs1, bs2 */
 		bs1.Stop()
 		bs2.Stop()
+		bs3.Stop()
+		bs4.Stop()
 		time.Sleep(time.Duration(wait) * time.Second)
 		Expect(bs1.status).To(BeFalse(), "bs1 is down")
 		Expect(bs2.status).To(BeFalse(), "bs2 is down")
+		Expect(bs3.status).To(BeFalse(), "bs1 is down")
+		Expect(bs4.status).To(BeFalse(), "bs2 is down")
 		ipvsConf = plugin.NewIpvsConfFromSave()
 		Expect( len(ipvsConf.Services) == 0).To(BeTrue(), fmt.Sprintf("0 ipvs service, actual %d", len(ipvsConf.Services)))
 	})
