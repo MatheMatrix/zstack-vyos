@@ -350,7 +350,7 @@ var _ = Describe("ipvs test", func() {
 			lb.ServerGroups = []plugin.ServerGroupInfo{sg}
 			lb.RedirectRules = nil
 
-			plugin.DelIpvsService(map[string]plugin.LbInfo{lb.ListenerUuid: lb})
+			plugin.DelIpvsService(map[string]plugin.LbInfo{lb.ListenerUuid: lb, lb1.ListenerUuid: lb1})
 
 			// check ipset config 
 			ipsetGroup := utils.GetIpSet(plugin.IPVS_LOG_IPSET_NAME)

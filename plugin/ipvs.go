@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"html/template"
+	"net"
 	"os"
 	"path/filepath"
 
@@ -433,8 +434,14 @@ func (fs *IpvsFrontendService) EnableIpvsLog() (err error) {
 	if fs.ProtocolType == "-t" {
 		protol = "tcp"
 	}
+
+	frontIp := fs.FrontIp
+	ip := net.ParseIP(frontIp)
+	if ip != nil && ip.To4() == nil{
+		frontIp = fmt.Sprintf("[%s]", frontIp)
+	}
 	
-	ipset.AddMember([]string{fs.FrontIp + "," + protol + ":" + fs.FrontPort})
+	ipset.AddMember([]string{frontIp + "," + protol + ":" + fs.FrontPort})
 
 	return nil
 }
@@ -447,7 +454,13 @@ func (fs *IpvsFrontendService) DisableIpvsLog() (err error) {
 		protol = "tcp"
 	}
 	
-	ipset.DeleteMember([]string{fs.FrontIp + "," + protol +":" + fs.FrontPort})
+	frontIp := fs.FrontIp
+	ip := net.ParseIP(frontIp)
+	if ip != nil && ip.To4() == nil{
+		frontIp = fmt.Sprintf("[%s]", frontIp)
+	}
+	
+	ipset.DeleteMember([]string{frontIp + "," + protol +":" + fs.FrontPort})
 
 	return nil
 }
@@ -741,6 +754,8 @@ func StopIpvsHealthCheck() {
 }
 
 func InitIpvs() {
+	gIpvsConf = &IpvsConf{}
+	
 	/* add ipvs ipset */
 	eipIpset = utils.NewIPSet(IPVS_LOG_IPSET_NAME, utils.IPSET_TYPE_HASH_IP_PORT)
 	if err := eipIpset.Create(); err != nil {
