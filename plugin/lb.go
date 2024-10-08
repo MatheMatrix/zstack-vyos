@@ -1353,7 +1353,7 @@ func makeLbSocketPath(lb LbInfo) string {
 	return filepath.Join(getLbSocketDir(), fmt.Sprintf("%s.sock", lb.ListenerUuid))
 }
 
-type refreshLbCmd struct {
+type RefreshLbCmd struct {
 	Lbs              []LbInfo `json:"lbs"`
 	EnableHaproxyLog bool     `json:"enableHaproxyLog"`
 }
@@ -1519,10 +1519,6 @@ func addRuleForTcpSyncByIptables(lbs []Listener) error {
 
 /* add iptables rule: drop tcp sync packet to avoid haproxy refused the new tcp connection */
 func addPreRulesForLbs(lbs []Listener) error {
-	for _, lb := range lbs {
-		lb.startPidMonitor()
-	}
-
 	tcpLbs := []Listener{}
 	for _, lb := range lbs {
 		if lb.getLbInfo().Mode != "udp" {
@@ -1965,13 +1961,12 @@ func AddLbs(lbs []Listener) error {
 	return nil
 }
 
-func refreshLb(ctx *server.CommandContext) interface{} {
+func RefreshLbInternal(cmd *RefreshLbCmd) {
 	toDeleted := []Listener{}
 	toAdded := []Listener{}
 	ipvsAdded := map[string]LbInfo{}
 	ipvsDeleted := map[string]LbInfo{}
-	cmd := &refreshLbCmd{}
-	ctx.GetCommand(cmd)
+	
 	EnableHaproxyLog = cmd.EnableHaproxyLog
 	for _, lb := range cmd.Lbs {
 		if lb.Mode == LB_MODE_UDP {
@@ -2015,9 +2010,15 @@ func refreshLb(ctx *server.CommandContext) interface{} {
 	if len(ipvsAdded) > 0 {
 		RefreshIpvsService(ipvsAdded)
 	}
+	
+}
+
+func refreshLb(ctx *server.CommandContext) interface{} {
+	cmd := &RefreshLbCmd{}
+	ctx.GetCommand(cmd)
+	RefreshLbInternal(cmd)
 
 	removeUnusedCertificate()
-
 	return nil
 }
 
@@ -2042,10 +2043,7 @@ func delLbs(lbs []Listener) error {
 	return nil
 }
 
-func deleteLb(ctx *server.CommandContext) interface{} {
-	cmd := &deleteLbCmd{}
-	ctx.GetCommand(cmd)
-
+func DeleteLbInternal(cmd *deleteLbCmd) {
 	toDeleted := []Listener{}
 	ipvs := map[string]LbInfo{}
 	if len(cmd.Lbs) > 0 {
@@ -2074,7 +2072,14 @@ func deleteLb(ctx *server.CommandContext) interface{} {
 	if len(ipvs) >= 0 {
 		DelIpvsService(ipvs)
 	}
+}
 
+func deleteLb(ctx *server.CommandContext) interface{} {
+	cmd := &deleteLbCmd{}
+	ctx.GetCommand(cmd)
+
+	DeleteLbInternal(cmd)
+	
 	removeUnusedCertificate()
 
 	return nil
@@ -2367,7 +2372,7 @@ func (c *loadBalancerCollector) Update(metricCh chan<- prom.Metric) error {
 			TransformToMetric(c, listenerUuid, listener, metricCh)
 		}
 	}
-
+	
 	return nil
 }
 
