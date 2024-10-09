@@ -14,7 +14,8 @@ import (
 
 var _ = Describe("ipvs test", func() {
 	Context("slbha ipvs test", func() {
-		var mgtNicForUT, pubNicForUT, priNicForUT utils.NicInfo
+		utils.InitLog(utils.GetVyosUtLogDir()+"ipvs.log", true)
+		mgtNicForUT, pubNicForUT, priNicForUT := utils.SetupSlbHaBootStrap()
 		lb := plugin.LbInfo{}
 		lb.LbUuid = "f2c7b2ff2f834e1ea20363f49122a3b4"
 		lb.ListenerUuid = "23fb656e4f324e74a4889582104fcbf0"
@@ -75,8 +76,6 @@ var _ = Describe("ipvs test", func() {
 		}
 		
 		It("ipvs :test prepare env", func() {
-			utils.InitLog(utils.GetVyosUtLogDir()+"ipvs.log", true)
-			mgtNicForUT, pubNicForUT, priNicForUT = utils.SetupSlbHaBootStrap()
 			nicCmd := &plugin.ConfigureNicCmd {
 				Nics: []utils.NicInfo{mgtNicForUT},
 			}

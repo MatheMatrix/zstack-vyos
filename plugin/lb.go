@@ -38,6 +38,8 @@ const (
 	CREATE_CERTIFICATES_PATH   = "/certificates/create"
 
 	LB_MODE_HTTPS = "https"
+	LB_MODE_HTTP = "http"
+	LB_MODE_TCP = "tcp"
 	LB_MODE_UDP = "udp"
 
 	LB_BACKEND_PREFIX_REG = "^nic-"
@@ -1601,7 +1603,6 @@ func addRuleForTcpListenerByVyos(lbs []Listener) error {
 
 		changed = true
 		des := makeLbFirewallRuleDescription(info)
-		localICMPDes := makeLbFirewallLocalICMPRuleDescription(info)
 		nicname, err := utils.GetNicNameByMac(info.PublicNic)
 		utils.PanicOnError(err)
 		if r := tree.FindFirewallRuleByDescription(nicname, "local", des); r == nil {
@@ -1618,14 +1619,6 @@ func addRuleForTcpListenerByVyos(lbs []Listener) error {
 				fmt.Sprintf("protocol tcp"),
 				"action accept",
 			)
-		}
-	
-		if r := tree.FindFirewallRuleByDescription(nicname, "local", localICMPDes); r == nil {
-			tree.SetFirewallOnInterface(nicname, "local",
-				fmt.Sprintf("destination address %v", info.Vip),
-				fmt.Sprintf("description %v", localICMPDes),
-				"protocol icmp",
-				"action accept")
 		}
 	
 		tree.AttachFirewallToInterface(nicname, "local")	
@@ -1689,7 +1682,6 @@ func addRuleForUdpListenerByVyos(lbs []Listener) error {
 		gbl := lb.(*GBListener)
 		changed = true
 		des := makeLbFirewallRuleDescription(info)
-		localICMPDes := makeLbFirewallLocalICMPRuleDescription(info)
 		nicname, err := utils.GetNicNameByMac(info.PublicNic)
 		utils.PanicOnError(err)
 		if r := tree.FindFirewallRuleByDescription(nicname, "local", des); r == nil {
@@ -1716,15 +1708,6 @@ func addRuleForUdpListenerByVyos(lbs []Listener) error {
 				fmt.Sprintf("protocol udp"),
 				"action accept",
 			)
-		}
-
-		if r := tree.FindFirewallRuleByDescription(nicname, "local", localICMPDes); r == nil {
-			tree.SetFirewallOnInterface(nicname, "local",
-				fmt.Sprintf("destination address %v", info.Vip),
-				fmt.Sprintf("description %v", localICMPDes),
-				fmt.Sprintf("destination address %v", info.Vip),
-				"protocol icmp",
-				"action accept")
 		}
 
 		tree.AttachFirewallToInterface(nicname, "local")

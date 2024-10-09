@@ -53,7 +53,9 @@ type IpTableMatcher struct {
 	mark             int
 	markType         IptablesMarkType
 	srcIpSet         string
+	srcIpPortSet         string
 	dstIpSet         string
+	dstIpPortSet         string
 }
 
 var icmpTypeToCode = map[string]string{
@@ -192,8 +194,18 @@ func (r *IpTableRule) SetSrcIpset(srcIpSet string) *IpTableRule {
 	return r
 }
 
+func (r *IpTableRule) SetSrcIpPortset(srcIpPortSet string) *IpTableRule {
+	r.srcIpPortSet = srcIpPortSet
+	return r
+}
+
 func (r *IpTableRule) SetDstIpset(dstIpSet string) *IpTableRule {
 	r.dstIpSet = dstIpSet
+	return r
+}
+
+func (r *IpTableRule) SetDstIpPortset(dstIpPortSet string) *IpTableRule {
+	r.dstIpPortSet = dstIpPortSet
 	return r
 }
 
@@ -265,8 +277,16 @@ func (r *IpTableRule) GetSrcIpset() string {
 	return r.srcIpSet
 }
 
+func (r *IpTableRule) GetSrcIpPortset() string {
+	return r.srcIpPortSet
+}
+
 func (r *IpTableRule) GetDstIpset() string {
 	return r.dstIpSet
+}
+
+func (r *IpTableRule) GetDstIpPortset() string {
+	return r.dstIpPortSet
 }
 
 func (r *IpTableRule) isMatcherEqual(o *IpTableRule) error {
@@ -331,8 +351,16 @@ func (r *IpTableRule) isMatcherEqual(o *IpTableRule) error {
 		return fmt.Errorf("not match, old srcIp Ipset: %s, new srcIp Ipset: %s", r.srcIpSet, o.srcIpSet)
 	}
 
+	if r.srcIpPortSet != o.srcIpPortSet {
+		return fmt.Errorf("not match, old srcIpPortSet Ipset: %s, new srcIpPortSet Ipset: %s", r.srcIpPortSet, o.srcIpPortSet)
+	}
+
 	if r.dstIpSet != o.dstIpSet {
 		return fmt.Errorf("not match, old dst Ipset: %s, new dst Ipset: %s", r.dstIpSet, o.dstIpSet)
+	}
+
+	if r.dstIpPortSet != o.dstIpPortSet {
+		return fmt.Errorf("not match, old dst dstIpPortSet: %s, new dst dstIpPortSet: %s", r.dstIpPortSet, o.dstIpPortSet)
 	}
 
 	if len(r.states) != len(o.states) {
@@ -528,12 +556,30 @@ func (r *IpTableRule) matcherString() string {
 		}
 	}
 
+	if r.srcIpPortSet != "" {
+		items := strings.Fields(r.srcIpPortSet)
+		if items[0] == "!" {
+			rules = append(rules, "-m set ! --match-set "+items[1]+" src,src")
+		} else {
+			rules = append(rules, "-m set --match-set "+r.srcIpPortSet+" src,src")
+		}
+	}
+
 	if r.dstIpSet != "" {
 		items := strings.Fields(r.dstIpSet)
 		if items[0] == "!" {
 			rules = append(rules, "-m set ! --match-set "+items[1]+" dst")
 		} else {
 			rules = append(rules, "-m set --match-set "+r.dstIpSet+" dst")
+		}
+	}
+
+	if r.dstIpPortSet != "" {
+		items := strings.Fields(r.dstIpPortSet)
+		if items[0] == "!" {
+			rules = append(rules, "-m set ! --match-set "+items[1]+" dst,dst")
+		} else {
+			rules = append(rules, "-m set --match-set "+r.dstIpPortSet+" dst,dst")
 		}
 	}
 
@@ -739,11 +785,23 @@ func (r *IpTableRule) parseIpTablesMatcher(line string, chains []*IpTableChain) 
 				} else {
 					r.srcIpSet = ipset
 				}
-			} else {
+			} else if items[i] == "src,src" {
+				if notMatch {
+					r.srcIpPortSet = "! " + ipset
+				} else {
+					r.srcIpPortSet = ipset
+				}
+			} else if items[i] == "dst" {
 				if notMatch {
 					r.dstIpSet = "! " + ipset
 				} else {
 					r.dstIpSet = ipset
+				}
+			} else if items[i] == "dst,dst" {
+				if notMatch {
+					r.dstIpPortSet = "! " + ipset
+				} else {
+					r.dstIpPortSet = ipset
 				}
 			}
 			notMatch = false
