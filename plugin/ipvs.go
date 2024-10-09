@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"zstack-vyos/server"
 	"zstack-vyos/utils"
 
 	prom "github.com/prometheus/client_golang/prometheus"
@@ -292,6 +293,9 @@ func NewIpvsBackendServer(serverIp ,  serverPort, weight string, frontService *I
 func NewIpvsFrontService(info LbInfo, param LbParams, frontIp string, servers map[string]*IpvsBackendServer) *IpvsFrontendService {
 	connectionType := IpvsConnectionTypeNAT.String()
 	protocolType := "-u"
+	if info.Mode == LB_MODE_HTTPS || info.Mode == LB_MODE_HTTP || info.Mode == LB_MODE_TCP {
+		protocolType = "-t"
+	}
 	scheduler := GetIpvsSchedulerTypeFromString(param.balancerAlgorithm)
 	return &IpvsFrontendService {
 		ConnectionType: connectionType, 
@@ -465,6 +469,101 @@ func (fs *IpvsFrontendService) DisableIpvsLog() (err error) {
 	return nil
 }
 
+func addIpvsFirewallRuleByVyos(services map[string]*IpvsFrontendService) error {
+	tree := server.NewParserFromShowConfiguration().Tree
+
+	changed := false
+	for _, fs := range services {
+		changed = true
+		des := makeLbFirewallRuleDescription(fs.LbInfo)
+		nicname, err := utils.GetNicNameByMac(fs.PublicNic)
+		utils.PanicOnError(err)
+		if r := tree.FindFirewallRuleByDescription(nicname, "local", des); r == nil {
+			tree.SetFirewallOnInterface(nicname, "local",
+				fmt.Sprintf("description %v", des),
+				fmt.Sprintf("destination address %v", fs.Vip),
+				fmt.Sprintf("destination port %v", fs.LoadBalancerPort),
+				fmt.Sprintf("protocol %s", fs.ProtocolType),
+				"action accept",
+			)
+
+			configureInternalFirewallRule(tree, des,
+				fmt.Sprintf("description %v", des),
+				fmt.Sprintf("destination address %v", fs.Vip),
+				fmt.Sprintf("destination port %v", fs.LoadBalancerPort),
+				fmt.Sprintf("protocol %s", fs.ProtocolType),
+				"action accept",
+			)
+		}
+
+		tree.AttachFirewallToInterface(nicname, "local")
+		
+		for _, bs := range fs.BackendServers {
+			priNic := utils.GetNicForRoute(bs.BackendIp)
+			priNic = strings.TrimSpace(priNic)
+			if r := tree.FindFirewallRuleByDescription(priNic, "in", des); r == nil {
+				tree.SetFirewallOnInterface(nicname, "in",
+					fmt.Sprintf("description %v", des),
+					fmt.Sprintf("source address %v", bs.BackendIp),
+					fmt.Sprintf("source port %v", bs.BackendPort),
+					fmt.Sprintf("protocol %s", fs.ProtocolType),
+					"action accept",
+				)
+			}
+		}
+	}
+
+	if changed {
+		tree.Apply(false)
+	}
+
+	return nil
+}
+
+func addIpvsFirewallRuleByIptables(services map[string]*IpvsFrontendService) error {
+	table := utils.NewIpTables(utils.FirewallTable)
+	var rules []*utils.IpTableRule
+	
+	for _, fs := range services {
+		log.Debugf("lbInfo %+v", fs.LbInfo)
+		nicname, err := utils.GetNicNameByMac(fs.LbInfo.PublicNic)
+		utils.PanicOnError(err)
+
+		proto := utils.IPTABLES_PROTO_UDP
+		if fs.ProtocolType == "-t" || fs.ProtocolType == "tcp" {
+			proto = utils.IPTABLES_PROTO_TCP
+		}
+		
+		rule := utils.NewIpTableRule(utils.GetRuleSetName(nicname, utils.RULESET_LOCAL))
+		rule.SetAction(utils.IPTABLES_ACTION_ACCEPT).SetComment(utils.LbRuleComment)
+		rule.SetDstIp(fs.LbInfo.Vip + "/32").SetDstPort(fmt.Sprintf("%d", fs.LbInfo.LoadBalancerPort)).SetProto(proto)
+		rules = append(rules, rule)
+
+		priNics := utils.GetPrivteInterface()
+		for _, priNic := range priNics {
+			newRule := rule.Copy()
+			newRule.SetChainName(utils.GetRuleSetName(priNic, utils.RULESET_LOCAL))
+			rules = append(rules, rule)
+		}
+
+		for _, bs := range fs.BackendServers {
+			nicname := utils.GetNicForRoute(bs.BackendIp)
+			nicname = strings.TrimSpace(nicname)
+			rule := utils.NewIpTableRule(utils.GetRuleSetName(nicname, utils.RULESET_IN))
+			rule.SetAction(utils.IPTABLES_ACTION_ACCEPT).SetComment(utils.LbRuleComment)
+			rule.SetSrcIp(bs.BackendIp).SetSrcPort(bs.BackendPort).SetProto(proto)
+			rules = append(rules, rule)
+		}
+	}
+	
+	if len(rules) == 0 {
+		return nil
+	}
+	
+	table.AddIpTableRules(rules)
+	return table.Apply()
+}
+
 func RefreshIpvsService(lbs map[string]LbInfo) error {
 	services := map[string]*IpvsFrontendService{}
 	for _, lb := range lbs {
@@ -511,12 +610,92 @@ func RefreshIpvsService(lbs map[string]LbInfo) error {
 	err := gIpvsConf.SaveIpvsHealthCheckFile()
 	utils.PanicOnError(err)
 	
+	if utils.IsSkipVyosIptables() {
+		addIpvsFirewallRuleByIptables(services)
+	} else {
+		addIpvsFirewallRuleByVyos(services)
+	}
+	
 	for _, fs := range gIpvsConf.Services {
 		/* service maybe not existed, ignore the error */ 
 		fs.EnableIpvsLog()
 	}
 	
 	return nil
+}
+
+func delIpvsFirewallRuleByVyos(services []*IpvsFrontendService) error {
+	tree := server.NewParserFromShowConfiguration().Tree
+
+	changed := false
+	for _, fs := range services {
+		changed = true
+		des := makeLbFirewallRuleDescription(fs.LbInfo)
+		nicname, err := utils.GetNicNameByMac(fs.PublicNic)
+		utils.PanicOnError(err)
+
+		if r := tree.FindFirewallRuleByDescription(nicname, "local", des); r != nil {
+			r.Delete()
+		}
+		cleanInternalFirewallRule(tree, des)
+		
+		for _, bs := range fs.BackendServers {
+			priNic := utils.GetNicForRoute(bs.BackendIp)
+			priNic = strings.TrimSpace(priNic)
+			if r := tree.FindFirewallRuleByDescription(priNic, "in", des); r != nil {
+				r.Delete()
+			}
+		}
+	}
+
+	if changed {
+		tree.Apply(false)
+	}
+
+	return nil
+}
+
+func delIpvsFirewallRuleByIptables(services []*IpvsFrontendService) error {
+	table := utils.NewIpTables(utils.FirewallTable)
+	var rules []*utils.IpTableRule
+	
+	for _, fs := range services {
+		nicname, err := utils.GetNicNameByMac(fs.LbInfo.PublicNic)
+		utils.PanicOnError(err)
+
+		proto := utils.IPTABLES_PROTO_UDP
+		if fs.ProtocolType == "-t" || fs.ProtocolType == "tcp" {
+			proto = utils.IPTABLES_PROTO_TCP
+		}
+		
+		rule := utils.NewIpTableRule(utils.GetRuleSetName(nicname, utils.RULESET_LOCAL))
+		rule.SetAction(utils.IPTABLES_ACTION_ACCEPT).SetComment(utils.LbRuleComment)
+		rule.SetDstIp(fs.LbInfo.Vip + "/32").SetDstPort(fmt.Sprintf("%d", fs.LbInfo.LoadBalancerPort)).SetProto(proto)
+		rules = append(rules, rule)
+
+		priNics := utils.GetPrivteInterface()
+		for _, priNic := range priNics {
+			newRule := rule.Copy()
+			newRule.SetChainName(utils.GetRuleSetName(priNic, utils.RULESET_LOCAL))
+			rules = append(rules, rule)
+		}
+
+		for _, bs := range fs.BackendServers {
+			nicname := utils.GetNicForRoute(bs.BackendIp)
+			nicname = strings.TrimSpace(nicname)
+			rule := utils.NewIpTableRule(utils.GetRuleSetName(nicname, utils.RULESET_IN))
+			rule.SetAction(utils.IPTABLES_ACTION_ACCEPT).SetComment(utils.LbRuleComment)
+			rule.SetSrcIp(bs.BackendIp).SetSrcPort(bs.BackendPort).SetProto(proto)
+			rules = append(rules, rule)
+		}
+	}
+	
+	if len(rules) == 0 {
+		return nil
+	}
+	
+	table.RemoveIpTableRule(rules)
+	return table.Apply()
 }
 
 func DelIpvsService(lbs map[string]LbInfo) {
@@ -546,6 +725,12 @@ func DelIpvsService(lbs map[string]LbInfo) {
 
 		/* del data */
 		delete(gIpvsConf.Services, fs.getFrontendServiceKey())
+	}
+
+	if utils.IsSkipVyosIptables() {
+		delIpvsFirewallRuleByIptables(services)
+	} else {
+		delIpvsFirewallRuleByVyos(services)
 	}
 
 	/* save health check config file */
@@ -770,7 +955,7 @@ func InitIpvs() {
 
 	table.AddChain(IPVS_LOG_CHAIN_NAME)
 	rule = utils.NewIpTableRule(IPVS_LOG_CHAIN_NAME)
-	rule.SetDstIpset(IPVS_LOG_IPSET_NAME)
+	rule.SetDstIpPortset(IPVS_LOG_IPSET_NAME)
 	rule.SetActionLog(IPVS_LOG_PREFIX)
 	table.AddIpTableRules([]*utils.IpTableRule{rule})
 	table.Apply()
