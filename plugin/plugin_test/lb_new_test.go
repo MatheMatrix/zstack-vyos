@@ -13,53 +13,55 @@ var _ = Describe("udp slb test", func() {
 	Context("slbha ipvs test", func() {
 		It("UDP_LB:test prepare env", func() {
 			utils.InitLog(utils.GetVyosUtLogDir()+"lb_test.log", true)
+			utils.InitVyosVersion()
 			utils.SetupSlbHaBootStrap()
-			plugin.InitLb()
-			nicCmd := &plugin.ConfigureNicCmd {
+			utils.CreateFileIfNotExists(plugin.GetKeepalivedConfigFile(), os.O_CREATE, 0600)
+			utils.CreateFileIfNotExists(filepath.Join(plugin.GetKeepalivedScriptPath(), "check_zvr.sh"), os.O_CREATE, 0600)
+
+			nicCmd := &plugin.ConfigureNicCmd{
 				Nics: []utils.NicInfo{utils.MgtNicForUT},
 			}
 			plugin.ConfigureNic(nicCmd)
-			
-			nicCmd = &plugin.ConfigureNicCmd {
+
+			nicCmd = &plugin.ConfigureNicCmd{
 				Nics: []utils.NicInfo{utils.PubNicForUT},
 			}
 			plugin.ConfigureNic(nicCmd)
-			
-			
-			nicCmd = &plugin.ConfigureNicCmd {
+
+			nicCmd = &plugin.ConfigureNicCmd{
 				Nics: []utils.NicInfo{utils.PriNicForUT},
 			}
 			plugin.ConfigureNic(nicCmd)
-	
-			utils.CreateFileIfNotExists(plugin.GetKeepalivedConfigFile(), os.O_CREATE, 0600)
-			utils.CreateFileIfNotExists(filepath.Join(plugin.GetKeepalivedScriptPath(), "check_zvr.sh"), os.O_CREATE, 0600)
+
+			plugin.InitLb()
+
 		})
-	
+
 		It("UDP_LB: set up slb ha", func() {
 			vip4 := plugin.MacVipPair{
-				NicMac: utils.PubNicForUT.Mac,
-				NicVip: "169.254.2.102",
+				NicMac:  utils.PubNicForUT.Mac,
+				NicVip:  "169.254.2.102",
 				Netmask: "255.255.255.0",
 			}
 			vip6 := plugin.MacVipPair{
-				NicMac: utils.PubNicForUT.Mac,
-				NicVip: "234e:0:4568::75:cf18",
+				NicMac:    utils.PubNicForUT.Mac,
+				NicVip:    "234e:0:4568::75:cf18",
 				PrefixLen: 64,
 			}
-			vyoshacmd := &plugin.SetVyosHaCmd {
-				Keepalive: 5,
+			vyoshacmd := &plugin.SetVyosHaCmd{
+				Keepalive:    5,
 				HeartbeatNic: utils.PubNicForUT.Mac,
-				LocalIp: "169.254.2.100",
-				PeerIp: "169.254.2.101",
-				LocalIpV6: "234e:0:4568::19:9e8a",
-				PeerIpV6: "234e:0:4568::52:90dc",
-				Monitors: []string{},
-				Vips: []plugin.MacVipPair{vip4, vip6},
+				LocalIp:      "169.254.2.100",
+				PeerIp:       "169.254.2.101",
+				LocalIpV6:    "234e:0:4568::19:9e8a",
+				PeerIpV6:     "234e:0:4568::52:90dc",
+				Monitors:     []string{},
+				Vips:         []plugin.MacVipPair{vip4, vip6},
 			}
-	
+
 			plugin.SetVyosHa(vyoshacmd)
 		})
-	
+
 		It("UDP_LB:", func() {
 			lb := &plugin.LbInfo{}
 			lb.LbUuid = "f2c7b2ff2f834e1ea20363f49122a3b4"
@@ -83,7 +85,7 @@ var _ = Describe("udp slb test", func() {
 				"healthyThreshold::2",
 				"healthCheckInterval::5",
 				"unhealthyThreshold::2")
-	
+
 			bs := plugin.BackendServerInfo{
 				Ip:     "192.168.3.10",
 				Weight: 100,
@@ -95,26 +97,26 @@ var _ = Describe("udp slb test", func() {
 			}
 			lb.ServerGroups = []plugin.ServerGroupInfo{sg}
 			lb.RedirectRules = nil
-	
+
 			cmd := plugin.RefreshLbCmd{
-				Lbs: []plugin.LbInfo{*lb},
+				Lbs:              []plugin.LbInfo{*lb},
 				EnableHaproxyLog: true,
 			}
 			plugin.RefreshLbInternal(&cmd)
 		})
 
-		It("ipvs: test destroy env", func() {
-			nicCmd := &plugin.ConfigureNicCmd {
+		It("UDP_LB: test destroy env", func() {
+			nicCmd := &plugin.ConfigureNicCmd{
 				Nics: []utils.NicInfo{utils.MgtNicForUT},
 			}
 			plugin.RemoveNic(nicCmd)
-			
-			nicCmd = &plugin.ConfigureNicCmd {
+
+			nicCmd = &plugin.ConfigureNicCmd{
 				Nics: []utils.NicInfo{utils.PubNicForUT},
 			}
 			plugin.RemoveNic(nicCmd)
-			
-			nicCmd = &plugin.ConfigureNicCmd {
+
+			nicCmd = &plugin.ConfigureNicCmd{
 				Nics: []utils.NicInfo{utils.PriNicForUT},
 			}
 			plugin.RemoveNic(nicCmd)
