@@ -147,7 +147,7 @@ func (t *IpTables) parseIpTableChain(line string) (*IpTableChain, error) {
 		return nil, fmt.Errorf("iptable chain parse error %s", line)
 	}
 
-	chain := &IpTableChain{Name: items[0], Action: items[1]}
+	chain := &IpTableChain{Name: items[0], Action: strings.TrimSpace(items[1])}
 	t.Chains = append(t.Chains, chain)
 	return chain, nil
 }
@@ -439,7 +439,7 @@ func (t *IpTables) restore() error {
 	}
 	content = append(content, "COMMIT\n")
 
-	if _, err = tmpFile.Write([]byte(strings.Join(content, "\n"))); err != nil {
+	if _, err = tmpFile.Write([]byte(strings.Join(content, ""))); err != nil {
 		log.Debugf("write to temp file failed %s, Rules: %s", content, err.Error())
 		return err
 	}
@@ -457,7 +457,8 @@ func (t *IpTables) restore() error {
 	//log.Debugf("iptables-restore content: %s", content)
 	_, _, _, err = cmd.RunWithReturn()
 	if err != nil {
-		log.Debugf("iptables-restore -w content: %s\n\niptables-restore failed: %+v", content, err)
+		fileContent, _ := os.ReadFile(tmpFile.Name())
+		log.Debugf("iptables-restore -w content: %s\n\niptables-restore failed: %+v", fileContent, err)
 		bash := Bash{
 			Command: fmt.Sprintf("iptables-restore -w --table=%s < %s 2>&1 | grep 'Error occurred at line' | awk '{print $(NF)}' | xargs -i sed -n '{}p' %s", t.Name, tmpFile.Name(), tmpFile.Name()),
 			Sudo:    true,
