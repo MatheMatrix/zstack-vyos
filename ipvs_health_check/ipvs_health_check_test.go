@@ -352,151 +352,150 @@ var _ = Describe("ipvs health check test", func() {
 		Expect(len(ipvsConf.Services) == 0).To(BeTrue(), fmt.Sprintf("0 ipvs service, actual %d", len(ipvsConf.Services)))
 	})
 
-	/*
-		It("ipvs health check: test ipv6", func() {
-			setHealthCheckMapForUT(bsMap)
-			bs1.FrontIp = "2024:09:29:86:01::100"
-			bs1.BackendIp = "2024:09:29:86:02::100"
-			bs2.BackendIp = "2024:09:29:86:02::101"
+	It("ipvs health check: test ipv6", func() {
+		setHealthCheckMapForUT(bsMap)
+		bs1.FrontIp = "2024:09:29:86:01::100"
+		bs1.BackendIp = "2024:09:29:86:02::100"
+		bs2.BackendIp = "2024:09:29:86:02::101"
 
-			err := utils.IpAddrAdd(priNicForUT.Name + "-peer", bs1.BackendIp+"/64")
-			utils.PanicOnError(err)
-			err = utils.IpAddrAdd(priNicForUT.Name + "-peer", bs2.BackendIp+"/64")
-			utils.PanicOnError(err)
+		err := utils.IpAddrAdd(priNicForUT.Name+"-peer", bs1.BackendIp+"/64")
+		utils.PanicOnError(err)
+		err = utils.IpAddrAdd(priNicForUT.Name+"-peer", bs2.BackendIp+"/64")
+		utils.PanicOnError(err)
 
-			go bs1.Start()
-			go bs2.Start()
+		go bs1.Start()
+		go bs2.Start()
 
-			wait := bs1.HealthCheckInterval * (bs1.HealthyThreshold + 2)
-			if  wait < bs1.HealthCheckInterval * (bs1.UnhealthyThreshold + 2) {
-				wait = bs1.HealthCheckInterval * (bs1.UnhealthyThreshold + 2)
+		wait := bs1.HealthCheckInterval * (bs1.HealthyThreshold + 2)
+		if wait < bs1.HealthCheckInterval*(bs1.UnhealthyThreshold+2) {
+			wait = bs1.HealthCheckInterval * (bs1.UnhealthyThreshold + 2)
+		}
+
+		// start udp server for bs1
+		go utils.StartUdpServer(bs1.BackendIp, 8080, ctx1)
+		time.Sleep(time.Duration(wait) * time.Second)
+		Expect(bs1.status).To(BeTrue(), "bs1 is up")
+		Expect(bs2.status).To(BeFalse(), "bs2 is down")
+		ipvsConf := plugin.NewIpvsConfFromSave()
+		Expect(len(ipvsConf.Services) == 1).To(BeTrue(), "1 ipvs service")
+		for _, fs := range ipvsConf.Services {
+			Expect(len(fs.BackendServers) == 1).To(BeTrue(), "1 backend is up")
+			for _, bs := range fs.BackendServers {
+				Expect(bs.BackendIp == bs1.BackendIp).To(BeTrue(), "backend 1 is up")
+				Expect(bs.BackendPort == bs1.BackendPort).To(BeTrue(), "backend 1 is up")
 			}
+		}
 
-			// start udp server for bs1
-			go utils.StartUdpServer(bs1.BackendIp, 8080, ctx1)
-			time.Sleep(time.Duration(wait) * time.Second)
-			Expect(bs1.status).To(BeTrue(), "bs1 is up")
-			Expect(bs2.status).To(BeFalse(), "bs2 is down")
-			ipvsConf := plugin.NewIpvsConfFromSave()
-			Expect( len(ipvsConf.Services) == 1).To(BeTrue(), "1 ipvs service")
-			for _, fs := range ipvsConf.Services {
-				Expect( len(fs.BackendServers) == 1).To(BeTrue(), "1 backend is up")
-				for _, bs := range fs.BackendServers {
-					Expect(bs.BackendIp == bs1.BackendIp).To(BeTrue(), "backend 1 is up")
-					Expect(bs.BackendPort == bs1.BackendPort).To(BeTrue(), "backend 1 is up")
+		// start udp server for bs2
+		go utils.StartUdpServer(bs2.BackendIp, 8081, ctx2)
+		time.Sleep(time.Duration(wait) * time.Second)
+		Expect(bs1.status).To(BeTrue(), "bs1 is up")
+		Expect(bs2.status).To(BeTrue(), "bs2 is ip")
+		ipvsConf = plugin.NewIpvsConfFromSave()
+		Expect(len(ipvsConf.Services) == 1).To(BeTrue(), "1 ipvs service")
+		foundBs1 := false
+		foundBs2 := false
+		for _, fs := range ipvsConf.Services {
+			for _, bs := range fs.BackendServers {
+				if bs.BackendIp == bs1.BackendIp && bs.BackendPort == bs1.BackendPort {
+					foundBs1 = true
+				} else if bs.BackendIp == bs2.BackendIp && bs.BackendPort == bs2.BackendPort {
+					foundBs2 = true
 				}
 			}
+			Expect(len(fs.BackendServers) == 3).To(BeTrue(), "2 backends is up")
+		}
+		Expect(foundBs1).To(BeTrue(), "bs1 is up")
+		Expect(foundBs2).To(BeTrue(), "bs2 is up")
 
-			// start udp server for bs2
-			go utils.StartUdpServer(bs2.BackendIp, 8081, ctx2)
-			time.Sleep(time.Duration(wait) * time.Second)
-			Expect(bs1.status).To(BeTrue(), "bs1 is up")
-			Expect(bs2.status).To(BeTrue(), "bs2 is ip")
-			ipvsConf = plugin.NewIpvsConfFromSave()
-			Expect( len(ipvsConf.Services) == 1).To(BeTrue(), "1 ipvs service")
-			foundBs1 := false
-			foundBs2 := false
-			for _, fs := range ipvsConf.Services {
-				for _, bs := range fs.BackendServers {
-					if bs.BackendIp == bs1.BackendIp && bs.BackendPort == bs1.BackendPort {
-						foundBs1 = true
-					} else if bs.BackendIp == bs2.BackendIp && bs.BackendPort == bs2.BackendPort {
-						foundBs2 = true
-					}
+		// stop udp server for bs1
+		cancel1()
+		time.Sleep(time.Duration(wait) * time.Second)
+		Expect(bs1.status).To(BeFalse(), "bs1 is down")
+		Expect(bs2.status).To(BeTrue(), "bs2 is ip")
+		ipvsConf = plugin.NewIpvsConfFromSave()
+		Expect(len(ipvsConf.Services) == 1).To(BeTrue(), "1 ipvs service")
+		foundBs1 = false
+		foundBs2 = false
+		for _, fs := range ipvsConf.Services {
+			for _, bs := range fs.BackendServers {
+				if bs.BackendIp == bs1.BackendIp && bs.BackendPort == bs1.BackendPort {
+					foundBs1 = true
+				} else if bs.BackendIp == bs2.BackendIp && bs.BackendPort == bs2.BackendPort {
+					foundBs2 = true
 				}
-				Expect( len(fs.BackendServers) == 3).To(BeTrue(), "2 backends is up")
 			}
-			Expect( foundBs1).To(BeTrue(), "bs1 is up")
-			Expect( foundBs2).To(BeTrue(), "bs2 is up")
+			Expect(len(fs.BackendServers) == 1).To(BeTrue(), "1 backends is up")
+		}
+		Expect(foundBs1).To(BeFalse(), "bs1 is down")
+		Expect(foundBs2).To(BeTrue(), "bs2 is up")
 
-			// stop udp server for bs1
-			cancel1()
-			time.Sleep(time.Duration(wait) * time.Second)
-			Expect(bs1.status).To(BeFalse(), "bs1 is down")
-			Expect(bs2.status).To(BeTrue(), "bs2 is ip")
-			ipvsConf = plugin.NewIpvsConfFromSave()
-			Expect( len(ipvsConf.Services) == 1).To(BeTrue(), "1 ipvs service")
-			foundBs1 = false
-			foundBs2 = false
-			for _, fs := range ipvsConf.Services {
-				for _, bs := range fs.BackendServers {
-					if bs.BackendIp == bs1.BackendIp && bs.BackendPort == bs1.BackendPort {
-						foundBs1 = true
-					} else if bs.BackendIp == bs2.BackendIp && bs.BackendPort == bs2.BackendPort {
-						foundBs2 = true
-					}
+		// start udp server for bs1 again
+		ctx1, cancel1 = context.WithCancel(context.Background())
+		go utils.StartUdpServer(bs1.BackendIp, 8080, ctx1)
+		time.Sleep(time.Duration(wait) * time.Second)
+		Expect(bs1.status).To(BeTrue(), "bs1 is up")
+		Expect(bs2.status).To(BeTrue(), "bs2 is ip")
+		ipvsConf = plugin.NewIpvsConfFromSave()
+		Expect(len(ipvsConf.Services) == 1).To(BeTrue(), "1 ipvs service")
+		foundBs1 = false
+		foundBs2 = false
+		for _, fs := range ipvsConf.Services {
+			for _, bs := range fs.BackendServers {
+				if bs.BackendIp == bs1.BackendIp && bs.BackendPort == bs1.BackendPort {
+					foundBs1 = true
+				} else if bs.BackendIp == bs2.BackendIp && bs.BackendPort == bs2.BackendPort {
+					foundBs2 = true
 				}
-				Expect( len(fs.BackendServers) == 1).To(BeTrue(), "1 backends is up")
 			}
-			Expect( foundBs1).To(BeFalse(), "bs1 is down")
-			Expect( foundBs2).To(BeTrue(), "bs2 is up")
+			Expect(len(fs.BackendServers) == 2).To(BeTrue(), "2 backends is up")
+		}
+		Expect(foundBs1).To(BeTrue(), "bs1 is up")
+		Expect(foundBs2).To(BeTrue(), "bs2 is up")
 
-			// start udp server for bs1 again
-			ctx1, cancel1 = context.WithCancel(context.Background())
-			go utils.StartUdpServer(bs1.BackendIp, 8080, ctx1)
-			time.Sleep(time.Duration(wait) * time.Second)
-			Expect(bs1.status).To(BeTrue(), "bs1 is up")
-			Expect(bs2.status).To(BeTrue(), "bs2 is ip")
-			ipvsConf = plugin.NewIpvsConfFromSave()
-			Expect( len(ipvsConf.Services) == 1).To(BeTrue(), "1 ipvs service")
-			foundBs1 = false
-			foundBs2 = false
-			for _, fs := range ipvsConf.Services {
-				for _, bs := range fs.BackendServers {
-					if bs.BackendIp == bs1.BackendIp && bs.BackendPort == bs1.BackendPort {
-						foundBs1 = true
-					} else if bs.BackendIp == bs2.BackendIp && bs.BackendPort == bs2.BackendPort {
-						foundBs2 = true
-					}
+		// stop udp server for bs1, bs2
+		cancel1()
+		cancel2()
+		time.Sleep(time.Duration(wait) * time.Second)
+		Expect(bs1.status).To(BeFalse(), "bs1 is down")
+		Expect(bs2.status).To(BeFalse(), "bs2 is down")
+		ipvsConf = plugin.NewIpvsConfFromSave()
+		Expect(len(ipvsConf.Services) == 0).To(BeTrue(), "0 ipvs service")
+
+		//start udp server for bs1, bs2 again
+		ctx1, cancel1 = context.WithCancel(context.Background())
+		ctx2, cancel2 = context.WithCancel(context.Background())
+		go utils.StartUdpServer(bs1.BackendIp, 8080, ctx1)
+		go utils.StartUdpServer(bs2.BackendIp, 8081, ctx2)
+		time.Sleep(time.Duration(wait) * time.Second)
+		Expect(bs1.status).To(BeTrue(), "bs1 is up")
+		Expect(bs2.status).To(BeTrue(), "bs2 is ip")
+		ipvsConf = plugin.NewIpvsConfFromSave()
+		Expect(len(ipvsConf.Services) == 1).To(BeTrue(), "1 ipvs service")
+		foundBs1 = false
+		foundBs2 = false
+		for _, fs := range ipvsConf.Services {
+			for _, bs := range fs.BackendServers {
+				if bs.BackendIp == bs1.BackendIp && bs.BackendPort == bs1.BackendPort {
+					foundBs1 = true
+				} else if bs.BackendIp == bs2.BackendIp && bs.BackendPort == bs2.BackendPort {
+					foundBs2 = true
 				}
-				Expect( len(fs.BackendServers) == 2).To(BeTrue(), "2 backends is up")
 			}
-			Expect( foundBs1).To(BeTrue(), "bs1 is up")
-			Expect( foundBs2).To(BeTrue(), "bs2 is up")
+			Expect(len(fs.BackendServers) == 2).To(BeTrue(), "2 backends is up")
+		}
+		Expect(foundBs1).To(BeTrue(), "bs1 is up")
+		Expect(foundBs2).To(BeTrue(), "bs2 is up")
 
-			// stop udp server for bs1, bs2
-			cancel1()
-			cancel2()
-			time.Sleep(time.Duration(wait) * time.Second)
-			Expect(bs1.status).To(BeFalse(), "bs1 is down")
-			Expect(bs2.status).To(BeFalse(), "bs2 is down")
-			ipvsConf = plugin.NewIpvsConfFromSave()
-			Expect( len(ipvsConf.Services) == 0).To(BeTrue(), "0 ipvs service")
-
-			//start udp server for bs1, bs2 again
-			ctx1, cancel1 = context.WithCancel(context.Background())
-			ctx2, cancel2 = context.WithCancel(context.Background())
-			go utils.StartUdpServer(bs1.BackendIp, 8080, ctx1)
-			go utils.StartUdpServer(bs2.BackendIp, 8081, ctx2)
-			time.Sleep(time.Duration(wait) * time.Second)
-			Expect(bs1.status).To(BeTrue(), "bs1 is up")
-			Expect(bs2.status).To(BeTrue(), "bs2 is ip")
-			ipvsConf = plugin.NewIpvsConfFromSave()
-			Expect( len(ipvsConf.Services) == 1).To(BeTrue(), "1 ipvs service")
-			foundBs1 = false
-			foundBs2 = false
-			for _, fs := range ipvsConf.Services {
-				for _, bs := range fs.BackendServers {
-					if bs.BackendIp == bs1.BackendIp && bs.BackendPort == bs1.BackendPort {
-						foundBs1 = true
-					} else if bs.BackendIp == bs2.BackendIp && bs.BackendPort == bs2.BackendPort {
-						foundBs2 = true
-					}
-				}
-				Expect( len(fs.BackendServers) == 2).To(BeTrue(), "2 backends is up")
-			}
-			Expect( foundBs1).To(BeTrue(), "bs1 is up")
-			Expect( foundBs2).To(BeTrue(), "bs2 is up")
-
-			// stop bs1, bs2
-			bs1.Stop()
-			bs2.Stop()
-			time.Sleep(time.Duration(wait) * time.Second)
-			Expect(bs1.status).To(BeFalse(), "bs1 is down")
-			Expect(bs2.status).To(BeFalse(), "bs2 is down")
-			ipvsConf = plugin.NewIpvsConfFromSave()
-			Expect( len(ipvsConf.Services) == 0).To(BeTrue(), fmt.Sprintf("0 ipvs service, actual %d", len(ipvsConf.Services)))
-		}) */
+		// stop bs1, bs2
+		bs1.Stop()
+		bs2.Stop()
+		time.Sleep(time.Duration(wait) * time.Second)
+		Expect(bs1.status).To(BeFalse(), "bs1 is down")
+		Expect(bs2.status).To(BeFalse(), "bs2 is down")
+		ipvsConf = plugin.NewIpvsConfFromSave()
+		Expect(len(ipvsConf.Services) == 0).To(BeTrue(), fmt.Sprintf("0 ipvs service, actual %d", len(ipvsConf.Services)))
+	})
 
 	It("ipvs: test destroy env", func() {
 		nicCmd := &plugin.ConfigureNicCmd{

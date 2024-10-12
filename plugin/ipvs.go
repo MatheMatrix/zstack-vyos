@@ -150,7 +150,7 @@ func getIpvsConf() string {
 	return filepath.Join(getLbConfDir(), "ipvs.conf")
 }
 
-func (ipvs *IpvsConf) ipvsadmSave() *IpvsConf {
+func (ipvs *IpvsConf) ipvsadmSave() (*IpvsConf, error) {
 	b := utils.Bash{
 		Command: "ipvsadm-save -n",
 		Sudo:    true,
@@ -158,18 +158,11 @@ func (ipvs *IpvsConf) ipvsadmSave() *IpvsConf {
 
 	ret, o, _, err := b.RunWithReturn()
 	if ret != 0 || err != nil {
-		utils.PanicOnError(fmt.Errorf("failed to execute ipvsadm-save, %v", err))
-		return nil
+		return nil, fmt.Errorf("failed to execute ipvsadm-save, %v", err)
 	}
 
-	ipvs.ParseIpvs(o)
-	for _, fs := range ipvs.Services {
-		log.Debugf("IpvsConf: frontend: %+v", fs)
-		for _, bs := range fs.BackendServers {
-			log.Debugf("\t\tbackend: %+v", bs)
-		}
-	}
-	return ipvs
+	err = ipvs.ParseIpvs(o)
+	return ipvs, err
 }
 
 const tIpvsConf = `# This file is auto-generated, edit with caution!
@@ -315,11 +308,12 @@ func NewIpvsFrontService(info LbInfo, param LbParams, frontIp string, servers ma
 	}
 }
 
-func NewIpvsConfFromSave() *IpvsConf {
+func NewIpvsConfFromSave() (*IpvsConf, error) {
 	conf := IpvsConf{
 		Services: map[string]*IpvsFrontendService{},
 	}
-	return conf.ipvsadmSave()
+	_, err := conf.ipvsadmSave()
+	return &conf, err
 }
 
 func (conf *IpvsConf) SaveIpvsHealthCheckFile() error {
@@ -348,8 +342,8 @@ type IpvsHealthCheckBackendServer struct {
 	HealthCheckPort     int
 	HealthCheckInterval int
 	HealthCheckTimeout  int
-	HealthyThreshold    int
-	UnhealthyThreshold  int
+	HealthyThreshold    uint
+	UnhealthyThreshold  uint
 
 	MaxConnection int
 	MinConnection int

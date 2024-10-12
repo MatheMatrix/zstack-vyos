@@ -34,8 +34,8 @@ func (bs *IpvsHealthCheckBackendServer) doUdpCheck() {
 
 	buffer := make([]byte, 4)
 	conn.SetReadDeadline(time.Now().Add(time.Duration(bs.HealthCheckTimeout) * time.Second))
-	n, err := conn.Read(buffer)
-	if n == 0 {
+	_, err = conn.Read(buffer)
+	if err != nil {
 		log.Debugf("[udp checher]: recv udp message from %s:%s failed: %v", bs.BackendIp, bs.BackendPort, err)
 		bs.result <- false
 		return

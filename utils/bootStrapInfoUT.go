@@ -205,7 +205,7 @@ func StartUdpServer(ip string, port int, ctx context.Context) error {
 		conn, err = net.ListenUDP("udp6", udpAddr)
 		if err != nil {
 			log.Debugf("failed to listen on UDP: %v", err)
-			return  fmt.Errorf("failed to listen on UDP: %v", err)
+			return fmt.Errorf("failed to listen on UDP: %v", err)
 		}
 	} else {
 		conn, err = net.ListenUDP("udp", &net.UDPAddr{IP: addr, Port: port})
@@ -220,17 +220,17 @@ func StartUdpServer(ip string, port int, ctx context.Context) error {
 	buffer := make([]byte, 1024)
 	for {
 		select {
-		case <- ctx.Done():
+		case <-ctx.Done():
 			log.Debugf("server done")
 			return nil
 		default:
-			n, remoteAddr, err := conn.ReadFromUDP(buffer)
+			_, remoteAddr, err := conn.ReadFromUDP(buffer)
 			if err != nil {
 				log.Debugf("failed to read from UDP: %v", err)
 				continue
 			}
-			
-			_, err = conn.WriteToUDP(buffer[:n], remoteAddr)
+
+			_, err = conn.WriteToUDP(buffer[:4], remoteAddr)
 			if err != nil {
 				log.Debugf("failed to write to UDP: %v", err)
 				continue
