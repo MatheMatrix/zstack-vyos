@@ -118,7 +118,7 @@ var _ = Describe("ipvs test", func() {
 			Expect(ipsetGroup.CheckMember(lb.Vip+",udp:"+fmt.Sprintf("%d", lb.LoadBalancerPort))).To(BeTrue(), "ipvs log ipset member added", ipsetGroup)
 
 			// check ipvs config
-			wait := 6 //
+			wait := 5 //
 			time.Sleep(time.Duration(wait) * time.Second)
 			ipvs, _ := plugin.NewIpvsConfFromSave()
 			Expect(len(ipvs.Services) == 1).To(BeTrue(), "ipvs frond service added")

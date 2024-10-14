@@ -1,6 +1,7 @@
 package utils
 
 import (
+	log "github.com/sirupsen/logrus"
 	"sync"
 )
 
@@ -11,6 +12,7 @@ func SetupSlbHaBootStrap() (NicInfo, NicInfo, NicInfo) {
 	slbHaLock.Lock()
 	defer slbHaLock.Unlock()
 	if slbHaCreated {
+		log.Debugf("slbHaCreated is true")
 		return MgtNicForUT, PubNicForUT, PriNicForUT
 	}
 
@@ -144,4 +146,5 @@ func DestroySlbHaBootStrap() {
 	IpLinkDel("ut-pri")
 
 	slbHaCreated = false
+	log.Debugf("slbHaCreated is false")
 }

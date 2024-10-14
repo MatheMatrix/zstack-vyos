@@ -461,7 +461,8 @@ func (fs *IpvsFrontendService) EnableIpvsLog() (err error) {
 		frontIp = fmt.Sprintf("[%s]", frontIp)
 	}
 
-	ipset.AddMember([]string{frontIp + "," + protol + ":" + fs.FrontPort})
+	err = ipset.AddMember([]string{frontIp + "," + protol + ":" + fs.FrontPort})
+	utils.PanicOnError(err)
 
 	return nil
 }
@@ -585,13 +586,11 @@ func reloadIpvsHealthCheck() {
 	err := gIpvsConf.SaveIpvsHealthCheckFile()
 	utils.PanicOnError(err)
 
-	binPath := IPVS_HEALTH_CHECK_BIN_FILE
-	if utils.IsVYOS() {
-		binPath = IPVS_HEALTH_CHECK_BIN_FILE_VYOS
-	}
+	pid, err := utils.ReadPid(IPVS_HEALTH_CHECK_PID_FILE)
+	utils.PanicOnError(err)
 
 	b := utils.Bash{
-		Command: fmt.Sprintf("pkill -HUP %s", binPath),
+		Command: fmt.Sprintf("kill -HUP %d", pid),
 		Sudo:    true,
 	}
 

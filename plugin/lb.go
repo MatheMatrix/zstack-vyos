@@ -1150,7 +1150,6 @@ func setPidRLimit(confpath string) error {
 }
 
 func startGobetween(confpath, pidpath string) (int, error) {
-	log.Debugf("ruanshixin startGobetween")
 	goBetweenPath := "/opt/vyatta/sbin/gobetween"
 	if utils.IsEuler2203() {
 		goBetweenPath = "/usr/local/bin/gobetween"
