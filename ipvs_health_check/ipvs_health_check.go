@@ -16,20 +16,22 @@ import (
 	"zstack-vyos/plugin"
 	"zstack-vyos/utils"
 
-	"github.com/fsnotify/fsnotify"
 	log "github.com/sirupsen/logrus"
 )
 
 type IpvsHealthCheckBackendServer struct {
-	status bool
-	cancel context.CancelFunc
-	result chan bool
+	status     bool
+	successCnt uint
+	failedCnt  uint
+	cancel     context.CancelFunc
+	result     chan bool
 	plugin.IpvsHealthCheckBackendServer
 }
 
 var logFile string
 var confFile string
 var pidFile string
+var fastUp bool
 
 var gHealthCheckMap map[string]*IpvsHealthCheckBackendServer
 var healthCheckLock sync.Mutex
@@ -61,7 +63,7 @@ func (bs *IpvsHealthCheckBackendServer) doHealthCheck() {
 }
 
 func (bs *IpvsHealthCheckBackendServer) Install() {
-	log.Debugf("enable backend server %s:%s for front service %s:%s", bs.BackendIp, bs.BackendPort, bs.FrontIp, bs.FrontPort)
+	log.Debugf("[ipvsHealthCheck] add backend server %s:%s for front service %s:%s", bs.BackendIp, bs.BackendPort, bs.FrontIp, bs.FrontPort)
 
 	healthCheckLock.Lock()
 	defer healthCheckLock.Unlock()
@@ -110,12 +112,14 @@ func (bs *IpvsHealthCheckBackendServer) Install() {
 }
 
 func (bs *IpvsHealthCheckBackendServer) UnInstall() {
-	log.Debugf("disable backend server %s:%s for front service %s:%s", bs.BackendIp, bs.BackendPort, bs.FrontIp, bs.FrontPort)
+	log.Debugf("[ipvsHealthCheck] remove backend server %s:%s for front service %s:%s", bs.BackendIp, bs.BackendPort, bs.FrontIp, bs.FrontPort)
 
 	healthCheckLock.Lock()
 	defer healthCheckLock.Unlock()
 	num := 0
+	log.Debugf("bs key: %s, gHealthCheckMap:%p", bs.getBackendKey(), gHealthCheckMap)
 	for _, gbs := range gHealthCheckMap {
+		log.Debugf("gbs key: %s, status:%v ", gbs.getBackendKey(), gbs.status)
 		if bs.FrontIp != gbs.FrontIp || bs.FrontPort != gbs.FrontPort || bs.ProtocolType != gbs.ProtocolType {
 			continue
 		}
@@ -154,7 +158,21 @@ func (bs *IpvsHealthCheckBackendServer) UnInstall() {
 	b.Run()
 }
 
+func (bs *IpvsHealthCheckBackendServer) setStatus(status bool) {
+	bs.status = status
+	bs.failedCnt = 0
+	bs.successCnt = 0
+}
+
 func (bs *IpvsHealthCheckBackendServer) Start() {
+	defer func() {
+		if err := recover(); err != nil {
+			/* run failed, start again */
+			log.Infof("[ipvsHealthCheck task] run failed %+v", err)
+			bs.Start()
+		}
+	}()
+
 	/*
 		health check task is loop task: wait for following events:
 		1. timer to do health check in another go routine
@@ -162,91 +180,81 @@ func (bs *IpvsHealthCheckBackendServer) Start() {
 		3. backend server removed -- stopped the health check task
 	*/
 
-	taskTimer := time.NewTicker(time.Duration(bs.HealthCheckInterval) * time.Second)
+	taskTimer := time.NewTimer(time.Duration(bs.HealthCheckInterval) * time.Second)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	bs.cancel = cancel
 	bs.result = make(chan bool, 1)
 	bs.status = false
-	successCnt := 0
-	failedCnt := 0
+	bs.successCnt = 0
+	bs.failedCnt = 0
 
-	log.Debugf("health check task started for %s", bs.getBackendKey())
+	log.Debugf("[ipvsHealthCheck task] start health check task for %s", bs.getBackendKey())
 	for {
 		select {
 		case result := <-bs.result:
 			if result {
-				successCnt++
-				failedCnt = 0
+				bs.successCnt++
+				bs.failedCnt = 0
 			} else {
-				failedCnt++
-				successCnt = 0
+				bs.failedCnt++
+				bs.successCnt = 0
 			}
 
-			log.Debugf("%s: healthcheck resut:%v, current status %v:  successCnt: %d,%d failedCnt: %d:%d",
+			log.Debugf("[ipvsHealthCheck task] %s: healthcheck resut:%v, current status %v:  successCnt: %d,%d failedCnt: %d:%d",
 				bs.getBackendKey(), result, bs.status,
-				successCnt, bs.HealthyThreshold,
-				failedCnt, bs.UnhealthyThreshold)
-			if failedCnt >= bs.UnhealthyThreshold && bs.status {
+				bs.successCnt, bs.HealthyThreshold,
+				bs.failedCnt, bs.UnhealthyThreshold)
+			if bs.failedCnt >= bs.UnhealthyThreshold && bs.status {
 				bs.UnInstall()
-			} else if successCnt >= bs.HealthyThreshold && !bs.status {
+			} else if bs.successCnt >= bs.HealthyThreshold && !bs.status {
+				bs.Install()
+			} else if result && !bs.status && fastUp {
+				/* ignore the HealthyThreshold check */
 				bs.Install()
 			}
 			taskTimer.Reset(time.Duration(bs.HealthCheckInterval) * time.Second)
 
 		case <-ctx.Done():
-			log.Debugf("health check task for %s stopped", bs.getBackendKey())
+			log.Debugf("[ipvsHealthCheck task] stop health check task for %s", bs.getBackendKey())
 			taskTimer.Stop()
 			return
 
 		case <-taskTimer.C:
 			// avoid to call DoHealthCheck while previous call is not finished
-			log.Debugf("health check task timer for %s", bs.getBackendKey())
-			taskTimer.Stop()
+			log.Debugf("[ipvsHealthCheck task] timer expired for health check task %s", bs.getBackendKey())
 			go bs.doHealthCheck()
 		}
 	}
 }
 
 func (bs *IpvsHealthCheckBackendServer) Stop() {
-	log.Debugf("health check task stopped for %s", bs.getBackendKey())
+	log.Debugf("[ipvsHealthCheck task] stop health check task for %s", bs.getBackendKey())
 	bs.cancel()
 	bs.UnInstall()
 }
 
-func handleEvents(events <-chan fsnotify.Event, errors <-chan error) {
-	log.Debugf("handleEvents task")
-	for {
-		select {
-		case event, ok := <-events:
-			if !ok {
-				log.Debugf("file event not ok")
-				return
-			}
-			log.Debugf("file watch event %v", event)
-			loadAndStartHealthChecker()
-
-		case err, ok := <-errors:
-			if !ok {
-				return
-			}
-			log.Debugf("file watch error %v", err)
+func reloadIpvsHealthCheckConfig() {
+	defer func() {
+		if err := recover(); err != nil {
+			log.Infof("[ipvsHealthCheck reload] load config failed %+v", err)
 		}
-	}
-}
+	}()
 
-func loadAndStartHealthChecker() {
+	log.Debugf("[ipvsHealthCheck reload] reloadIpvsHealthCheckConfig")
+
 	var conf plugin.IpvsHealthCheckConf
 	err := utils.JsonLoadConfig(confFile, &conf)
 	if err != nil {
-		log.Debugf("load ipvs health check config failed %v", err)
+		log.Debugf("[ipvsHealthCheck reload] load config failed %v", err)
 		return
 	}
 
-	log.Debugf("conf file %++v", conf)
+	log.Debugf("[ipvsHealthCheck reload] load config file success, %++v", conf)
 	checkers := map[string]*IpvsHealthCheckBackendServer{}
 	if conf.Services != nil {
 		for _, fs := range conf.Services {
+			log.Debugf("[ipvsHealthCheck reload] new Services: %+v", fs)
 			for _, bs := range fs.BackendServers {
 				checker := IpvsHealthCheckBackendServer{
 					/*  health check will not install ipvs service, untill  backend is up */
@@ -254,7 +262,7 @@ func loadAndStartHealthChecker() {
 					IpvsHealthCheckBackendServer: *bs,
 				}
 
-				log.Debugf("new checker %+v", checker)
+				log.Debugf("[ipvsHealthCheck reload] new checker: %+v", checkers)
 				checkers[checker.getBackendKey()] = &checker
 			}
 		}
@@ -263,51 +271,37 @@ func loadAndStartHealthChecker() {
 	healthCheckLock.Lock()
 	defer healthCheckLock.Unlock()
 
-	toDeleted := []string{}
+	var toDeleted []string
 	for _, old := range gHealthCheckMap {
-		log.Debugf("old health check task %s", old.getBackendKey())
+		log.Debugf("[ipvsHealthCheck reload] old checker: %+v", old)
 		check, found := checkers[old.getBackendKey()]
 		if !found {
-			log.Debugf("delete health check task for %s", old.getBackendKey())
+			log.Debugf("[ipvsHealthCheck reload] delete health check task for %s", old.getBackendKey())
 			toDeleted = append(toDeleted, old.getBackendKey())
 		} else {
 			/* 后端服务器的health check task 参数可能变化, 有两种处理方式:
 			1. copy health check配置参数给old
 			2. copy old health check的状态参数给new,
 			此处采用#1 */
-			log.Debugf("health check task params %+v", check.IpvsHealthCheckBackendServer)
+			log.Debugf("[ipvsHealthCheck reload] update health check task params %+v", check.IpvsHealthCheckBackendServer)
 			old.CopyParamsFrom(&check.IpvsHealthCheckBackendServer)
 		}
 	}
 
-	log.Debugf("toDeleted: %+v", toDeleted)
 	for _, key := range toDeleted {
 		go gHealthCheckMap[key].Stop()
 		delete(gHealthCheckMap, key)
-		log.Debugf("gHealthCheckMap: %d", len(gHealthCheckMap))
 	}
 
 	/* new backend health check */
 	for _, check := range checkers {
 		_, found := gHealthCheckMap[check.getBackendKey()]
 		if !found {
-			log.Debugf("new  health check task %+v", check.getBackendKey())
+			log.Debugf("[ipvsHealthCheck reload] add new health check task %+v", check.getBackendKey())
 			gHealthCheckMap[check.getBackendKey()] = check
 			go check.Start()
 		}
 	}
-}
-
-func setHealthCheckMapForUT(newMap map[string]*IpvsHealthCheckBackendServer) {
-	gHealthCheckMap = newMap
-}
-
-func getHealthCheckMapForUT() map[string]*IpvsHealthCheckBackendServer {
-	return gHealthCheckMap
-}
-
-func setConfFileForUT(path string) {
-	confFile = path
 }
 
 func writePidToFile(pidFilePath string) error {
@@ -328,42 +322,122 @@ func writePidToFile(pidFilePath string) error {
 	return nil
 }
 
+func syncIpvsadmWithHealthCheck() {
+	defer func() {
+		if err := recover(); err != nil {
+			log.Infof("[ipvsHealthCheck sync] sync ipvsadm failed %+v", err)
+		}
+	}()
+
+	conf, err := plugin.NewIpvsConfFromSave()
+	if err != nil {
+		log.Debugf("[ipvsHealthCheck sync] ipvsadm-save to config failed %+v", err)
+	}
+
+	tempBsMap := map[string]*IpvsHealthCheckBackendServer{}
+	for _, fs := range conf.Services {
+		log.Debugf("[ipvsHealthCheck sync] ipvsadm-save front end service %+v", fs)
+		for _, bs := range fs.BackendServers {
+			log.Debugf("[ipvsHealthCheck sync] 	ipvsadm-save backend end server %+v", bs)
+
+			temp := IpvsHealthCheckBackendServer{}
+			temp.ProtocolType = "udp"
+			if strings.ToLower(fs.ProtocolType) == "tcp" || strings.ToLower(fs.ProtocolType) == "-t" {
+				temp.ProtocolType = "tcp"
+			}
+			temp.FrontIp = fs.FrontIp
+			temp.FrontPort = fs.FrontPort
+			temp.BackendIp = bs.BackendIp
+			temp.BackendPort = bs.BackendPort
+
+			tempBsMap[temp.getBackendKey()] = &temp
+
+			if gHealthCheckMap[temp.getBackendKey()] == nil {
+				gHealthCheckMap[temp.getBackendKey()] = &temp
+				go temp.UnInstall()
+				delete(gHealthCheckMap, temp.getBackendKey())
+			} else if !gHealthCheckMap[temp.getBackendKey()].status {
+				gHealthCheckMap[temp.getBackendKey()].setStatus(true)
+			}
+		}
+	}
+
+	for _, gbs := range gHealthCheckMap {
+		if tempBsMap[gbs.getBackendKey()] == nil {
+			gbs.setStatus(false)
+		}
+	}
+}
+
 func main() {
 	parseCommandOptions()
 	utils.InitLog(logFile, utils.IsRuingUT())
 	utils.InitVyosVersion()
 
-	if pid, _ := utils.ReadPid(pidFile); pid != 0 {
+	pid, _ := utils.ReadPid(pidFile)
+	if pid != 0 {
 		if utils.ProcessExists(pid) == nil {
-			log.Debugf("ipvs health check already running, pid %d", pid)
+			log.Debugf("[ipvsHealthCheck] already running, pid %d", pid)
 			return
 		}
 	}
-	writePidToFile(pidFile)
-
-	interruptChan := make(chan os.Signal, 1)
-	signal.Notify(interruptChan, syscall.SIGUSR1, syscall.SIGUSR2)
-
-	go func() {
-		for sig := range interruptChan {
-			switch sig {
-			case syscall.SIGUSR1:
-			case syscall.SIGUSR2:
-			}
-		}
-	}()
+	err := writePidToFile(pidFile)
+	if err != nil {
+		log.Debugf("[ipvsHealthCheck] write pid[%d] to file failed, err %v", pid, err)
+	}
 
 	gHealthCheckMap = map[string]*IpvsHealthCheckBackendServer{}
-	watcher, err := fsnotify.NewWatcher()
+
+	interruptChan := make(chan os.Signal, 1)
+	signal.Notify(interruptChan, syscall.SIGHUP, syscall.SIGUSR1)
+
+	syncTimer := time.NewTimer(time.Duration(300) * time.Second)
+	fastUpTick := time.NewTicker(time.Duration(1) * time.Second)
+
+	/* push a signal when start process */
+	interruptChan <- syscall.SIGHUP
+
+	/* main thead loop handles 2 events:
+	1. realod config
+	2. sync ipvs-admin timer
+	*/
+	for {
+		select {
+		case sig := <-interruptChan:
+			if sig == syscall.SIGHUP {
+				reloadIpvsHealthCheckConfig()
+			} else if sig == syscall.SIGUSR1 {
+				fastUp = true
+				fastUpTick = time.NewTicker(time.Duration(120) * time.Second)
+				for _, gbs := range gHealthCheckMap {
+					go gbs.doHealthCheck()
+				}
+			} else {
+				log.Debugf("[ipvsHealthCheck] unknow sig %+v", sig)
+			}
+
+		case <-syncTimer.C:
+			/* sync ipvsadm-save */
+			syncIpvsadmWithHealthCheck()
+
+		case <-fastUpTick.C:
+			/* sync ipvsadm-save */
+			fastUp = false
+		}
+
+	}
+
+}
+
+/* func for UT */
+func stopIpvsConfig() {
+	pid, err := utils.ReadPid(plugin.IPVS_HEALTH_CHECK_PID_FILE)
 	utils.PanicOnError(err)
-	defer watcher.Close()
-
-	loadAndStartHealthChecker()
-
-	watcher.Add(confFile)
-	go handleEvents(watcher.Events, watcher.Errors)
-
-	// 主线程不能退出
-	select {}
-	log.Debugf("ipvs healcheck exit")
+	/* reload config */
+	b := utils.Bash{
+		Command: fmt.Sprintf("kill -9 %d", pid),
+		Sudo:    true,
+	}
+	err = b.Run()
+	utils.PanicOnError(err)
 }

@@ -34,7 +34,7 @@ var _ = Describe("udp slb test", func() {
 			plugin.ConfigureNic(nicCmd)
 
 			plugin.InitLb()
-
+			plugin.InitIpvs()
 		})
 
 		It("UDP_LB: set up slb ha", func() {

@@ -35,12 +35,12 @@ const (
 	DELETE_LB_PATH            = "/lb/delete"
 	CREATE_CERTIFICATE_PATH   = "/certificate/create"
 	DELETE_CERTIFICATE_PATH   = "/certificate/delete"
-	CREATE_CERTIFICATES_PATH   = "/certificates/create"
+	CREATE_CERTIFICATES_PATH  = "/certificates/create"
 
 	LB_MODE_HTTPS = "https"
-	LB_MODE_HTTP = "http"
-	LB_MODE_TCP = "tcp"
-	LB_MODE_UDP = "udp"
+	LB_MODE_HTTP  = "http"
+	LB_MODE_TCP   = "tcp"
+	LB_MODE_UDP   = "udp"
 
 	LB_BACKEND_PREFIX_REG = "^nic-"
 
@@ -152,7 +152,7 @@ type CertificateInfo struct {
 }
 
 type certificatesCmd struct {
-	Certs        map[string]string `json:"certs"`
+	Certs map[string]string `json:"certs"`
 }
 
 type deleteCertificateCmd struct {
@@ -160,22 +160,22 @@ type deleteCertificateCmd struct {
 }
 
 type LbParams struct {
-	healthCheckProtocl string
-	healthCheckPort int
-	healthCheckInterval int 
-	healthCheckTimeout int 
-	healthyThreshold int 
-	unhealthyThreshold int
-	
-	httpMode string
-	maxConnection int
-	minConnection int
+	healthCheckProtocl  string
+	healthCheckPort     int
+	healthCheckInterval int
+	healthCheckTimeout  int
+	healthyThreshold    uint
+	unhealthyThreshold  uint
+
+	httpMode              string
+	maxConnection         int
+	minConnection         int
 	connectionIdleTimeout int
-	Nbprocess int
-	httpRedirectHttps bool 
-	accessControlStatus bool
-	balancerAlgorithm string
-	aclEntry []string
+	Nbprocess             int
+	httpRedirectHttps     bool
+	accessControlStatus   bool
+	balancerAlgorithm     string
+	aclEntry              []string
 }
 
 func ParseLbParams(lb LbInfo) LbParams {
@@ -198,22 +198,21 @@ func ParseLbParams(lb LbInfo) LbParams {
 
 		case "healthCheckInterval":
 			param.healthCheckInterval, _ = strconv.Atoi(kv[1])
-		
+
 		case "healthCheckTimeout":
 			param.healthCheckTimeout, _ = strconv.Atoi(kv[1])
-			
-		case "httpMode":
-			param.httpMode= kv[1]
-			
-		case "unhealthyThreshold":
-			param.unhealthyThreshold, _ = strconv.Atoi(kv[1])
-		
-		case "healthyThreshold":
-			param.healthyThreshold, _ = strconv.Atoi(kv[1])
 
-		case "UnhealthyThreshold":
-			param.unhealthyThreshold, _ = strconv.Atoi(kv[1])
-			
+		case "httpMode":
+			param.httpMode = kv[1]
+
+		case "unhealthyThreshold":
+			v, _ := strconv.Atoi(kv[1])
+			param.unhealthyThreshold = uint(v)
+
+		case "healthyThreshold":
+			v, _ := strconv.Atoi(kv[1])
+			param.healthyThreshold = uint(v)
+
 		case "maxConnection":
 			param.maxConnection, _ = strconv.Atoi(kv[1])
 
@@ -221,7 +220,7 @@ func ParseLbParams(lb LbInfo) LbParams {
 			param.connectionIdleTimeout, _ = strconv.Atoi(kv[1])
 		case "Nbprocess":
 			param.Nbprocess, _ = strconv.Atoi(kv[1])
-		
+
 		case "httpRedirectHttps":
 			if kv[1] == "disable" {
 				param.httpRedirectHttps = false
@@ -818,12 +817,12 @@ func (this *HaproxyListener) startListenerService() (ret int, err error) {
 	if len(pids) > 0 {
 		bash = utils.Bash{
 			Command: fmt.Sprintf("sudo %s -D -N %s -f %s -p %s -sf %s",
-			getHaproxyBindPath(), this.maxConnect, this.confPath, this.pidPath, strings.Join(pids, " ")),
+				getHaproxyBindPath(), this.maxConnect, this.confPath, this.pidPath, strings.Join(pids, " ")),
 		}
 	} else {
 		bash = utils.Bash{
 			Command: fmt.Sprintf("sudo %s  -D -N %s -f %s -p %s",
-			getHaproxyBindPath(), this.maxConnect, this.confPath, this.pidPath),
+				getHaproxyBindPath(), this.maxConnect, this.confPath, this.pidPath),
 		}
 	}
 	var stderr string
@@ -917,8 +916,8 @@ func (this *HaproxyListener) stopListenerService() (err error) {
 func (this *HaproxyListener) getIptablesRule() ([]*utils.IpTableRule, string) {
 	nicname, err := utils.GetNicNameByMac(this.lb.PublicNic)
 	utils.PanicOnError(err)
-	
-	if (this.lb.Vip == "" ) {
+
+	if this.lb.Vip == "" {
 		return []*utils.IpTableRule{}, nicname
 	}
 
@@ -1107,7 +1106,7 @@ max_responses = 0    # (required) if > 0 accepts no more responses that max_resp
 	return err
 }
 
-func (this *GBListener) postActionListenerServiceStop() (ret int, err error)  {
+func (this *GBListener) postActionListenerServiceStop() (ret int, err error) {
 	delete(LbListeners, this.lb.ListenerUuid)
 	if e, _ := utils.PathExists(this.pidPath); e {
 		err = os.Remove(this.pidPath)
@@ -1151,9 +1150,8 @@ func setPidRLimit(confpath string) error {
 }
 
 func startGobetween(confpath, pidpath string) (int, error) {
-	log.Debugf("ruanshixin startGobetween")
 	goBetweenPath := "/opt/vyatta/sbin/gobetween"
-	if (utils.IsEuler2203()) {
+	if utils.IsEuler2203() {
 		goBetweenPath = "/usr/local/bin/gobetween"
 	}
 	bash := utils.Bash{
@@ -1289,7 +1287,7 @@ func (this *GBListener) getIptablesRule() ([]*utils.IpTableRule, string) {
 	nicname, err := utils.GetNicNameByMac(this.lb.PublicNic)
 	utils.PanicOnError(err)
 	var rules []*utils.IpTableRule
-		
+
 	rule := utils.NewIpTableRule(utils.GetRuleSetName(nicname, utils.RULESET_LOCAL))
 	rule.SetAction(utils.IPTABLES_ACTION_ACCEPT).SetComment(utils.LbRuleComment)
 	rule.SetDstPort(this.apiPort).SetProto(utils.IPTABLES_PROTO_TCP)
@@ -1373,7 +1371,7 @@ func makeLbFirewallLocalICMPRuleDescription(lb LbInfo) string {
 }
 
 func IsGobetweenRunning(lb GBListener) bool {
-	_, err := utils.FindFirstPIDByPSExtern(false,  lb.confPath)
+	_, err := utils.FindFirstPIDByPSExtern(false, lb.confPath)
 	return err == nil
 }
 
@@ -1451,7 +1449,8 @@ type lbLogLevelConf struct {
 	Level string `json:"level"`
 }
 
-/**
+/*
+*
 emerg - 0
 alert - 1
 err - 3
@@ -1515,7 +1514,7 @@ func addRuleForTcpSyncByIptables(lbs []Listener) error {
 			table.AddIpTableRules([]*utils.IpTableRule{rule})
 		}
 	}
-	
+
 	return table.Apply()
 }
 
@@ -1620,14 +1619,14 @@ func addRuleForTcpListenerByVyos(lbs []Listener) error {
 				"action accept",
 			)
 		}
-	
-		tree.AttachFirewallToInterface(nicname, "local")	
+
+		tree.AttachFirewallToInterface(nicname, "local")
 	}
 
 	if changed {
 		tree.Apply(false)
 	}
-	
+
 	return nil
 }
 
@@ -1734,7 +1733,7 @@ func addRuleForUdpListenerByLinux(lbs []Listener) error {
 			/* TODO: add ipv6 tables */
 			return nil
 		}
-		changed  = true
+		changed = true
 
 		rules, _ := lb.getIptablesRule()
 		table.AddIpTableRules(rules)
@@ -1785,7 +1784,7 @@ func delRuleForTcpListenerByVyos(lbs []Listener) error {
 	if changed {
 		tree.Apply(false)
 	}
-	
+
 	return nil
 }
 
@@ -1915,7 +1914,7 @@ func delRuleForUdpListenerByLinux(lbs []Listener) error {
 }
 
 func addLbRules(lbs []Listener) error {
-	
+
 	if utils.IsSkipVyosIptables() {
 		err := addRuleForTcpListenerByLinux(lbs)
 		utils.PanicOnError(err)
@@ -1937,7 +1936,7 @@ func AddLbs(lbs []Listener) error {
 
 	log.Debugf("addLbs: %+v", lbs)
 	for _, lb := range lbs {
-		setLb(lb.getLbInfo()) 
+		setLb(lb.getLbInfo())
 	}
 
 	addLbRules(lbs)
@@ -1949,13 +1948,13 @@ func RefreshLbInternal(cmd *RefreshLbCmd) {
 	toAdded := []Listener{}
 	ipvsAdded := map[string]LbInfo{}
 	ipvsDeleted := map[string]LbInfo{}
-	
+
 	EnableHaproxyLog = cmd.EnableHaproxyLog
 	for _, lb := range cmd.Lbs {
 		if lb.Mode == LB_MODE_UDP {
 			confPath := makeLbConfFilePath(lb)
 			pid, _ := utils.FindFirstPIDByPSExtern(true, confPath)
-			if pid <=0 {
+			if pid <= 0 {
 				if len(lb.NicIps) == 0 {
 					ipvsDeleted[lb.ListenerUuid] = lb
 				} else if lb.Mode == LB_MODE_HTTPS && lb.CertificateUuid == "" {
@@ -1963,11 +1962,11 @@ func RefreshLbInternal(cmd *RefreshLbCmd) {
 				} else {
 					ipvsAdded[lb.ListenerUuid] = lb
 				}
-				
+
 				continue
 			}
 		}
-		
+
 		listener := GetListener(lb)
 		if listener == nil {
 			continue
@@ -1993,7 +1992,7 @@ func RefreshLbInternal(cmd *RefreshLbCmd) {
 	if len(ipvsAdded) > 0 {
 		RefreshIpvsService(ipvsAdded)
 	}
-	
+
 }
 
 func refreshLb(ctx *server.CommandContext) interface{} {
@@ -2034,12 +2033,12 @@ func DeleteLbInternal(cmd *deleteLbCmd) {
 			if lb.Mode == LB_MODE_UDP {
 				confPath := makeLbConfFilePath(lb)
 				pid, _ := utils.FindFirstPIDByPSExtern(true, confPath)
-				if pid <=0 {
+				if pid <= 0 {
 					ipvs[lb.ListenerUuid] = lb
 					continue
 				}
 			}
-			
+
 			listener := GetListener(lb)
 			if listener == nil {
 				continue
@@ -2062,7 +2061,7 @@ func deleteLb(ctx *server.CommandContext) interface{} {
 	ctx.GetCommand(cmd)
 
 	DeleteLbInternal(cmd)
-	
+
 	removeUnusedCertificate()
 
 	return nil
@@ -2283,13 +2282,12 @@ func TransformToMetric(c *loadBalancerCollector, listenerUuid string, listener L
 	}
 }
 
-
 func (c *loadBalancerCollector) Update(metricCh chan<- prom.Metric) error {
 	if !IsMaster() {
 		return nil
 	}
 
-	UpdateIpvsMetrics(c ,metricCh)
+	UpdateIpvsMetrics(c, metricCh)
 
 	//start goroutine to get data on demand
 	//case 1. The last launched goroutine has received the data and written to the ch and closed the ch.
@@ -2355,12 +2353,12 @@ func (c *loadBalancerCollector) Update(metricCh chan<- prom.Metric) error {
 			TransformToMetric(c, listenerUuid, listener, metricCh)
 		}
 	}
-	
+
 	return nil
 }
 
 type LbCounter struct {
-	lbUuid            string
+	lbUuid                  string
 	listenerUuid            string
 	ip                      string
 	Status                  uint64
@@ -2566,7 +2564,7 @@ func InitLb() {
 
 	bash := utils.Bash{
 		/* for vyos 1.1.7, it return "2.1.0 "
-		    for openEuler 22.03, it return "2.6.6-274d1a4 "
+		   for openEuler 22.03, it return "2.6.6-274d1a4 "
 		*/
 		Command: fmt.Sprintf(getHaproxyBindPath() + " -ver | grep version | awk '{print $3}'"),
 	}

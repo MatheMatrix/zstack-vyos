@@ -150,7 +150,7 @@ func getIpvsConf() string {
 	return filepath.Join(getLbConfDir(), "ipvs.conf")
 }
 
-func (ipvs *IpvsConf) ipvsadmSave() *IpvsConf {
+func (ipvs *IpvsConf) ipvsadmSave() (*IpvsConf, error) {
 	b := utils.Bash{
 		Command: "ipvsadm-save -n",
 		Sudo:    true,
@@ -158,18 +158,11 @@ func (ipvs *IpvsConf) ipvsadmSave() *IpvsConf {
 
 	ret, o, _, err := b.RunWithReturn()
 	if ret != 0 || err != nil {
-		utils.PanicOnError(fmt.Errorf("failed to execute ipvsadm-save, %v", err))
-		return nil
+		return nil, fmt.Errorf("failed to execute ipvsadm-save, %v", err)
 	}
 
-	ipvs.ParseIpvs(o)
-	for _, fs := range ipvs.Services {
-		log.Debugf("IpvsConf: frontend: %+v", fs)
-		for _, bs := range fs.BackendServers {
-			log.Debugf("\t\tbackend: %+v", bs)
-		}
-	}
-	return ipvs
+	err = ipvs.ParseIpvs(o)
+	return ipvs, err
 }
 
 const tIpvsConf = `# This file is auto-generated, edit with caution!
@@ -248,9 +241,18 @@ func (ipvs *IpvsConf) ParseIpvs(content string) error {
 		protocol := items[1]
 
 		if items[0] == "-A" {
-			ipports := strings.Split(items[2], ":")
-			ip := ipports[0]
-			port := ipports[1]
+			ip := ""
+			port := ""
+			if strings.Contains(items[2], "]") {
+				ipports := strings.Split(items[2], "]")
+				ip = strings.Trim(ipports[0], "[")
+				port = strings.Trim(ipports[1], ":")
+			} else {
+				ipports := strings.Split(items[2], ":")
+				ip = ipports[0]
+				port = ipports[1]
+			}
+
 			scheduler := items[4]
 			info := LbInfo{}
 			if strings.Contains(ip, ":") {
@@ -269,9 +271,17 @@ func (ipvs *IpvsConf) ParseIpvs(content string) error {
 			service = NewIpvsFrontService(info, param, ip, map[string]*IpvsBackendServer{})
 			services[service.getFrontendServiceKey()] = service
 		} else if items[0] == "-a" {
-			backendIpPorts := strings.Split(items[4], ":")
-			backendIp := backendIpPorts[0]
-			backendPort := backendIpPorts[1]
+			backendIp := ""
+			backendPort := ""
+			if strings.Contains(items[4], "]") {
+				ipports := strings.Split(items[4], "]")
+				backendIp = strings.Trim(ipports[0], "[")
+				backendPort = strings.Trim(ipports[1], ":")
+			} else {
+				ipports := strings.Split(items[4], ":")
+				backendIp = ipports[0]
+				backendPort = ipports[1]
+			}
 
 			service.ConnectionType = items[5]
 			weight := items[7]
@@ -315,11 +325,12 @@ func NewIpvsFrontService(info LbInfo, param LbParams, frontIp string, servers ma
 	}
 }
 
-func NewIpvsConfFromSave() *IpvsConf {
+func NewIpvsConfFromSave() (*IpvsConf, error) {
 	conf := IpvsConf{
 		Services: map[string]*IpvsFrontendService{},
 	}
-	return conf.ipvsadmSave()
+	_, err := conf.ipvsadmSave()
+	return &conf, err
 }
 
 func (conf *IpvsConf) SaveIpvsHealthCheckFile() error {
@@ -348,8 +359,8 @@ type IpvsHealthCheckBackendServer struct {
 	HealthCheckPort     int
 	HealthCheckInterval int
 	HealthCheckTimeout  int
-	HealthyThreshold    int
-	UnhealthyThreshold  int
+	HealthyThreshold    uint
+	UnhealthyThreshold  uint
 
 	MaxConnection int
 	MinConnection int
@@ -450,7 +461,8 @@ func (fs *IpvsFrontendService) EnableIpvsLog() (err error) {
 		frontIp = fmt.Sprintf("[%s]", frontIp)
 	}
 
-	ipset.AddMember([]string{frontIp + "," + protol + ":" + fs.FrontPort})
+	err = ipset.AddMember([]string{frontIp + "," + protol + ":" + fs.FrontPort})
+	utils.PanicOnError(err)
 
 	return nil
 }
@@ -569,6 +581,23 @@ func addIpvsFirewallRuleByIptables(services map[string]*IpvsFrontendService) err
 	return table.Apply()
 }
 
+func reloadIpvsHealthCheck() {
+	/* save health check config file */
+	err := gIpvsConf.SaveIpvsHealthCheckFile()
+	utils.PanicOnError(err)
+
+	pid, err := utils.ReadPid(IPVS_HEALTH_CHECK_PID_FILE)
+	utils.PanicOnError(err)
+
+	b := utils.Bash{
+		Command: fmt.Sprintf("kill -HUP %d", pid),
+		Sudo:    true,
+	}
+
+	err = b.Run()
+	utils.PanicOnError(err)
+}
+
 func RefreshIpvsService(lbs map[string]LbInfo) error {
 	services := map[string]*IpvsFrontendService{}
 	for _, lb := range lbs {
@@ -611,9 +640,7 @@ func RefreshIpvsService(lbs map[string]LbInfo) error {
 	}
 
 	gIpvsConf = &IpvsConf{Services: services}
-	/* save health check config file */
-	err := gIpvsConf.SaveIpvsHealthCheckFile()
-	utils.PanicOnError(err)
+	reloadIpvsHealthCheck()
 
 	if utils.IsSkipVyosIptables() {
 		addIpvsFirewallRuleByIptables(services)
@@ -739,8 +766,7 @@ func DelIpvsService(lbs map[string]LbInfo) {
 	}
 
 	/* save health check config file */
-	err := gIpvsConf.SaveIpvsHealthCheckFile()
-	utils.PanicOnError(err)
+	reloadIpvsHealthCheck()
 }
 
 func (bs *IpvsBackendServer) GetBackendKey() string {
