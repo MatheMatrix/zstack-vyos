@@ -241,9 +241,18 @@ func (ipvs *IpvsConf) ParseIpvs(content string) error {
 		protocol := items[1]
 
 		if items[0] == "-A" {
-			ipports := strings.Split(items[2], ":")
-			ip := ipports[0]
-			port := ipports[1]
+			ip := ""
+			port := ""
+			if strings.Contains(items[2], "]") {
+				ipports := strings.Split(items[2], "]")
+				ip = strings.Trim(ipports[0], "[")
+				port = strings.Trim(ipports[1], ":")
+			} else {
+				ipports := strings.Split(items[2], ":")
+				ip = ipports[0]
+				port = ipports[1]
+			}
+
 			scheduler := items[4]
 			info := LbInfo{}
 			if strings.Contains(ip, ":") {
@@ -262,9 +271,17 @@ func (ipvs *IpvsConf) ParseIpvs(content string) error {
 			service = NewIpvsFrontService(info, param, ip, map[string]*IpvsBackendServer{})
 			services[service.getFrontendServiceKey()] = service
 		} else if items[0] == "-a" {
-			backendIpPorts := strings.Split(items[4], ":")
-			backendIp := backendIpPorts[0]
-			backendPort := backendIpPorts[1]
+			backendIp := ""
+			backendPort := ""
+			if strings.Contains(items[4], "]") {
+				ipports := strings.Split(items[4], "]")
+				backendIp = strings.Trim(ipports[0], "[")
+				backendPort = strings.Trim(ipports[1], ":")
+			} else {
+				ipports := strings.Split(items[4], ":")
+				backendIp = ipports[0]
+				backendPort = ipports[1]
+			}
 
 			service.ConnectionType = items[5]
 			weight := items[7]
@@ -563,6 +580,25 @@ func addIpvsFirewallRuleByIptables(services map[string]*IpvsFrontendService) err
 	return table.Apply()
 }
 
+func reloadIpvsHealthCheck() {
+	/* save health check config file */
+	err := gIpvsConf.SaveIpvsHealthCheckFile()
+	utils.PanicOnError(err)
+
+	binPath := IPVS_HEALTH_CHECK_BIN_FILE
+	if utils.IsVYOS() {
+		binPath = IPVS_HEALTH_CHECK_BIN_FILE_VYOS
+	}
+
+	b := utils.Bash{
+		Command: fmt.Sprintf("pkill -HUP %s", binPath),
+		Sudo:    true,
+	}
+
+	err = b.Run()
+	utils.PanicOnError(err)
+}
+
 func RefreshIpvsService(lbs map[string]LbInfo) error {
 	services := map[string]*IpvsFrontendService{}
 	for _, lb := range lbs {
@@ -605,9 +641,7 @@ func RefreshIpvsService(lbs map[string]LbInfo) error {
 	}
 
 	gIpvsConf = &IpvsConf{Services: services}
-	/* save health check config file */
-	err := gIpvsConf.SaveIpvsHealthCheckFile()
-	utils.PanicOnError(err)
+	reloadIpvsHealthCheck()
 
 	if utils.IsSkipVyosIptables() {
 		addIpvsFirewallRuleByIptables(services)
@@ -733,8 +767,7 @@ func DelIpvsService(lbs map[string]LbInfo) {
 	}
 
 	/* save health check config file */
-	err := gIpvsConf.SaveIpvsHealthCheckFile()
-	utils.PanicOnError(err)
+	reloadIpvsHealthCheck()
 }
 
 func (bs *IpvsBackendServer) GetBackendKey() string {

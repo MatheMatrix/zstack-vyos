@@ -92,6 +92,7 @@ var _ = Describe("ipvs test", func() {
 		})
 
 		It("ipvs :test InitIpvs", func() {
+			utils.InitVyosVersion()
 			plugin.InitIpvs()
 			ipsetGroup := utils.GetIpSet(plugin.IPVS_LOG_IPSET_NAME)
 			Expect(ipsetGroup).ToNot(BeNil(), "ipvs log ipset created", ipsetGroup)
@@ -119,7 +120,7 @@ var _ = Describe("ipvs test", func() {
 			// check ipvs config
 			wait := 6 //
 			time.Sleep(time.Duration(wait) * time.Second)
-			ipvs := plugin.NewIpvsConfFromSave()
+			ipvs, _ := plugin.NewIpvsConfFromSave()
 			Expect(len(ipvs.Services) == 1).To(BeTrue(), "ipvs frond service added")
 			for _, fs := range ipvs.Services {
 				Expect(len(fs.BackendServers) == 2).To(BeTrue(), "2 ipvs backend server added")
@@ -177,7 +178,7 @@ var _ = Describe("ipvs test", func() {
 			// check ipvs config
 			wait := 6 //
 			time.Sleep(time.Duration(wait) * time.Second)
-			ipvs := plugin.NewIpvsConfFromSave()
+			ipvs, _ := plugin.NewIpvsConfFromSave()
 			Expect(len(ipvs.Services) == 1).To(BeTrue(), "ipvs frond service added")
 			for _, fs := range ipvs.Services {
 				Expect(len(fs.BackendServers) == 3).To(BeTrue(), "3 ipvs backend server added")
@@ -209,7 +210,7 @@ var _ = Describe("ipvs test", func() {
 
 			// check ipvs config
 			time.Sleep(time.Duration(wait) * time.Second)
-			ipvs = plugin.NewIpvsConfFromSave()
+			ipvs, _ = plugin.NewIpvsConfFromSave()
 			Expect(len(ipvs.Services) == 1).To(BeTrue(), "ipvs frond service added")
 			for _, fs := range ipvs.Services {
 				Expect(len(fs.BackendServers) == 3).To(BeTrue(), "3 ipvs backend server added")
@@ -255,7 +256,7 @@ var _ = Describe("ipvs test", func() {
 			// check ipvs config
 			wait := 6 //
 			time.Sleep(time.Duration(wait) * time.Second)
-			ipvs := plugin.NewIpvsConfFromSave()
+			ipvs, _ := plugin.NewIpvsConfFromSave()
 			Expect(len(ipvs.Services) == 1).To(BeTrue(), "ipvs frond service added")
 			for _, fs := range ipvs.Services {
 				Expect(len(fs.BackendServers) == 2).To(BeTrue(), "2 ipvs backend server added")
@@ -300,7 +301,7 @@ var _ = Describe("ipvs test", func() {
 			// check ipvs config
 			wait := 6 //
 			time.Sleep(time.Duration(wait) * time.Second)
-			ipvs := plugin.NewIpvsConfFromSave()
+			ipvs, _ := plugin.NewIpvsConfFromSave()
 			Expect(len(ipvs.Services) == 2).To(BeTrue(), "ipvs frond service added")
 			for _, fs := range ipvs.Services {
 				Expect(len(fs.BackendServers) == 2).To(BeTrue(), "2 ipvs backend server added")
@@ -358,7 +359,7 @@ var _ = Describe("ipvs test", func() {
 			time.Sleep(time.Duration(wait) * time.Second)
 
 			// check ipvs config
-			ipvs := plugin.NewIpvsConfFromSave()
+			ipvs, _ := plugin.NewIpvsConfFromSave()
 			Expect(len(ipvs.Services) == 0).To(BeTrue(), "ipvs frond service added")
 
 			// check ipvs metrics

@@ -221,7 +221,7 @@ func StartUdpServer(ip string, port int, ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Debugf("server done")
+			log.Debugf("server[%s:%d] done", ip, port)
 			return nil
 		default:
 			_, remoteAddr, err := conn.ReadFromUDP(buffer)
