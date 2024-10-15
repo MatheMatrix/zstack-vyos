@@ -28,7 +28,7 @@ var _ = Describe("ipvs health check test", func() {
 	bs1.Weight = "1"
 	bs1.BackendIp = "192.168.3.10"
 	bs1.BackendPort = "8080"
-	bs1.HealthCheckProtocl = "udp"
+	bs1.HealthCheckProtocol = "udp"
 	bs1.HealthCheckPort = 8080
 	bs1.HealthCheckInterval = 1
 	bs1.HealthCheckTimeout = 2
@@ -474,6 +474,10 @@ var _ = Describe("ipvs health check test", func() {
 		time.Sleep(time.Duration(wait) * time.Second)
 		ipvsConf, _ = plugin.NewIpvsConfFromSave()
 		Expect(len(ipvsConf.Services) == 0).To(BeTrue(), fmt.Sprintf("0 ipvs service, actual %d", len(ipvsConf.Services)))
+	})
+
+	It("ipvs health check: test change listener parameters", func() {
+
 	})
 
 	It("ipvs health check: test syncIpvsadmWithHealthCheck", func() {

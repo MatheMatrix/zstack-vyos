@@ -53,11 +53,26 @@ func (bs *IpvsHealthCheckBackendServer) getBackendKey() string {
 	return proto + "-" + bs.FrontIp + "-" + bs.FrontPort + "-" + bs.BackendIp + "-" + bs.BackendPort
 }
 
+func (bs *IpvsHealthCheckBackendServer) equal(other *IpvsHealthCheckBackendServer) bool {
+	return bs.ConnectionType == other.ConnectionType &&
+		bs.ProtocolType == other.ProtocolType &&
+		bs.Scheduler == other.Scheduler &&
+		bs.FrontIp == other.FrontIp &&
+		bs.FrontPort == other.FrontPort &&
+		bs.Weight == other.Weight &&
+		bs.BackendIp == other.BackendIp &&
+		bs.BackendPort == other.BackendPort &&
+		bs.HealthCheckProtocol == other.HealthCheckProtocol &&
+		bs.HealthCheckPort == other.HealthCheckPort &&
+		bs.MaxConnection == other.MaxConnection &&
+		bs.MinConnection == other.MinConnection
+}
+
 func (bs *IpvsHealthCheckBackendServer) doHealthCheck() {
-	if bs.HealthCheckProtocl == "udp" {
+	if bs.HealthCheckProtocol == "udp" {
 		bs.doUdpCheck()
 	} else {
-		log.Debugf("unknow health check protocol %s", bs.HealthCheckProtocl)
+		log.Debugf("unknow health check protocol %s", bs.HealthCheckProtocol)
 		bs.result <- false
 	}
 }
@@ -167,7 +182,7 @@ func (bs *IpvsHealthCheckBackendServer) Start() {
 		if err := recover(); err != nil {
 			/* run failed, start again */
 			log.Infof("[ipvsHealthCheck task] run failed %+v", err)
-			bs.Start()
+			go bs.Start()
 		}
 	}()
 
@@ -280,7 +295,14 @@ func reloadIpvsHealthCheckConfig() {
 			2. copy old health check的状态参数给new,
 			此处采用#1 */
 			log.Debugf("[ipvsHealthCheck reload] update health check task params %+v", check.IpvsHealthCheckBackendServer)
-			old.CopyParamsFrom(&check.IpvsHealthCheckBackendServer)
+			if !old.equal(check) {
+				go old.Stop()
+				old.CopyParamsFrom(&check.IpvsHealthCheckBackendServer)
+				go old.Start()
+			} else {
+				log.Debugf("[ipvsHealthCheck reload] checker: %s not changed", old.getBackendKey())
+			}
+
 		}
 	}
 

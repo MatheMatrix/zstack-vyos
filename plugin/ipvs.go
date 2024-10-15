@@ -355,7 +355,7 @@ type IpvsHealthCheckBackendServer struct {
 	BackendIp   string
 	BackendPort string
 
-	HealthCheckProtocl  string
+	HealthCheckProtocol string
 	HealthCheckPort     int
 	HealthCheckInterval int
 	HealthCheckTimeout  int
@@ -370,7 +370,7 @@ func (bs *IpvsHealthCheckBackendServer) CopyParamsFrom(other *IpvsHealthCheckBac
 	bs.ConnectionType = other.ConnectionType
 	bs.Scheduler = other.Scheduler
 	bs.Weight = other.Weight
-	bs.HealthCheckProtocl = other.HealthCheckProtocl
+	bs.HealthCheckProtocol = other.HealthCheckProtocol
 	bs.HealthCheckPort = other.HealthCheckPort
 	bs.HealthCheckInterval = other.HealthCheckInterval
 	bs.HealthCheckTimeout = other.HealthCheckTimeout
@@ -429,7 +429,7 @@ func (hcConf *IpvsHealthCheckConf) FromIpvsConf(conf *IpvsConf) *IpvsHealthCheck
 				MaxConnection: bs.maxConnection,
 				MinConnection: bs.minConnection,
 
-				HealthCheckProtocl:  bs.healthCheckProtocl,
+				HealthCheckProtocol: bs.healthCheckProtocl,
 				HealthCheckPort:     bs.healthCheckPort,
 				HealthCheckInterval: bs.healthCheckInterval,
 				HealthCheckTimeout:  bs.healthCheckTimeout,
@@ -495,12 +495,17 @@ func addIpvsFirewallRuleByVyos(services map[string]*IpvsFrontendService) error {
 		des := makeLbFirewallRuleDescription(fs.LbInfo)
 		nicname, err := utils.GetNicNameByMac(fs.PublicNic)
 		utils.PanicOnError(err)
+		proto := utils.IPTABLES_PROTO_UDP
+		if fs.ProtocolType == "-t" || fs.ProtocolType == "tcp" {
+			proto = utils.IPTABLES_PROTO_TCP
+		}
+
 		if r := tree.FindFirewallRuleByDescription(nicname, "local", des); r == nil {
 			tree.SetFirewallOnInterface(nicname, "local",
 				fmt.Sprintf("description %v", des),
 				fmt.Sprintf("destination address %v", fs.Vip),
 				fmt.Sprintf("destination port %v", fs.LoadBalancerPort),
-				fmt.Sprintf("protocol %s", fs.ProtocolType),
+				fmt.Sprintf("protocol %s", proto),
 				"action accept",
 			)
 
@@ -508,7 +513,7 @@ func addIpvsFirewallRuleByVyos(services map[string]*IpvsFrontendService) error {
 				fmt.Sprintf("description %v", des),
 				fmt.Sprintf("destination address %v", fs.Vip),
 				fmt.Sprintf("destination port %v", fs.LoadBalancerPort),
-				fmt.Sprintf("protocol %s", fs.ProtocolType),
+				fmt.Sprintf("protocol %s", proto),
 				"action accept",
 			)
 		}
@@ -523,7 +528,7 @@ func addIpvsFirewallRuleByVyos(services map[string]*IpvsFrontendService) error {
 					fmt.Sprintf("description %v", des),
 					fmt.Sprintf("source address %v", bs.BackendIp),
 					fmt.Sprintf("source port %v", bs.BackendPort),
-					fmt.Sprintf("protocol %s", fs.ProtocolType),
+					fmt.Sprintf("protocol %s", proto),
 					"action accept",
 				)
 			}
