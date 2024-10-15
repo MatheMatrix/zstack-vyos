@@ -177,6 +177,15 @@ func (bs *IpvsHealthCheckBackendServer) setStatus(status bool) {
 	bs.successCnt = 0
 }
 
+func (bs *IpvsHealthCheckBackendServer) Restart() {
+	log.Debugf("[ipvsHealthCheck task] restart health check task for %s", bs.getBackendKey())
+
+	bs.cancel()
+	bs.UnInstall()
+
+	bs.Start()
+}
+
 func (bs *IpvsHealthCheckBackendServer) Start() {
 	defer func() {
 		if err := recover(); err != nil {
@@ -296,9 +305,8 @@ func reloadIpvsHealthCheckConfig() {
 			此处采用#1 */
 			log.Debugf("[ipvsHealthCheck reload] update health check task params %+v", check.IpvsHealthCheckBackendServer)
 			if !old.equal(check) {
-				go old.Stop()
 				old.CopyParamsFrom(&check.IpvsHealthCheckBackendServer)
-				go old.Start()
+				go old.Restart()
 			} else {
 				log.Debugf("[ipvsHealthCheck reload] checker: %s not changed", old.getBackendKey())
 			}
