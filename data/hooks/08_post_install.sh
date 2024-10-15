@@ -13,6 +13,14 @@ function post_install(){
     done
 }
 
+#stop ipvsHealthCheck
+systemctl status ipvsHealthCheck > /dev/null
+if [ $? -ne 0 ]; then
+   pkill -9 ipvsHealthCheck ## wait zvr pidmod to start ipvsHealthCheck
+else
+  systemctl restart ipvsHealthCheck
+fi
+
 sudo sysctl -w net.ipv4.ip_nonlocal_bind=1
 sudo sysctl -w net.ipv6.ip_nonlocal_bind=1
 
