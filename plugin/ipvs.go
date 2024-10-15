@@ -27,9 +27,10 @@ const (
 )
 
 const (
-	IPVS_LOG_CHAIN_NAME = "ipvs-log"
-	IPVS_LOG_IPSET_NAME = "ipvs-set"
-	IPVS_LOG_PREFIX     = "ipvs-log"
+	IPVS_LOG_CHAIN_NAME  = "ipvs-log"
+	IPVS_LOG_IPSET_NAME  = "ipvs-set"
+	IPVS_LOG_IPSET6_NAME = "ipvs-set"
+	IPVS_LOG_PREFIX      = "ipvs-log"
 
 	IPVS_HEALTH_CHECK_BIN_FILE      = "/usr/local/bin/ipvsHealthCheck"
 	IPVS_HEALTH_CHECK_BIN_FILE_VYOS = "/opt/vyatta/sbin/ipvsHealthCheck"
@@ -573,7 +574,7 @@ func addIpvsFirewallRuleByIptables(services map[string]*IpvsFrontendService) err
 			nicname = strings.TrimSpace(nicname)
 			rule := utils.NewIpTableRule(utils.GetRuleSetName(nicname, utils.RULESET_IN))
 			rule.SetAction(utils.IPTABLES_ACTION_ACCEPT).SetComment(utils.LbRuleComment)
-			rule.SetSrcIp(bs.BackendIp).SetSrcPort(bs.BackendPort).SetProto(proto)
+			rule.SetSrcIp(bs.BackendIp + "/32").SetSrcPort(bs.BackendPort).SetProto(proto)
 			rules = append(rules, rule)
 		}
 	}
@@ -603,7 +604,7 @@ func reloadIpvsHealthCheck() {
 	utils.PanicOnError(err)
 }
 
-func RefreshIpvsService(lbs map[string]LbInfo) error {
+func RefreshIpvsService(lbs map[string]LbInfo, enableLog bool) error {
 	services := map[string]*IpvsFrontendService{}
 	for _, lb := range lbs {
 		if strings.ToLower(lb.Mode) != "udp" {
@@ -653,9 +654,22 @@ func RefreshIpvsService(lbs map[string]LbInfo) error {
 		addIpvsFirewallRuleByVyos(services)
 	}
 
-	for _, fs := range gIpvsConf.Services {
-		/* service maybe not existed, ignore the error */
-		fs.EnableIpvsLog()
+	if enableLog {
+		for _, fs := range gIpvsConf.Services {
+			/* service maybe not existed, ignore the error */
+			err := fs.EnableIpvsLog()
+			if err != nil {
+				log.Debugf("enable ipvs log failed %+v", err)
+			}
+		}
+	} else {
+		err := utils.FlushIpset(IPVS_LOG_IPSET_NAME)
+		if err != nil {
+			log.Debugf("flush ipset[%s] failed %+v", IPVS_LOG_IPSET_NAME, err)
+		}
+
+		//err = utils.FlushIpset(IPVS_LOG_IPSET6_NAME)
+		//log.Debugf("flush ipset[%s] failed %+v", IPVS_LOG_IPSET6_NAME, err)
 	}
 
 	return nil
@@ -722,7 +736,7 @@ func delIpvsFirewallRuleByIptables(services []*IpvsFrontendService) error {
 			nicname = strings.TrimSpace(nicname)
 			rule := utils.NewIpTableRule(utils.GetRuleSetName(nicname, utils.RULESET_IN))
 			rule.SetAction(utils.IPTABLES_ACTION_ACCEPT).SetComment(utils.LbRuleComment)
-			rule.SetSrcIp(bs.BackendIp).SetSrcPort(bs.BackendPort).SetProto(proto)
+			rule.SetSrcIp(bs.BackendIp + "/32").SetSrcPort(bs.BackendPort).SetProto(proto)
 			rules = append(rules, rule)
 		}
 	}
@@ -976,6 +990,8 @@ func StopIpvsHealthCheck() {
 
 func InitIpvs() {
 	gIpvsConf = &IpvsConf{}
+
+	/* TODO: add ipv6 ipset and ip6tables rules */
 
 	/* add ipvs ipset */
 	eipIpset = utils.NewIPSet(IPVS_LOG_IPSET_NAME, utils.IPSET_TYPE_HASH_IP_PORT)

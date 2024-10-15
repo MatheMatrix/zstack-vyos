@@ -39,7 +39,7 @@ var _ = Describe("ipvs test", func() {
 			go utils.StartUdpServer("192.168.3.10", 8080, ctx1)
 			go utils.StartUdpServer("192.168.3.11", 8080, ctx2)
 
-			plugin.RefreshIpvsService(map[string]plugin.LbInfo{env.lb.ListenerUuid: env.lb})
+			plugin.RefreshIpvsService(map[string]plugin.LbInfo{env.lb.ListenerUuid: env.lb}, true)
 
 			// check ipset config
 			ipsetGroup := utils.GetIpSet(plugin.IPVS_LOG_IPSET_NAME)
@@ -98,7 +98,7 @@ var _ = Describe("ipvs test", func() {
 			go utils.StartUdpServer("192.168.3.12", 8080, ctx3)
 
 			env.lb.ServerGroups[0].BackendServers = []plugin.BackendServerInfo{env.bs1, env.bs2, env.bs3}
-			plugin.RefreshIpvsService(map[string]plugin.LbInfo{env.lb.ListenerUuid: env.lb})
+			plugin.RefreshIpvsService(map[string]plugin.LbInfo{env.lb.ListenerUuid: env.lb}, true)
 
 			// check ipset config
 			ipsetGroup := utils.GetIpSet(plugin.IPVS_LOG_IPSET_NAME)
@@ -131,7 +131,7 @@ var _ = Describe("ipvs test", func() {
 			}
 
 			// refresh ipvs without any change
-			plugin.RefreshIpvsService(map[string]plugin.LbInfo{env.lb.ListenerUuid: env.lb})
+			plugin.RefreshIpvsService(map[string]plugin.LbInfo{env.lb.ListenerUuid: env.lb}, true)
 
 			// check ipset config
 			ipsetGroup = utils.GetIpSet(plugin.IPVS_LOG_IPSET_NAME)
@@ -177,7 +177,7 @@ var _ = Describe("ipvs test", func() {
 
 			env.sg1.BackendServers = []plugin.BackendServerInfo{env.bs1, env.bs2}
 			env.lb.ServerGroups = []plugin.ServerGroupInfo{env.sg1}
-			plugin.RefreshIpvsService(map[string]plugin.LbInfo{env.lb.ListenerUuid: env.lb})
+			plugin.RefreshIpvsService(map[string]plugin.LbInfo{env.lb.ListenerUuid: env.lb}, true)
 
 			// check ipset config
 			ipsetGroup := utils.GetIpSet(plugin.IPVS_LOG_IPSET_NAME)
@@ -224,12 +224,12 @@ var _ = Describe("ipvs test", func() {
 			go utils.StartUdpServer(env.bs2.Ip, env.lb.InstancePort, ctx2)
 			go utils.StartUdpServer(env.bs3.Ip, env.lb1.InstancePort, ctx3)
 
-			plugin.RefreshIpvsService(map[string]plugin.LbInfo{env.lb.ListenerUuid: env.lb, env.lb1.ListenerUuid: env.lb1})
+			plugin.RefreshIpvsService(map[string]plugin.LbInfo{env.lb.ListenerUuid: env.lb, env.lb1.ListenerUuid: env.lb1}, false)
 
 			// check ipset config
 			ipsetGroup := utils.GetIpSet(plugin.IPVS_LOG_IPSET_NAME)
-			Expect(ipsetGroup.CheckMember(env.lb.Vip+",udp:"+fmt.Sprintf("%d", env.lb.LoadBalancerPort))).To(BeTrue(), "ipvs log ipset member added", ipsetGroup)
-			Expect(ipsetGroup.CheckMember(env.lb1.Vip+",udp:"+fmt.Sprintf("%d", env.lb1.LoadBalancerPort))).To(BeTrue(), "ipvs log ipset member added", ipsetGroup)
+			Expect(ipsetGroup.CheckMember(env.lb.Vip+",udp:"+fmt.Sprintf("%d", env.lb.LoadBalancerPort))).To(BeFalse(), "ipvs log ipset member added", ipsetGroup)
+			Expect(ipsetGroup.CheckMember(env.lb1.Vip+",udp:"+fmt.Sprintf("%d", env.lb1.LoadBalancerPort))).To(BeFalse(), "ipvs log ipset member added", ipsetGroup)
 
 			// check ipvs config
 			wait := 6 //
