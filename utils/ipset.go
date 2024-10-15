@@ -192,6 +192,15 @@ func (s *IpSet) AddMember(members []string) error {
 	return nil
 }
 
+func FlushIpset(ipsetName string) error {
+	cmd := Bash{
+		Command: fmt.Sprintf("ipset flush %s", ipsetName),
+		Sudo:    true,
+	}
+
+	return cmd.Run()
+}
+
 func (s *IpSet) CheckMember(members string) bool {
 	cmd := Bash{
 		Command: fmt.Sprintf("ipset test %s %s", s.Name, members),

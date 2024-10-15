@@ -1990,7 +1990,7 @@ func RefreshLbInternal(cmd *RefreshLbCmd) {
 	}
 
 	if len(ipvsAdded) > 0 {
-		RefreshIpvsService(ipvsAdded)
+		RefreshIpvsService(ipvsAdded, cmd.EnableHaproxyLog)
 	}
 
 }
