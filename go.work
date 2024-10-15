@@ -7,4 +7,5 @@ use (
 	./plugin
 	./server
 	./utils
+	./plugintest
 )

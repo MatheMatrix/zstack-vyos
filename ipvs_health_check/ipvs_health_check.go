@@ -117,9 +117,7 @@ func (bs *IpvsHealthCheckBackendServer) UnInstall() {
 	healthCheckLock.Lock()
 	defer healthCheckLock.Unlock()
 	num := 0
-	log.Debugf("bs key: %s, gHealthCheckMap:%p", bs.getBackendKey(), gHealthCheckMap)
 	for _, gbs := range gHealthCheckMap {
-		log.Debugf("gbs key: %s, status:%v ", gbs.getBackendKey(), gbs.status)
 		if bs.FrontIp != gbs.FrontIp || bs.FrontPort != gbs.FrontPort || bs.ProtocolType != gbs.ProtocolType {
 			continue
 		}
@@ -241,8 +239,6 @@ func reloadIpvsHealthCheckConfig() {
 		}
 	}()
 
-	log.Debugf("[ipvsHealthCheck reload] reloadIpvsHealthCheckConfig")
-
 	var conf plugin.IpvsHealthCheckConf
 	err := utils.JsonLoadConfig(confFile, &conf)
 	if err != nil {
@@ -256,14 +252,14 @@ func reloadIpvsHealthCheckConfig() {
 		for _, fs := range conf.Services {
 			log.Debugf("[ipvsHealthCheck reload] new Services: %+v", fs)
 			for _, bs := range fs.BackendServers {
-				checker := IpvsHealthCheckBackendServer{
+				nc := IpvsHealthCheckBackendServer{
 					/*  health check will not install ipvs service, untill  backend is up */
 					status:                       false,
 					IpvsHealthCheckBackendServer: *bs,
 				}
 
-				log.Debugf("[ipvsHealthCheck reload] new checker: %+v", checkers)
-				checkers[checker.getBackendKey()] = &checker
+				log.Debugf("[ipvsHealthCheck reload] new checker: %+v", nc)
+				checkers[nc.getBackendKey()] = &nc
 			}
 		}
 	}
