@@ -903,6 +903,7 @@ func UpdateIpvsCounters() {
 			bs.Counter.Status = 1
 			bs.Counter.bytesIn, _ = strconv.ParseUint(strings.Trim(items[5], " "), 10, 64)
 			bs.Counter.bytesOut, _ = strconv.ParseUint(strings.Trim(items[6], " "), 10, 64)
+			log.Debugf("update bs key:%s counter:%+v", bs.GetBackendKey(), bs.Counter)
 		} else {
 			frontIp = ""
 			frontPort = ""
