@@ -17,12 +17,12 @@ import (
 var _ = Describe("ipvs test", func() {
 	Context("slbha ipvs test", func() {
 		env := NewSlbHaEnv()
-		It("ipvs :test prepare env", func() {
+		It("ipvs: test prepare env", func() {
 			env.SetupSlbHaBootStrap()
 			env.SetupLb()
 		})
 
-		It("ipvs :test InitIpvs", func() {
+		It("ipvs: test InitIpvs", func() {
 			ipsetGroup := utils.GetIpSet(plugin.IPVS_LOG_IPSET_NAME)
 			Expect(ipsetGroup).ToNot(BeNil(), "ipvs log ipset created", ipsetGroup)
 

@@ -1531,7 +1531,7 @@ func addPreRulesForLbs(lbs []Listener) error {
 	}
 
 	var err error
-	if !utils.IsSkipVyosIptables() {
+	if utils.IsSkipVyosIptables() {
 		err = addRuleForTcpSyncByIptables(tcpLbs)
 	} else {
 		err = addRuleForTcpSyncByVyos(tcpLbs)
