@@ -3,6 +3,7 @@ Description=start zvrboot
 After=network.target
 [Service]
 Type=oneshot
+ExecStartPre=/bin/sleep 5
 ExecStart=/etc/init.d/zstack/zstack-zvr-bootup.script
 Restart=no
 RemainAfterExit=yes
