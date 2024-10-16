@@ -24,6 +24,7 @@ const (
 	LbRuleComment          = "lb rule"
 	SNATComment            = "snat rule"
 	PolicyRouteComment     = "policy route rule"
+	IpvsComment            = "ipvs-rule"
 
 	PolicyRouteChainPrefix     = "zs-rt-"
 	PolicyRouteRuleChainPrefix = "zs-rule-"

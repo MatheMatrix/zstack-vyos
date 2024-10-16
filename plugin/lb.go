@@ -1363,16 +1363,11 @@ type deleteLbCmd struct {
 }
 
 func makeLbFirewallRuleDescription(lb LbInfo) string {
-	return fmt.Sprintf("LB-%v-%v", lb.LbUuid, lb.ListenerUuid)
+	return fmt.Sprintf("%s-%v-%v", utils.IpvsComment, lb.LbUuid, lb.ListenerUuid)
 }
 
 func makeLbFirewallLocalICMPRuleDescription(lb LbInfo) string {
 	return fmt.Sprintf("LBICMP-%v", lb.LbUuid)
-}
-
-func IsGobetweenRunning(lb GBListener) bool {
-	_, err := utils.FindFirstPIDByPSExtern(false, lb.confPath)
-	return err == nil
 }
 
 func setLb(lb LbInfo) bool {
@@ -1943,28 +1938,36 @@ func AddLbs(lbs []Listener) error {
 	return nil
 }
 
+func isIpvsListener(info LbInfo) bool {
+	if info.Mode != LB_MODE_UDP {
+		return false
+	}
+
+	confPath := makeLbConfFilePath(info)
+	_, err := utils.FindFirstPIDByPSExtern(true, confPath)
+	if err == nil {
+		// gobetween is running for listener
+		return false
+	}
+
+	if info.Vip6 != "" && !utils.IsEuler2203() {
+		// ipvs ipv6 is tested on euler22.03
+		return false
+	}
+
+	return true
+}
+
 func RefreshLbInternal(cmd *RefreshLbCmd) {
-	toDeleted := []Listener{}
-	toAdded := []Listener{}
+	var toDeleted []Listener
+	var toAdded []Listener
 	ipvsAdded := map[string]LbInfo{}
-	ipvsDeleted := map[string]LbInfo{}
 
 	EnableHaproxyLog = cmd.EnableHaproxyLog
 	for _, lb := range cmd.Lbs {
-		if lb.Mode == LB_MODE_UDP {
-			confPath := makeLbConfFilePath(lb)
-			pid, _ := utils.FindFirstPIDByPSExtern(true, confPath)
-			if pid <= 0 {
-				if len(lb.NicIps) == 0 {
-					ipvsDeleted[lb.ListenerUuid] = lb
-				} else if lb.Mode == LB_MODE_HTTPS && lb.CertificateUuid == "" {
-					ipvsDeleted[lb.ListenerUuid] = lb
-				} else {
-					ipvsAdded[lb.ListenerUuid] = lb
-				}
-
-				continue
-			}
+		if isIpvsListener(lb) {
+			ipvsAdded[lb.ListenerUuid] = lb
+			continue
 		}
 
 		listener := GetListener(lb)
@@ -2030,13 +2033,9 @@ func DeleteLbInternal(cmd *deleteLbCmd) {
 	ipvs := map[string]LbInfo{}
 	if len(cmd.Lbs) > 0 {
 		for _, lb := range cmd.Lbs {
-			if lb.Mode == LB_MODE_UDP {
-				confPath := makeLbConfFilePath(lb)
-				pid, _ := utils.FindFirstPIDByPSExtern(true, confPath)
-				if pid <= 0 {
-					ipvs[lb.ListenerUuid] = lb
-					continue
-				}
+			if isIpvsListener(lb) {
+				ipvs[lb.ListenerUuid] = lb
+				continue
 			}
 
 			listener := GetListener(lb)
