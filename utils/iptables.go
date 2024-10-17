@@ -262,8 +262,10 @@ func (t *IpTables) addIpTableRule(rule *IpTableRule) {
 			continue
 		} else if r.priority == rule.priority {
 			if r.IsRuleEqual(rule) == nil {
-				rules = append(rules, rule)
-				added = true
+				if !added {
+					rules = append(rules, rule)
+					added = true
+				}
 			} else {
 				rules = append(rules, r)
 			}
@@ -454,7 +456,6 @@ func (t *IpTables) restore() error {
 		Sudo:    true,
 	}
 
-	//log.Debugf("iptables-restore content: %s", content)
 	_, _, _, err = cmd.RunWithReturn()
 	if err != nil {
 		fileContent, _ := os.ReadFile(tmpFile.Name())

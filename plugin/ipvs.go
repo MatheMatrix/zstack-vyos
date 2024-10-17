@@ -22,10 +22,11 @@ const (
 )
 
 const (
-	IPVS_LOG_CHAIN_NAME  = "ipvs-log"
-	IPVS_LOG_IPSET_NAME  = "ipvs-set"
-	IPVS_LOG_IPSET6_NAME = "ipvs-set"
-	IPVS_LOG_PREFIX      = "ipvs-log"
+	IPVS_LOG_CHAIN_NAME      = "ipvs-log"
+	IPVS_FULL_NAT_CHAIN_NAME = "ipvs-full-nat"
+	IPVS_LOG_IPSET_NAME      = "ipvs-set"
+	IPVS_LOG_IPSET6_NAME     = "ipvs-set"
+	IPVS_LOG_PREFIX          = "ipvs-log"
 
 	IPVS_HEALTH_CHECK_BIN_FILE      = "/usr/local/bin/ipvsHealthCheck"
 	IPVS_HEALTH_CHECK_BIN_FILE_VYOS = "/opt/vyatta/sbin/ipvsHealthCheck"
@@ -522,6 +523,56 @@ func refreshIpvsFirewallRuleByVyos(services map[string]*IpvsFrontendService) err
 	return nil
 }
 
+func refreshIpvsFullNatRules(services map[string]*IpvsFrontendService) {
+	if !utils.IsSLB() {
+		// only slb need full nat rule
+		return
+	}
+
+	table := utils.NewIpTables(utils.NatTable)
+	var rules []*utils.IpTableRule
+
+	table.RemoveIpTableRuleByComments(utils.IpvsComment)
+
+	for _, fs := range services {
+		log.Debugf("refreshIpvsFullNatRules service %+v", fs)
+		proto := utils.IPTABLES_PROTO_UDP
+		if fs.ProtocolType == "-t" || fs.ProtocolType == "tcp" {
+			proto = utils.IPTABLES_PROTO_TCP
+		}
+
+		for _, bs := range fs.BackendServers {
+			if strings.Contains(bs.BackendIp, ":") {
+				/* TODO: add ipv6 rules */
+				continue
+			}
+
+			nicname := utils.GetNicForRoute(bs.BackendIp)
+			nicname = strings.TrimSpace(nicname)
+			nicIp, err := utils.GetIpByNicName(nicname)
+			utils.PanicOnError(err)
+			rule := utils.NewIpTableRule(IPVS_FULL_NAT_CHAIN_NAME)
+			rule.SetDstIp(bs.BackendIp + "/32").SetDstPort(bs.BackendPort).SetProto(proto)
+			rule.SetAction(utils.IPTABLES_ACTION_SNAT).SetSnatTargetIp(nicIp)
+			rule.SetComment(utils.IpvsComment)
+			rules = append(rules, rule)
+		}
+	}
+
+	if gEnableLog {
+		rule := utils.NewIpTableRule(IPVS_LOG_CHAIN_NAME)
+		rule.SetActionLog(IPVS_LOG_PREFIX)
+		rules = append(rules, rule)
+	}
+
+	if len(rules) != 0 {
+		table.AddIpTableRules(rules)
+	}
+
+	err := table.Apply()
+	utils.PanicOnError(err)
+}
+
 func refreshIpvsFirewallRuleByIptables(services map[string]*IpvsFrontendService) error {
 	table := utils.NewIpTables(utils.FirewallTable)
 	var rules []*utils.IpTableRule
@@ -529,7 +580,6 @@ func refreshIpvsFirewallRuleByIptables(services map[string]*IpvsFrontendService)
 	table.RemoveIpTableRuleByComments(utils.IpvsComment)
 
 	for _, fs := range services {
-		log.Debugf("lbInfo %+v", fs.LbInfo)
 		nicname, err := utils.GetNicNameByMac(fs.LbInfo.PublicNic)
 		utils.PanicOnError(err)
 
@@ -628,20 +678,7 @@ func RefreshIpvsBackend() error {
 		utils.PanicOnError(err)
 	}
 
-	err := utils.FlushIpset(IPVS_LOG_IPSET_NAME)
-	if err != nil {
-		log.Debugf("flush ipset[%s] failed %+v", IPVS_LOG_IPSET_NAME, err)
-	}
-
-	if gEnableLog {
-		for _, fs := range gIpvsConf.Services {
-			/* service maybe not existed, ignore the error */
-			err := fs.EnableIpvsLog()
-			if err != nil {
-				log.Debugf("enable ipvs log failed %+v", err)
-			}
-		}
-	}
+	refreshIpvsFullNatRules(services)
 
 	return nil
 }
@@ -881,26 +918,24 @@ func InitIpvs() {
 	gIpvsConf = &IpvsConf{}
 	gIpvsLbInfoMap = make(map[string]map[string]LbInfo)
 
-	/* TODO: add ipv6 ipset and ip6tables rules */
-
-	/* add ipvs ipset */
-	eipIpset = utils.NewIPSet(IPVS_LOG_IPSET_NAME, utils.IPSET_TYPE_HASH_IP_PORT)
-	if err := eipIpset.Create(); err != nil {
-		utils.PanicOnError(err)
-	}
-
-	/* add ipvs hook in prerouting table */
+	// add ipvs-log, ipvs-full-nat to nat table postrouting chain,
+	// ipvs log must be ahead of ipvs-full-nat
 	table := utils.NewIpTables(utils.NatTable)
-	rule := utils.NewIpTableRule(utils.RULESET_DNAT.String())
-	rule.SetAction(IPVS_LOG_CHAIN_NAME)
+	table.AddChain(IPVS_LOG_CHAIN_NAME)
+	table.AddChain(IPVS_FULL_NAT_CHAIN_NAME)
+
+	rule := utils.NewIpTableRule(utils.RULESET_SNAT.String())
+	rule.SetIpvs(true)
+	rule.SetAction(IPVS_LOG_CHAIN_NAME).SetCompareTarget(true)
 	table.AddIpTableRules([]*utils.IpTableRule{rule})
 
-	table.AddChain(IPVS_LOG_CHAIN_NAME)
-	rule = utils.NewIpTableRule(IPVS_LOG_CHAIN_NAME)
-	rule.SetDstIpPortset(IPVS_LOG_IPSET_NAME)
-	rule.SetActionLog(IPVS_LOG_PREFIX)
+	rule = utils.NewIpTableRule(utils.RULESET_SNAT.String())
+	rule.SetIpvs(true)
+	rule.SetAction(IPVS_FULL_NAT_CHAIN_NAME).SetCompareTarget(true)
 	table.AddIpTableRules([]*utils.IpTableRule{rule})
-	table.Apply()
+
+	err := table.Apply()
+	utils.PanicOnError(err)
 
 	/* start ipvsHealthCheck */
 	binPath := IPVS_HEALTH_CHECK_BIN_FILE

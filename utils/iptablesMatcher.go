@@ -53,9 +53,12 @@ type IpTableMatcher struct {
 	mark             int
 	markType         IptablesMarkType
 	srcIpSet         string
-	srcIpPortSet         string
+	srcIpPortSet     string
 	dstIpSet         string
-	dstIpPortSet         string
+	dstIpPortSet     string
+	ipvs             bool
+	ipvsVaddr        string
+	ipvsVport        string
 }
 
 var icmpTypeToCode = map[string]string{
@@ -209,6 +212,21 @@ func (r *IpTableRule) SetDstIpPortset(dstIpPortSet string) *IpTableRule {
 	return r
 }
 
+func (r *IpTableRule) SetIpvs(ipvs bool) *IpTableRule {
+	r.ipvs = ipvs
+	return r
+}
+
+func (r *IpTableRule) SetIpvsVaddr(ipvsVaddr string) *IpTableRule {
+	r.ipvsVaddr = ipvsVaddr
+	return r
+}
+
+func (r *IpTableRule) SetIpvsVport(ipvsVport string) *IpTableRule {
+	r.ipvsVport = ipvsVport
+	return r
+}
+
 func (r *IpTableRule) GetChainName() string {
 	return r.chainName
 }
@@ -289,6 +307,18 @@ func (r *IpTableRule) GetDstIpPortset() string {
 	return r.dstIpPortSet
 }
 
+func (r *IpTableRule) GetIpvs() bool {
+	return r.ipvs
+}
+
+func (r *IpTableRule) GetIpvsVport() string {
+	return r.ipvsVport
+}
+
+func (r *IpTableRule) GetIpvsVaddr() string {
+	return r.ipvsVaddr
+}
+
 func (r *IpTableRule) isMatcherEqual(o *IpTableRule) error {
 	if r.chainName != o.chainName {
 		return fmt.Errorf("not match, old chainName: %s, new chainName: %s", r.chainName, o.chainName)
@@ -361,6 +391,18 @@ func (r *IpTableRule) isMatcherEqual(o *IpTableRule) error {
 
 	if r.dstIpPortSet != o.dstIpPortSet {
 		return fmt.Errorf("not match, old dst dstIpPortSet: %s, new dst dstIpPortSet: %s", r.dstIpPortSet, o.dstIpPortSet)
+	}
+
+	if r.ipvs != o.ipvs {
+		return fmt.Errorf("not match, old ipvs: %s, new ipvs: %s", r.ipvs, o.ipvs)
+	}
+
+	if r.ipvsVaddr != o.ipvsVaddr {
+		return fmt.Errorf("not match, old ipvsVaddr: %s, new ipvsVaddr: %s", r.ipvsVaddr, o.ipvsVaddr)
+	}
+
+	if r.ipvsVport != o.ipvsVport {
+		return fmt.Errorf("not match, old ipvsVport: %s, new ipvsVport: %s", r.ipvsVport, o.ipvsVport)
 	}
 
 	if len(r.states) != len(o.states) {
@@ -580,6 +622,16 @@ func (r *IpTableRule) matcherString() string {
 			rules = append(rules, "-m set ! --match-set "+items[1]+" dst,dst")
 		} else {
 			rules = append(rules, "-m set --match-set "+r.dstIpPortSet+" dst,dst")
+		}
+	}
+
+	if r.ipvs {
+		rules = append(rules, "-m ipvs --ipvs")
+		if r.ipvsVaddr != "" {
+			rules = append(rules, "--vaddr "+r.ipvsVaddr)
+		}
+		if r.ipvsVport != "" {
+			rules = append(rules, "--vport  "+r.ipvsVport)
 		}
 	}
 
@@ -805,6 +857,22 @@ func (r *IpTableRule) parseIpTablesMatcher(line string, chains []*IpTableChain) 
 				}
 			}
 			notMatch = false
+			break
+
+		case "--ipvs": /* --ipvs */
+			r.ipvs = true
+			break
+
+		case "--vaddr": /* --vaddr 192.168.100.30/32 */
+			i++
+			r.ipvsVaddr = items[i]
+			i++
+			break
+
+		case "--vport": /* --vaddr 192.168.100.30/32 */
+			i++
+			r.ipvsVport = items[i]
+			i++
 			break
 
 		case "--tcp-flags": /* --tcp-flags SYN,RST SYN,RST */

@@ -23,11 +23,9 @@ var _ = Describe("ipvs test", func() {
 		})
 
 		It("ipvs: test InitIpvs", func() {
-			ipsetGroup := utils.GetIpSet(plugin.IPVS_LOG_IPSET_NAME)
-			Expect(ipsetGroup).ToNot(BeNil(), "ipvs log ipset created", ipsetGroup)
-
 			table := utils.NewIpTables(utils.NatTable)
-			Expect(table.CheckChain(plugin.IPVS_LOG_CHAIN_NAME)).NotTo(BeFalse(), "ipvs log chain created")
+			Expect(table.CheckChain(plugin.IPVS_LOG_CHAIN_NAME)).To(BeTrue(), "ipvs log chain created")
+			Expect(table.CheckChain(plugin.IPVS_FULL_NAT_CHAIN_NAME)).To(BeTrue(), "ipvs log chain created")
 		})
 
 		It("ipvs: RefreshIpvsService", func() {
@@ -40,10 +38,6 @@ var _ = Describe("ipvs test", func() {
 			go utils.StartUdpServer("192.168.3.11", 8080, ctx2)
 
 			plugin.RefreshIpvsService(map[string]plugin.LbInfo{env.lb.ListenerUuid: env.lb}, true)
-
-			// check ipset config
-			ipsetGroup := utils.GetIpSet(plugin.IPVS_LOG_IPSET_NAME)
-			Expect(ipsetGroup.CheckMember(env.lb.Vip+",udp:"+fmt.Sprintf("%d", env.lb.LoadBalancerPort))).To(BeTrue(), "ipvs log ipset member added", ipsetGroup)
 
 			// check ipvs config
 			wait := 5 //
@@ -100,10 +94,6 @@ var _ = Describe("ipvs test", func() {
 			env.lb.ServerGroups[0].BackendServers = []plugin.BackendServerInfo{env.bs1, env.bs2, env.bs3}
 			plugin.RefreshIpvsService(map[string]plugin.LbInfo{env.lb.ListenerUuid: env.lb}, true)
 
-			// check ipset config
-			ipsetGroup := utils.GetIpSet(plugin.IPVS_LOG_IPSET_NAME)
-			Expect(ipsetGroup.CheckMember(env.lb.Vip+",udp:"+fmt.Sprintf("%d", env.lb.LoadBalancerPort))).To(BeTrue(), "ipvs log ipset member added", ipsetGroup)
-
 			// check ipvs config
 			wait := 6 //
 			time.Sleep(time.Duration(wait) * time.Second)
@@ -132,10 +122,6 @@ var _ = Describe("ipvs test", func() {
 
 			// refresh ipvs without any change
 			plugin.RefreshIpvsService(map[string]plugin.LbInfo{env.lb.ListenerUuid: env.lb}, true)
-
-			// check ipset config
-			ipsetGroup = utils.GetIpSet(plugin.IPVS_LOG_IPSET_NAME)
-			Expect(ipsetGroup.CheckMember(env.lb.Vip+",udp:"+fmt.Sprintf("%d", env.lb.LoadBalancerPort))).To(BeTrue(), "ipvs log ipset member added", ipsetGroup)
 
 			// check ipvs config
 			time.Sleep(time.Duration(wait) * time.Second)
@@ -179,10 +165,6 @@ var _ = Describe("ipvs test", func() {
 			env.lb.ServerGroups = []plugin.ServerGroupInfo{env.sg1}
 			plugin.RefreshIpvsService(map[string]plugin.LbInfo{env.lb.ListenerUuid: env.lb}, true)
 
-			// check ipset config
-			ipsetGroup := utils.GetIpSet(plugin.IPVS_LOG_IPSET_NAME)
-			Expect(ipsetGroup.CheckMember(env.lb.Vip+",udp:"+fmt.Sprintf("%d", env.lb.LoadBalancerPort))).To(BeTrue(), "ipvs log ipset member added", ipsetGroup)
-
 			// check ipvs config
 			wait := 6 //
 			time.Sleep(time.Duration(wait) * time.Second)
@@ -225,11 +207,6 @@ var _ = Describe("ipvs test", func() {
 			go utils.StartUdpServer(env.bs3.Ip, env.lb1.InstancePort, ctx3)
 
 			plugin.RefreshIpvsService(map[string]plugin.LbInfo{env.lb.ListenerUuid: env.lb, env.lb1.ListenerUuid: env.lb1}, false)
-
-			// check ipset config
-			ipsetGroup := utils.GetIpSet(plugin.IPVS_LOG_IPSET_NAME)
-			Expect(ipsetGroup.CheckMember(env.lb.Vip+",udp:"+fmt.Sprintf("%d", env.lb.LoadBalancerPort))).To(BeFalse(), "ipvs log ipset member added", ipsetGroup)
-			Expect(ipsetGroup.CheckMember(env.lb1.Vip+",udp:"+fmt.Sprintf("%d", env.lb1.LoadBalancerPort))).To(BeFalse(), "ipvs log ipset member added", ipsetGroup)
 
 			// check ipvs config
 			wait := 6 //

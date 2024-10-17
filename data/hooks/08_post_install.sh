@@ -23,6 +23,7 @@ fi
 
 sudo sysctl -w net.ipv4.ip_nonlocal_bind=1
 sudo sysctl -w net.ipv6.ip_nonlocal_bind=1
+sudo sysctl -w net.ipv4.vs.conntrack=1
 
 if [[ "${KERNEL_VERSION}" == "5.4.80-amd64-vyos" ]] && [[ "${ARCH}" == "x86_64" ]]; then
     lsmod | grep -q mlx5_core || modprobe mlx5_core
