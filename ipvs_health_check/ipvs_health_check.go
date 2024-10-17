@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"math"
 	"net"
 	"os"
 	"os/signal"
@@ -31,10 +32,10 @@ type IpvsHealthCheckBackendServer struct {
 var logFile string
 var confFile string
 var pidFile string
-var fastUp bool
 
 var gHealthCheckMap map[string]*IpvsHealthCheckBackendServer
-var healthCheckLock sync.Mutex
+var gHealthCheckMapLock sync.Mutex
+var ipvsadmLock sync.Mutex
 
 func parseCommandOptions() {
 	flag.StringVar(&logFile, "log", plugin.IPVS_HEALTH_CHECK_LOG_FILE, "ipvs health check The log file path")
@@ -78,20 +79,8 @@ func (bs *IpvsHealthCheckBackendServer) doHealthCheck() {
 }
 
 func (bs *IpvsHealthCheckBackendServer) Install() {
-	log.Debugf("[ipvsHealthCheck] add backend server %s:%s for front service %s:%s", bs.BackendIp, bs.BackendPort, bs.FrontIp, bs.FrontPort)
-
-	healthCheckLock.Lock()
-	defer healthCheckLock.Unlock()
-	num := 0
-	for _, gbs := range gHealthCheckMap {
-		if bs.FrontIp != gbs.FrontIp || bs.FrontPort != gbs.FrontPort || bs.ProtocolType != gbs.ProtocolType {
-			continue
-		}
-
-		if gbs.status {
-			num++
-		}
-	}
+	ipvsadmLock.Lock()
+	defer ipvsadmLock.Unlock()
 	bs.status = true
 
 	proto := "-u"
@@ -109,17 +98,14 @@ func (bs *IpvsHealthCheckBackendServer) Install() {
 		backedIp = fmt.Sprintf("[%s]", backedIp)
 	}
 
-	cmds := []string{}
-	if num == 0 {
-		/* first active backend is up, add the service */
-		cmds = append(cmds, fmt.Sprintf("ipvsadm -A %s %s:%s -s %s", proto, frontIp, bs.FrontPort, bs.Scheduler))
-	}
-	cmds = append(cmds, fmt.Sprintf("ipvsadm -a %s %s:%s -r  %s:%s %s -w %s -x %d -y %d",
-		proto, frontIp, bs.FrontPort, backedIp, bs.BackendPort, bs.ConnectionType, bs.Weight,
-		bs.MaxConnection, bs.MinConnection))
+	cmd := fmt.Sprintf("(ipvsadm -L %s %s:%s || ipvsadm -A %s %s:%s -s %s); "+
+		"ipvsadm -a %s %s:%s -r  %s:%s %s -w %s -x %d -y %d",
+		proto, frontIp, bs.FrontPort,
+		proto, frontIp, bs.FrontPort, bs.Scheduler,
+		proto, frontIp, bs.FrontPort, backedIp, bs.BackendPort, bs.ConnectionType, bs.Weight, bs.MaxConnection, bs.MinConnection)
 
 	b := utils.Bash{
-		Command: strings.Join(cmds, ";"),
+		Command: cmd,
 		Sudo:    true,
 	}
 
@@ -127,20 +113,8 @@ func (bs *IpvsHealthCheckBackendServer) Install() {
 }
 
 func (bs *IpvsHealthCheckBackendServer) UnInstall() {
-	log.Debugf("[ipvsHealthCheck] remove backend server %s:%s for front service %s:%s", bs.BackendIp, bs.BackendPort, bs.FrontIp, bs.FrontPort)
-
-	healthCheckLock.Lock()
-	defer healthCheckLock.Unlock()
-	num := 0
-	for _, gbs := range gHealthCheckMap {
-		if bs.FrontIp != gbs.FrontIp || bs.FrontPort != gbs.FrontPort || bs.ProtocolType != gbs.ProtocolType {
-			continue
-		}
-
-		if gbs.status {
-			num++
-		}
-	}
+	ipvsadmLock.Lock()
+	defer ipvsadmLock.Unlock()
 	bs.status = false
 
 	proto := "-u"
@@ -157,17 +131,91 @@ func (bs *IpvsHealthCheckBackendServer) UnInstall() {
 	if ip != nil && ip.To4() == nil {
 		backedIp = fmt.Sprintf("[%s]", backedIp)
 	}
+
 	cmd := fmt.Sprintf("ipvsadm -d %s %s:%s -r %s:%s", proto, frontIp, bs.FrontPort, backedIp, bs.BackendPort)
-	if num <= 1 {
-		/* last active backend is down, delete the service */
-		cmd = fmt.Sprintf("ipvsadm -D %s %s:%s", proto, frontIp, bs.FrontPort)
+	b := utils.Bash{
+		Command: cmd,
+		Sudo:    true,
 	}
+	b.Run()
+
+	/* if there is no backend, remove the service */
+	conf, err := plugin.NewIpvsConfFromSave()
+	if err != nil {
+		log.Debugf("[ipvsHealthCheck] ipvsadm-save to config failed %+v", err)
+	}
+
+	for _, fs := range conf.Services {
+		if len(fs.BackendServers) == 0 {
+			proto := "-u"
+			if strings.ToLower(fs.ProtocolType) == "tcp" || strings.ToLower(fs.ProtocolType) == "-t" {
+				proto = "-t"
+			}
+			frontIp := fs.FrontIp
+			ip := net.ParseIP(frontIp)
+			if ip != nil && ip.To4() == nil {
+				frontIp = fmt.Sprintf("[%s]", frontIp)
+			}
+
+			cmd := fmt.Sprintf("ipvsadm -D %s %s:%s", proto, frontIp, fs.FrontPort)
+			b := utils.Bash{
+				Command: cmd,
+				Sudo:    true,
+			}
+			b.Run()
+		}
+	}
+
+}
+
+func (bs *IpvsHealthCheckBackendServer) EditBackendServer() {
+	ipvsadmLock.Lock()
+	defer ipvsadmLock.Unlock()
+
+	proto := "-u"
+	if strings.ToLower(bs.ProtocolType) == "tcp" || strings.ToLower(bs.ProtocolType) == "-t" {
+		proto = "-t"
+	}
+	frontIp := bs.FrontIp
+	ip := net.ParseIP(frontIp)
+	if ip != nil && ip.To4() == nil {
+		frontIp = fmt.Sprintf("[%s]", frontIp)
+	}
+	backedIp := bs.BackendIp
+	ip = net.ParseIP(backedIp)
+	if ip != nil && ip.To4() == nil {
+		backedIp = fmt.Sprintf("[%s]", backedIp)
+	}
+
+	cmd := fmt.Sprintf("ipvsadm -e %s %s:%s -r  %s:%s %s -w %s -x %d -y %d",
+		proto, frontIp, bs.FrontPort, backedIp, bs.BackendPort, bs.ConnectionType, bs.Weight, bs.MaxConnection, bs.MinConnection)
 
 	b := utils.Bash{
 		Command: cmd,
 		Sudo:    true,
 	}
+	b.Run()
+}
 
+func (bs *IpvsHealthCheckBackendServer) EditFrontService() {
+	ipvsadmLock.Lock()
+	defer ipvsadmLock.Unlock()
+
+	proto := "-u"
+	if strings.ToLower(bs.ProtocolType) == "tcp" || strings.ToLower(bs.ProtocolType) == "-t" {
+		proto = "-t"
+	}
+	frontIp := bs.FrontIp
+	ip := net.ParseIP(frontIp)
+	if ip != nil && ip.To4() == nil {
+		frontIp = fmt.Sprintf("[%s]", frontIp)
+	}
+
+	cmd := fmt.Sprintf("ipvsadm -E %s %s:%s -s %s", proto, frontIp, bs.FrontPort, bs.Scheduler)
+	b := utils.Bash{
+		Command: cmd,
+		Sudo:    true,
+	}
 	b.Run()
 }
 
@@ -175,15 +223,6 @@ func (bs *IpvsHealthCheckBackendServer) setStatus(status bool) {
 	bs.status = status
 	bs.failedCnt = 0
 	bs.successCnt = 0
-}
-
-func (bs *IpvsHealthCheckBackendServer) Restart() {
-	log.Debugf("[ipvsHealthCheck task] restart health check task for %s", bs.getBackendKey())
-
-	bs.cancel()
-	bs.UnInstall()
-
-	bs.Start()
 }
 
 func (bs *IpvsHealthCheckBackendServer) Start() {
@@ -216,10 +255,19 @@ func (bs *IpvsHealthCheckBackendServer) Start() {
 		select {
 		case result := <-bs.result:
 			if result {
-				bs.successCnt++
+				if bs.successCnt == math.MaxUint-1 {
+					bs.successCnt = bs.HealthyThreshold
+				} else {
+					bs.successCnt++
+				}
+
 				bs.failedCnt = 0
 			} else {
-				bs.failedCnt++
+				if bs.failedCnt == math.MaxUint-1 {
+					bs.failedCnt = bs.UnhealthyThreshold
+				} else {
+					bs.failedCnt++
+				}
 				bs.successCnt = 0
 			}
 
@@ -230,9 +278,6 @@ func (bs *IpvsHealthCheckBackendServer) Start() {
 			if bs.failedCnt >= bs.UnhealthyThreshold && bs.status {
 				bs.UnInstall()
 			} else if bs.successCnt >= bs.HealthyThreshold && !bs.status {
-				bs.Install()
-			} else if result && !bs.status && fastUp {
-				/* ignore the HealthyThreshold check */
 				bs.Install()
 			}
 			taskTimer.Reset(time.Duration(bs.HealthCheckInterval) * time.Second)
@@ -288,8 +333,8 @@ func reloadIpvsHealthCheckConfig() {
 		}
 	}
 
-	healthCheckLock.Lock()
-	defer healthCheckLock.Unlock()
+	gHealthCheckMapLock.Lock()
+	defer gHealthCheckMapLock.Unlock()
 
 	var toDeleted []string
 	for _, old := range gHealthCheckMap {
@@ -305,8 +350,13 @@ func reloadIpvsHealthCheckConfig() {
 			此处采用#1 */
 			log.Debugf("[ipvsHealthCheck reload] update health check task params %+v", check.IpvsHealthCheckBackendServer)
 			if !old.equal(check) {
-				old.CopyParamsFrom(&check.IpvsHealthCheckBackendServer)
-				go old.Restart()
+				if old.Scheduler != check.Scheduler {
+					old.CopyParamsFrom(&check.IpvsHealthCheckBackendServer)
+					go old.EditFrontService()
+				} else {
+					old.CopyParamsFrom(&check.IpvsHealthCheckBackendServer)
+					go old.EditBackendServer()
+				}
 			} else {
 				log.Debugf("[ipvsHealthCheck reload] checker: %s not changed", old.getBackendKey())
 			}
@@ -315,6 +365,7 @@ func reloadIpvsHealthCheckConfig() {
 	}
 
 	for _, key := range toDeleted {
+		log.Debugf("[ipvsHealthCheck reload] delete health check task for %s", key)
 		go gHealthCheckMap[key].Stop()
 		delete(gHealthCheckMap, key)
 	}
@@ -360,6 +411,9 @@ func syncIpvsadmWithHealthCheck() {
 		log.Debugf("[ipvsHealthCheck sync] ipvsadm-save to config failed %+v", err)
 	}
 
+	gHealthCheckMapLock.Lock()
+	defer gHealthCheckMapLock.Unlock()
+
 	tempBsMap := map[string]*IpvsHealthCheckBackendServer{}
 	for _, fs := range conf.Services {
 		log.Debugf("[ipvsHealthCheck sync] ipvsadm-save front end service %+v", fs)
@@ -379,10 +433,10 @@ func syncIpvsadmWithHealthCheck() {
 			tempBsMap[temp.getBackendKey()] = &temp
 
 			if gHealthCheckMap[temp.getBackendKey()] == nil {
-				gHealthCheckMap[temp.getBackendKey()] = &temp
+				log.Debugf("[ipvsHealthCheck sync] delete backend server %+v", temp.getBackendKey())
 				go temp.UnInstall()
-				delete(gHealthCheckMap, temp.getBackendKey())
 			} else if !gHealthCheckMap[temp.getBackendKey()].status {
+				log.Debugf("[ipvsHealthCheck sync] change backend server %+v status up", temp.getBackendKey())
 				gHealthCheckMap[temp.getBackendKey()].setStatus(true)
 			}
 		}
@@ -390,8 +444,21 @@ func syncIpvsadmWithHealthCheck() {
 
 	for _, gbs := range gHealthCheckMap {
 		if tempBsMap[gbs.getBackendKey()] == nil {
+			log.Debugf("[ipvsHealthCheck sync] change backend server %+v status down", gbs.getBackendKey())
 			gbs.setStatus(false)
 		}
+	}
+}
+
+// when vpcha master/backup failover, we need to make
+func fastUpBackendServers() {
+	gHealthCheckMapLock.Lock()
+	defer gHealthCheckMapLock.Unlock()
+
+	for _, gbs := range gHealthCheckMap {
+		// set false, when health check finished, it will install backend server
+		gbs.setStatus(false)
+		go gbs.doHealthCheck()
 	}
 }
 
@@ -418,7 +485,6 @@ func main() {
 	signal.Notify(interruptChan, syscall.SIGHUP, syscall.SIGUSR1)
 
 	syncTimer := time.NewTimer(time.Duration(300) * time.Second)
-	fastUpTick := time.NewTicker(time.Duration(1) * time.Second)
 
 	/* push a signal when start process */
 	interruptChan <- syscall.SIGHUP
@@ -433,11 +499,7 @@ func main() {
 			if sig == syscall.SIGHUP {
 				reloadIpvsHealthCheckConfig()
 			} else if sig == syscall.SIGUSR1 {
-				fastUp = true
-				fastUpTick = time.NewTicker(time.Duration(120) * time.Second)
-				for _, gbs := range gHealthCheckMap {
-					go gbs.doHealthCheck()
-				}
+				fastUpBackendServers()
 			} else {
 				log.Debugf("[ipvsHealthCheck] unknow sig %+v", sig)
 			}
@@ -446,13 +508,8 @@ func main() {
 			/* sync ipvsadm-save */
 			syncIpvsadmWithHealthCheck()
 
-		case <-fastUpTick.C:
-			/* sync ipvsadm-save */
-			fastUp = false
 		}
-
 	}
-
 }
 
 /* func for UT */
