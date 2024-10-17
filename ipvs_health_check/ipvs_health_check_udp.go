@@ -3,7 +3,10 @@ package main
 import (
 	"fmt"
 	"net"
+	"strings"
 	"time"
+
+	"zstack-vyos/utils"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -37,11 +40,24 @@ func (bs *IpvsHealthCheckBackendServer) doUdpCheck() {
 	_, err = conn.Read(buffer)
 	if err != nil {
 		log.Debugf("[udp checher]: recv udp message from %s:%s failed: %v", bs.BackendIp, bs.BackendPort, err)
-		bs.result <- false
-		return
+
+		if !strings.Contains(err.Error(), "i/o timeout") {
+			bs.result <- false
+			return
+		}
+
+		b := utils.Bash{
+			Command: fmt.Sprintf("ping %s -c 1 -t 1", bs.BackendIp),
+			Sudo:    true,
+		}
+		ret, _, _, err := b.RunWithReturn()
+		if err != nil || ret != 0 {
+			bs.result <- false
+		} else {
+			bs.result <- true
+		}
 	} else {
 		log.Debugf("[udp checher]: recv udp message from %s:%s, result:%s", bs.BackendIp, bs.BackendPort, buffer)
+		bs.result <- true
 	}
-
-	bs.result <- true
 }
