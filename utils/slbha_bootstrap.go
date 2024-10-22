@@ -69,12 +69,11 @@ func SetupSlbHaBootStrap() (NicInfo, NicInfo, NicInfo) {
 		IsDefault:             false,
 	}
 
-	BootstrapInfo["applianceType"] = APPLIANCETYPE_SLB
 	BootstrapInfo["ConfigTcForVipQos"] = false
 	BootstrapInfo["EnableVyosCmd"] = false
 	BootstrapInfo["SkipVyosIptables"] = true
 	BootstrapInfo["abnormalFileMaxSize"] = 100
-	BootstrapInfo["applianceVmSubType"] = "SLB"
+	BootstrapInfo["applianceVmSubType"] = APPLIANCETYPE_SLB
 	BootstrapInfo["haStatus"] = "Backup"
 	BootstrapInfo["managementNodeCidr"] = "172.25.0.0/16"
 	BootstrapInfo["managementNodeIp"] = "172.25.116.181"

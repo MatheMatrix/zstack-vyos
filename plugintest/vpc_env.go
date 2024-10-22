@@ -2,15 +2,94 @@ package plugintest
 
 import (
 	"fmt"
+	"os"
 	"sync"
 	"zstack-vyos/plugin"
 	"zstack-vyos/utils"
 )
 
-var slbHaCreated bool
-var slbHaLock sync.Mutex
+var vpcCreated bool
+var vpcLock sync.Mutex
 
-type SlbHaEnv struct {
+/*
+	example
+
+# cat zvr/bootstrap-info.json
+
+	{
+	    "ConfigTcForVipQos": true,
+	    "EnableVyosCmd": true,
+	    "abnormalFileMaxSize": 100,
+	    "additionalNics": [
+	        {
+	            "addressMode": "Stateful-DHCP",
+	            "category": "Private",
+	            "deviceName": "eth1",
+	            "gateway": "192.69.123.1",
+	            "gateway6": "2345:0:4567::1",
+	            "ip": "192.69.123.1",
+	            "ip6": "2345:0:4567::1",
+	            "isDefaultRoute": false,
+	            "l2type": "L2VlanNetwork",
+	            "mac": "fa:dc:41:9d:98:01",
+	            "mtu": 1500,
+	            "netmask": "255.255.255.0",
+	            "physicalInterface": "zsn1",
+	            "prefixLength": 64,
+	            "vni": 655
+	        },
+	        {
+	            "addressMode": "Stateful-DHCP",
+	            "category": "Private",
+	            "deviceName": "eth2",
+	            "gateway6": "234e:0:4569::1",
+	            "ip6": "234e:0:4569::1",
+	            "isDefaultRoute": false,
+	            "l2type": "L2VlanNetwork",
+	            "mac": "fa:d6:f3:1f:88:02",
+	            "mtu": 1500,
+	            "physicalInterface": "zsn0",
+	            "prefixLength": 64,
+	            "vni": 2233
+	        },
+	        {
+	            "category": "Private",
+	            "deviceName": "eth3",
+	            "gateway": "192.167.100.1",
+	            "ip": "192.167.100.1",
+	            "isDefaultRoute": false,
+	            "l2type": "L2VlanNetwork",
+	            "mac": "fa:cf:11:6c:91:03",
+	            "mtu": 1500,
+	            "netmask": "255.255.255.0",
+	            "physicalInterface": "enp23s0f1",
+	            "vni": 894
+	        }
+	    ],
+	    "applianceVmSubType": "vpcvrouter",
+	    "haStatus": "NoHa",
+	    "managementNic": {
+	        "category": "Public",
+	        "deviceName": "eth0",
+	        "gateway": "172.25.0.1",
+	        "ip": "172.25.116.75",
+	        "isDefaultRoute": true,
+	        "l2type": "L2VlanNetwork",
+	        "mac": "fa:b9:6a:a7:41:00",
+	        "mtu": 1500,
+	        "netmask": "255.255.0.0",
+	        "physicalInterface": "zsn0",
+	        "vni": 31
+	    },
+	    "managementNodeCidr": "172.25.0.0/16",
+	    "managementNodeIp": "172.25.17.40",
+	    "publicKey": "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDqvnsoux4EBADU/EM1RaMTz1hCPd4bdMIAe91rto417Uad/CF80FNGPFG1NtL241feo0kdel2Y6wjob5/Xhm0V09ucM5+SQzRLXXJf3W80PvSaj63Tra0Tki0ZdjGXmjOekUwP7dnIwM+ME2DGheI6YeGzqBb7dxIvzsb3xDu/GSdcGGGEpLgKi96f1FZ987ok06DR0CeDCcgBiNBEO/H5nuar6FY+ar0K6LPtXidJWAacvHaYPSDaie9JuaXKc5xk2CEtSgw4iLY/yU+zIQFKxkjhBa0qZoMbF7xyxRVlfElYR3x8MJCWL6HyAWsV9o9lfEBlzzWR3cGCXUckV0suDD2oQ5Ukzh97NsLVFaH7L2bhsxggrmnh1aM/bdrRrVmPdjuEKWkM2gJHcdQI52X5pNyxjcOb242Azfw8P10yR3LwhVeHpgmorz06Ec9nIs4o+me6Xg6t8DOhI9oSkcyVyV2dHgxPYG3SMWA5tik1CzBUwUlj6UoXlPKLv+/5Ro8= root@172-25-17-40",
+	    "sshPort": 22,
+	    "uuid": "b8c63033c66d43ac9e4ce930b280d195",
+	    "vyosPassword": "vrouter12#"
+	}
+*/
+type VpcEnv struct {
 	MgtNicForUT       utils.NicInfo
 	PubNicForUT       utils.NicInfo
 	PriNicForUT       utils.NicInfo
@@ -18,32 +97,23 @@ type SlbHaEnv struct {
 	EnableVyosCmd     bool
 	SkipVyosIptables  bool
 
-	lb  plugin.LbInfo
-	lb1 plugin.LbInfo
-
-	sg  plugin.ServerGroupInfo
-	sg1 plugin.ServerGroupInfo
-
-	bs1 plugin.BackendServerInfo
-	bs2 plugin.BackendServerInfo
-	bs3 plugin.BackendServerInfo
-	bs4 plugin.BackendServerInfo
+	ipsec1 plugin.IpsecInfo
 }
 
-func NewSlbHaEnv() *SlbHaEnv {
-	return &SlbHaEnv{
-		ConfigTcForVipQos: false,
-		EnableVyosCmd:     false,
-		SkipVyosIptables:  true,
+func NewVpcEnv() *VpcEnv {
+	return &VpcEnv{
+		ConfigTcForVipQos: true,
+		EnableVyosCmd:     true,
+		SkipVyosIptables:  false,
 	}
 }
 
-func (env *SlbHaEnv) SetupSlbHaBootStrap() *SlbHaEnv {
-	utils.InitLog(utils.GetVyosUtLogDir()+"slbha.log", true)
+func (env *VpcEnv) SetupVpcBootStrap() *VpcEnv {
+	utils.InitLog(utils.GetVyosUtLogDir()+"vpc.log", true)
 	utils.InitVyosVersion()
 
-	slbHaLock.Lock()
-	defer slbHaLock.Unlock()
+	vpcLock.Lock()
+	defer vpcLock.Unlock()
 
 	err := utils.IpLinkAdd("ut-mgt", utils.IpLinkTypeVeth.String())
 	utils.PanicOnError(err)
@@ -100,11 +170,11 @@ func (env *SlbHaEnv) SetupSlbHaBootStrap() *SlbHaEnv {
 
 	utils.PrivateNicsForUT = append(utils.PrivateNicsForUT, env.PriNicForUT)
 
-	utils.BootstrapInfo["ConfigTcForVipQos"] = false
-	utils.BootstrapInfo["EnableVyosCmd"] = false
-	utils.BootstrapInfo["SkipVyosIptables"] = true
+	utils.BootstrapInfo["ConfigTcForVipQos"] = true
+	utils.BootstrapInfo["EnableVyosCmd"] = true
+	utils.BootstrapInfo["SkipVyosIptables"] = false
 	utils.BootstrapInfo["abnormalFileMaxSize"] = 100
-	utils.BootstrapInfo["applianceVmSubType"] = utils.APPLIANCETYPE_SLB
+	utils.BootstrapInfo["applianceVmSubType"] = utils.APPLIANCETYPE_VPC
 	utils.BootstrapInfo["haStatus"] = "Backup"
 	utils.BootstrapInfo["managementNodeCidr"] = "172.25.0.0/16"
 	utils.BootstrapInfo["managementNodeIp"] = "172.25.116.181"
@@ -177,13 +247,13 @@ func (env *SlbHaEnv) SetupSlbHaBootStrap() *SlbHaEnv {
 	}
 	plugin.ConfigureNic(nicCmd)
 
-	slbHaCreated = true
+	vpcCreated = true
 	return env
 }
 
-func (env *SlbHaEnv) DestroySlbHaBootStrap() {
-	slbHaLock.Lock()
-	defer slbHaLock.Unlock()
+func (env *VpcEnv) DestroyVpcBootStrap() {
+	vpcLock.Lock()
+	defer vpcLock.Unlock()
 
 	nicCmd := &plugin.ConfigureNicCmd{
 		Nics: []utils.NicInfo{env.MgtNicForUT},
@@ -205,35 +275,11 @@ func (env *SlbHaEnv) DestroySlbHaBootStrap() {
 	utils.IpLinkDel("ut-pub")
 	utils.IpLinkDel("ut-pri")
 
-	slbHaCreated = false
+	vpcCreated = false
 }
 
-func (env *SlbHaEnv) SetupVyosHa() {
-	vip4 := plugin.MacVipPair{
-		NicMac:  env.PubNicForUT.Mac,
-		NicVip:  "169.254.2.102",
-		Netmask: "255.255.255.0",
-	}
-	vip6 := plugin.MacVipPair{
-		NicMac:    env.PubNicForUT.Mac,
-		NicVip:    "234e:0:4568::75:cf18",
-		PrefixLen: 64,
-	}
-	vyoshacmd := &plugin.SetVyosHaCmd{
-		Keepalive:    5,
-		HeartbeatNic: env.PubNicForUT.Mac,
-		LocalIp:      "169.254.2.100",
-		PeerIp:       "169.254.2.101",
-		LocalIpV6:    "234e:0:4568::19:9e8a",
-		PeerIpV6:     "234e:0:4568::52:90dc",
-		Monitors:     []string{},
-		Vips:         []plugin.MacVipPair{vip4, vip6},
-	}
-
-	plugin.SetVyosHa(vyoshacmd)
-}
-
-func (env *SlbHaEnv) SetupLb() {
+/*
+func (env *SlbHaEnv) SetupVpcLb() {
 	plugin.InitLb()
 	plugin.InitIpvs()
 
@@ -296,17 +342,70 @@ func (env *SlbHaEnv) SetupLb() {
 	env.lb1.RedirectRules = nil
 }
 
-func (env *SlbHaEnv) DestroyLb() {
+func (env *SlbHaEnv) DestroyVpcLb() {
 	plugin.StopIpvsHealthCheck()
 }
+*/
 
-func (env *SlbHaEnv) AddPeerAddr(nicName, addr string) {
+func (env *VpcEnv) SetupIpsec() {
+	if utils.IsEuler2203() {
+		b := &utils.Bash{
+			Command: "systemctl restart strongswan",
+			Sudo:    true,
+		}
+		err := b.Run()
+		utils.PanicOnError(err)
+	}
+
+	plugin.IPsecEntryPoint()
+	plugin.IpsecInit()
+	env.ipsec1.Uuid = "a6c89c57c0684cb4926b346b68eaee3a"
+	env.ipsec1.PublicNic = env.PriNicForUT.Mac
+	env.ipsec1.Vip = "192.168.2.101"
+	env.ipsec1.LocalCidrs = []string{"192.167.100.0/24"}
+	env.ipsec1.PeerAddress = "192.168.2.102"
+	env.ipsec1.PeerCidrs = []string{"192.168.1.0/24"}
+	env.ipsec1.IdType = "ip"
+
+	env.ipsec1.AuthMode = "psk"
+	env.ipsec1.AuthKey = "123456"
+
+	env.ipsec1.IkeVersion = "ikev2"
+	env.ipsec1.IkeLifeTime = 86400
+	env.ipsec1.LifeTime = 3600
+	env.ipsec1.IkeAuthAlgorithm = "sha256"
+	env.ipsec1.IkeEncryptionAlgorithm = "aes256"
+	env.ipsec1.IkeDhGroup = 2
+	env.ipsec1.PolicyAuthAlgorithm = "sha256"
+	env.ipsec1.PolicyEncryptionAlgorithm = "aes256"
+	env.ipsec1.Pfs = "dh-group14"
+	env.ipsec1.PolicyMode = "tunnel"
+	env.ipsec1.TransformProtocol = "esp"
+
+	env.ipsec1.ExcludeSnat = true
+
+}
+
+func (env *VpcEnv) DestroyIpsec() {
+	if utils.IsEuler2203() {
+		b := &utils.Bash{
+			Command: "systemctl stop strongswan",
+			Sudo:    true,
+		}
+		err := b.Run()
+		utils.PanicOnError(err)
+
+		os.ReadDir(plugin.SwanConnectionConfPath)
+	}
+}
+
+func (env *VpcEnv) AddPeerAddr(nicName, addr string) {
 	err := utils.IpAddrAdd(nicName+"-peer", addr)
 	utils.PanicOnError(err)
 	//log.Debugf("add peer addr success, nicName: %s, addr: %s", nicName, addr)
 }
 
-func (env *SlbHaEnv) GetNicMac(nicName string) string {
+func (env *VpcEnv) GetNicMac(nicName string) string {
 	switch nicName {
 	case "mgt":
 		return env.MgtNicForUT.Mac
