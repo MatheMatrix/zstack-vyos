@@ -5,6 +5,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"time"
 
 	"zstack-vyos/server"
 	"zstack-vyos/utils"
@@ -750,6 +751,10 @@ func GetIpvsFrontService(listenerUuid string) *IpvsFrontendService {
 }
 
 func UpdateIpvsMetrics(c *loadBalancerCollector, ch chan<- prom.Metric) (err error) {
+	if gIpvsConf.Services == nil {
+		return
+	}
+
 	UpdateIpvsCounters()
 
 	/* update listener total session */
@@ -955,9 +960,10 @@ func InitIpvs() {
 		utils.PanicOnError(err)
 	}
 
+	time.Sleep(1 * time.Second)
+
 	pid, err = utils.FindFirstPIDByPSExtern(true, binPath)
-	utils.PanicOnError(err)
-	log.Debugf("ipvs health check pid %d", pid)
+	log.Errorf("ipvs health check pid %d", pid)
 
 	ipvsHealthCheckPidMon = utils.NewPidMon(pid, func() int {
 		log.Warnf("start ipvs health check in PidMon")

@@ -314,6 +314,7 @@ func main() {
 	utils.InitLog(options.LogFile, utils.IsRuingUT())
 	utils.InitVyosVersion()
 	log.Debugf("zvr main: os %s, kernel version: %s", utils.Vyos_version, utils.Kernel_version)
+	utils.InitIptablesFlags()
 	go restartRsyslog()
 	utils.InitBootStrapInfo()
 	checkIptablesRules()

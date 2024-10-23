@@ -23,6 +23,8 @@ type IpTablesHelper interface {
 
 var vyosIptableHelper VyosIpTableHelper
 
+var iptablesWithLock = false
+
 type IpTableRule struct {
 	priority      int
 	ruleNumber    int
@@ -451,8 +453,12 @@ func (t *IpTables) restore() error {
 		return err
 	}
 
+	flags := ""
+	if iptablesWithLock {
+		flags = "-w"
+	}
 	cmd := Bash{
-		Command: fmt.Sprintf("iptables-restore --table=%s < %s", t.Name, tmpFile.Name()),
+		Command: fmt.Sprintf("iptables-restore %s --table=%s < %s", flags, t.Name, tmpFile.Name()),
 		Sudo:    true,
 	}
 
@@ -507,4 +513,18 @@ func (t *IpTables) Flush(chainName string) error {
 	t.Chains = []*IpTableChain{}
 	t.Rules = []*IpTableRule{}
 	return nil
+}
+
+func InitIptablesFlags() {
+	bash := Bash{
+		Command: fmt.Sprintf("iptables -w -nL > /dev/null"),
+		Sudo:    true,
+	}
+
+	ret, _, _, err := bash.RunWithReturn()
+	if ret != 0 || err != nil {
+		iptablesWithLock = false
+	} else {
+		iptablesWithLock = true
+	}
 }

@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"zstack-vyos/plugin"
 	"zstack-vyos/server"
 	"zstack-vyos/utils"
-	"zstack-vyos/plugin"
 
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -623,10 +623,10 @@ func configureVyos() {
 	}
 
 	for _, nic := range nics {
-		if (nic.ip != "") {
+		if nic.ip != "" {
 			arping(nic.name, nic.ip, nic.gateway)
 		}
-		if (nic.ip6 != "") {
+		if nic.ip6 != "" {
 			arping6(nic.name, nic.ip6, eth0.gateway)
 		}
 	}
@@ -676,7 +676,7 @@ func startZvr() {
 		path = "/usr/local/bin/zstack-virtualrouteragent"
 	}
 	b := utils.Bash{
-		Command:  fmt.Sprintf("bash -x %s restart >> /tmp/agentRestart.log 2>&1", path),
+		Command: fmt.Sprintf("bash -x %s restart >> /tmp/agentRestart.log 2>&1", path),
 	}
 	b.Run()
 	b.PanicIfError()
@@ -698,6 +698,7 @@ func main() {
 
 	utils.InitVyosVersion()
 	utils.InitLog(getZvrbootLogPath(), utils.IsRuingUT())
+	utils.InitIptablesFlags()
 	waitIptablesServiceOnline()
 	if isOnVMwareHypervisor() {
 		parseEsxBootInfo()
@@ -713,6 +714,9 @@ func main() {
 		configureSystem()
 	}
 	utils.Truncate(plugin.IPVS_HEALTH_CHECK_CONFIG_FILE, 0)
+	if utils.IsEuler2203() {
+		plugin.InitEulerStrongswan()
+	}
 	startZvr()
 	log.Debugf("successfully configured the sysmtem and bootstrap the zstack virtual router agents")
 }
