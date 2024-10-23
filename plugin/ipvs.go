@@ -835,12 +835,16 @@ func UpdateIpvsCounters() {
 		items := strings.Fields(line)
 		if items[0] == "TCP" || items[0] == "UDP" {
 			ipports := strings.Split(items[1], ":")
-			frontIp = ipports[0]
-			frontPort = ipports[1]
+			frontIp = strings.Join(ipports[0:len(ipports)-1], ":")
+			frontIp = strings.Trim(frontIp, "[")
+			frontIp = strings.Trim(frontIp, "]")
+			frontPort = ipports[len(ipports)-1]
 		} else if items[0] == "->" {
 			ipports := strings.Split(items[1], ":")
-			backendIp = ipports[0]
-			backendPort = ipports[1]
+			backendIp = strings.Join(ipports[0:len(ipports)-1], ":")
+			backendIp = strings.Trim(backendIp, "[")
+			backendIp = strings.Trim(backendIp, "]")
+			backendPort = ipports[len(ipports)-1]
 
 			bs := getIpvsBackend(proto, frontIp, frontPort, backendIp, backendPort)
 			if bs == nil {
@@ -890,12 +894,16 @@ func UpdateIpvsCounters() {
 		items := strings.Fields(line)
 		if items[0] == "TCP" || items[0] == "UDP" {
 			ipports := strings.Split(items[1], ":")
-			frontIp = ipports[0]
-			frontPort = ipports[1]
+			frontIp = strings.Join(ipports[0:len(ipports)-1], ":")
+			frontIp = strings.Trim(frontIp, "[")
+			frontIp = strings.Trim(frontIp, "]")
+			frontPort = ipports[len(ipports)-1]
 		} else if items[0] == "->" {
 			ipports := strings.Split(items[1], ":")
-			backendIp = ipports[0]
-			backendPort = ipports[1]
+			backendIp = strings.Join(ipports[0:len(ipports)-1], ":")
+			backendIp = strings.Trim(backendIp, "[")
+			backendIp = strings.Trim(backendIp, "]")
+			backendPort = ipports[len(ipports)-1]
 
 			bs := getIpvsBackend(proto, frontIp, frontPort, backendIp, backendPort)
 			if bs == nil {
