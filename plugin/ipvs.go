@@ -987,7 +987,7 @@ func InitIpvs() {
 			return -1
 		}
 
-		pid, err := utils.FindFirstPIDByPSExtern(true, IPVS_HEALTH_CHECK_BIN_FILE)
+		pid, err := utils.FindFirstPIDByPSExtern(true, binPath)
 		if err != nil {
 			log.Warnf("failed to read ipvs health check pid: %v", err)
 			return -1
@@ -998,4 +998,11 @@ func InitIpvs() {
 	log.Debugf("created lvs health check PidMon")
 	err = ipvsHealthCheckPidMon.Start()
 	utils.PanicOnError(err)
+
+	bash := utils.Bash{
+		Command: fmt.Sprintf("sysctl -w net.ipv4.vs.conntrack=1"),
+		Sudo:    true,
+	}
+	bash.Run()
+	bash.PanicIfError()
 }
