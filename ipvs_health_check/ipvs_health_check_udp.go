@@ -26,7 +26,7 @@ func (bs *IpvsHealthCheckBackendServer) doUdpCheck() {
 	}
 
 	defer conn.Close()
-	message := []byte("zstack ipvs health check")
+	message := []byte("zstack ipvs health check from" + bs.FrontPort + "" + bs.FrontPort)
 
 	_, err = conn.Write(message)
 	if err != nil {
@@ -46,8 +46,13 @@ func (bs *IpvsHealthCheckBackendServer) doUdpCheck() {
 			return
 		}
 
+		cmd := fmt.Sprintf("ping %s -c 1 -t 1", bs.BackendIp)
+		if strings.Contains(bs.BackendIp, ":") {
+			cmd = fmt.Sprintf("ping6 %s -c 1 -t 1", bs.BackendIp)
+		}
+
 		b := utils.Bash{
-			Command: fmt.Sprintf("ping %s -c 1 -t 1", bs.BackendIp),
+			Command: cmd,
 			Sudo:    true,
 		}
 		ret, _, _, err := b.RunWithReturn()
