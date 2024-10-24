@@ -13,6 +13,8 @@ function post_install(){
     done
 }
 
+systemctl daemon-reload
+
 #stop ipvsHealthCheck
 systemctl status ipvsHealthCheck > /dev/null
 if [ $? -ne 0 ]; then

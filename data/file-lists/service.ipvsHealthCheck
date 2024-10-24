@@ -1,0 +1,16 @@
+[Unit]
+Description=ipvs backend server health check daemon
+After=network-online.target syslog.target
+Wants=network-online.target
+
+[Service]
+Type=forking
+PIDFile=/var/run/ipvs_health_check.pid
+KillMode=process
+ExecStart=/usr/local/bin/ipvsHealthCheck -f /etc/ipvs/healthcheck.conf -log /var/log/ipvs_health_check.log -p /var/run/ipvs_health_check.pid
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

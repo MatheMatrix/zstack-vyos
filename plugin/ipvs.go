@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
 	"zstack-vyos/server"
 	"zstack-vyos/utils"
 
@@ -812,6 +811,7 @@ func UpdateIpvsCounters() {
 		*/
 		Command: "ipvsadm -L -n --stats",
 		Sudo:    true,
+		NoLog:   true,
 	}
 
 	ret, o, _, err := b.RunWithReturn()
@@ -831,7 +831,6 @@ func UpdateIpvsCounters() {
 		if line == "" || len(line) == 0 {
 			continue
 		}
-		log.Debugf("line: %s", line)
 		items := strings.Fields(line)
 		if items[0] == "TCP" || items[0] == "UDP" {
 			ipports := strings.Split(items[1], ":")
@@ -857,7 +856,6 @@ func UpdateIpvsCounters() {
 			bs.Counter.Status = 1
 			bs.Counter.bytesIn, _ = strconv.ParseUint(strings.Trim(items[5], " "), 10, 64)
 			bs.Counter.bytesOut, _ = strconv.ParseUint(strings.Trim(items[6], " "), 10, 64)
-			log.Debugf("update bs key:%s counter:%+v", bs.GetBackendKey(), bs.Counter)
 		} else {
 			frontIp = ""
 			frontPort = ""
@@ -877,6 +875,7 @@ func UpdateIpvsCounters() {
 		*/
 		Command: "ipvsadm -Ln --thresholds",
 		Sudo:    true,
+		NoLog:   true,
 	}
 
 	ret, o, _, err = b.RunWithReturn()
@@ -890,7 +889,6 @@ func UpdateIpvsCounters() {
 		if line == "" || len(line) == 0 {
 			continue
 		}
-		log.Debugf("line: %s", line)
 		items := strings.Fields(line)
 		if items[0] == "TCP" || items[0] == "UDP" {
 			ipports := strings.Split(items[1], ":")
@@ -927,29 +925,7 @@ func StopIpvsHealthCheck() {
 	ipvsHealthCheckPidMon.Destroy()
 }
 
-func InitIpvs() {
-	gIpvsConf = &IpvsConf{}
-	gIpvsLbInfoMap = make(map[string]map[string]LbInfo)
-
-	// add ipvs-log, ipvs-full-nat to nat table postrouting chain,
-	// ipvs log must be ahead of ipvs-full-nat
-	table := utils.NewIpTables(utils.NatTable)
-	table.AddChain(IPVS_LOG_CHAIN_NAME)
-	table.AddChain(IPVS_FULL_NAT_CHAIN_NAME)
-
-	rule := utils.NewIpTableRule(utils.RULESET_SNAT.String())
-	rule.SetIpvs(true)
-	rule.SetAction(IPVS_LOG_CHAIN_NAME).SetCompareTarget(true)
-	table.AddIpTableRules([]*utils.IpTableRule{rule})
-
-	rule = utils.NewIpTableRule(utils.RULESET_SNAT.String())
-	rule.SetIpvs(true)
-	rule.SetAction(IPVS_FULL_NAT_CHAIN_NAME).SetCompareTarget(true)
-	table.AddIpTableRules([]*utils.IpTableRule{rule})
-
-	err := table.Apply()
-	utils.PanicOnError(err)
-
+func startIpvsHealthCheckPidMon() {
 	/* start ipvsHealthCheck */
 	binPath := IPVS_HEALTH_CHECK_BIN_FILE
 	if utils.IsVYOS() {
@@ -998,6 +974,36 @@ func InitIpvs() {
 	log.Debugf("created lvs health check PidMon")
 	err = ipvsHealthCheckPidMon.Start()
 	utils.PanicOnError(err)
+}
+
+func InitIpvs() {
+	gIpvsConf = &IpvsConf{}
+	gIpvsLbInfoMap = make(map[string]map[string]LbInfo)
+
+	// add ipvs-log, ipvs-full-nat to nat table postrouting chain,
+	// ipvs log must be ahead of ipvs-full-nat
+	table := utils.NewIpTables(utils.NatTable)
+	table.AddChain(IPVS_LOG_CHAIN_NAME)
+	table.AddChain(IPVS_FULL_NAT_CHAIN_NAME)
+
+	rule := utils.NewIpTableRule(utils.RULESET_SNAT.String())
+	rule.SetIpvs(true)
+	rule.SetAction(IPVS_LOG_CHAIN_NAME).SetCompareTarget(true)
+	table.AddIpTableRules([]*utils.IpTableRule{rule})
+
+	rule = utils.NewIpTableRule(utils.RULESET_SNAT.String())
+	rule.SetIpvs(true)
+	rule.SetAction(IPVS_FULL_NAT_CHAIN_NAME).SetCompareTarget(true)
+	table.AddIpTableRules([]*utils.IpTableRule{rule})
+
+	err := table.Apply()
+	utils.PanicOnError(err)
+
+	if utils.IsEuler2203() {
+		utils.ServiceOperation("ipvsHealthCheck", "start")
+	} else {
+		startIpvsHealthCheckPidMon()
+	}
 
 	bash := utils.Bash{
 		Command: fmt.Sprintf("sysctl -w net.ipv4.vs.conntrack=1"),

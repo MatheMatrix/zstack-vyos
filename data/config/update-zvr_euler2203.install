@@ -27,6 +27,8 @@ logrotate.zvrstartup      /etc/logrotate.d/zvrstartup                       0600
 logrotate.ipvs      /etc/logrotate.d/ipvs                       0600     root:root
 logrotate.ipvsHealthCheck /etc/logrotate.d/ipvsHealthCheck                       0600     root:root
 charon_euler.conf         /etc/strongswan/strongswan.d/charon.conf        0600     root:root
+service.keepalived        /usr/lib/systemd/system/keepalived.service      0600     root:root
+service.ipvsHealthCheck   /usr/lib/systemd/system/ipvsHealthCheck.service  0600     root:root
 
 [[X86]]
 # this files just for x86_64
