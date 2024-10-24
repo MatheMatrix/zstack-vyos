@@ -2004,6 +2004,7 @@ func refreshLb(ctx *server.CommandContext) interface{} {
 
 func delLbs(lbs []Listener) error {
 	for _, lb := range lbs {
+		lb.stopPidMonitor()
 		err := lb.stopListenerService()
 		utils.PanicOnError(err)
 	}
