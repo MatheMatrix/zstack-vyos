@@ -1950,11 +1950,6 @@ func isIpvsListener(info LbInfo) bool {
 		return false
 	}
 
-	if info.Vip6 != "" && !utils.IsEuler2203() {
-		// ipvs ipv6 is tested on euler22.03
-		return false
-	}
-
 	return true
 }
 

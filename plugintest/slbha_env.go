@@ -251,7 +251,7 @@ func (env *SlbHaEnv) SetupLb() {
 		"Nbprocess::1",
 		"balancerAlgorithm::roundrobin",
 		"healthCheckTimeout::2",
-		"healthCheckTarget::udp:default",
+		"healthCheckTarget::udp:9090",
 		"maxConnection::2000000",
 		"httpMode::http-server-close",
 		"accessControlStatus::enable",
