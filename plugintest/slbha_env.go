@@ -2,6 +2,7 @@ package plugintest
 
 import (
 	"fmt"
+	"os"
 	"sync"
 	"zstack-vyos/plugin"
 	"zstack-vyos/utils"
@@ -235,6 +236,7 @@ func (env *SlbHaEnv) SetupVyosHa() {
 
 func (env *SlbHaEnv) SetupLb() {
 	plugin.InitLb()
+	os.Remove(plugin.IPVS_HEALTH_CHECK_CONFIG_FILE)
 	plugin.InitIpvs()
 
 	env.lb.LbUuid = "f2c7b2ff2f834e1ea20363f49122a3b4"
@@ -251,7 +253,7 @@ func (env *SlbHaEnv) SetupLb() {
 		"Nbprocess::1",
 		"balancerAlgorithm::roundrobin",
 		"healthCheckTimeout::2",
-		"healthCheckTarget::udp:9090",
+		"healthCheckTarget::udp:default",
 		"maxConnection::2000000",
 		"httpMode::http-server-close",
 		"accessControlStatus::enable",

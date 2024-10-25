@@ -251,6 +251,37 @@ var _ = Describe("ipvs test", func() {
 			time.Sleep(time.Duration(2) * time.Second)
 		})
 
+		It("ipvs: RefreshIpvsService with empty nicIps", func() {
+			ctx3, cancel3 := context.WithCancel(context.Background())
+			go utils.StartUdpServer(env.bs3.Ip, env.lb1.InstancePort, ctx3)
+
+			env.lb.NicIps = []string{}
+			plugin.RefreshIpvsService(map[string]plugin.LbInfo{env.lb.ListenerUuid: env.lb, env.lb1.ListenerUuid: env.lb1}, false)
+
+			// check ipvs config
+			wait := 6 //
+			time.Sleep(time.Duration(wait) * time.Second)
+			ipvs, _ := plugin.NewIpvsConfFromSave()
+			Expect(plugin.GetIpvsFrontService(env.lb.ListenerUuid)).To(BeNil(), "lb has been deleted")
+			Expect(len(ipvs.Services) == 1).To(BeTrue(), "ipvs frond service added")
+
+			// check ipvs metrics
+			plugin.UpdateIpvsCounters()
+			fs := plugin.GetIpvsFrontService(env.lb.ListenerUuid)
+			Expect(plugin.GetIpvsFrontService(env.lb.ListenerUuid)).To(BeNil(), "lb has been deleted")
+
+			fs = plugin.GetIpvsFrontService(env.lb1.ListenerUuid)
+			for _, bs := range fs.BackendServers {
+				cnt := bs.Counter
+				Expect(cnt.Status == 1).To(BeTrue(), "ipvs backend server is up")
+			}
+
+			env.lb.NicIps = []string{env.bs1.Ip, env.bs2.Ip}
+			cancel3()
+			//wait udp server down
+			time.Sleep(time.Duration(2) * time.Second)
+		})
+
 		It("ipvs: del lb", func() {
 			bs := plugin.BackendServerInfo{
 				Ip:     "192.168.3.10",

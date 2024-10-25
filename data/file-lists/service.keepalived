@@ -1,7 +1,6 @@
 [Unit]
 Description=LVS and VRRP High Availability Monitor
-After=network-online.target syslog.target
-Wants=network-online.target
+After=syslog.target zvrboot.service
 
 [Service]
 Type=forking
