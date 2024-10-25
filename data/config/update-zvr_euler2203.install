@@ -29,6 +29,9 @@ logrotate.ipvsHealthCheck /etc/logrotate.d/ipvsHealthCheck                      
 charon_euler.conf         /etc/strongswan/strongswan.d/charon.conf        0600     root:root
 service.keepalived        /usr/lib/systemd/system/keepalived.service      0600     root:root
 service.ipvsHealthCheck   /usr/lib/systemd/system/ipvsHealthCheck.service  0600     root:root
+service.zvrboot           /usr/lib/systemd/system/zvrboot.service          0600     root:root
+service.zsn               /usr/lib/systemd/system/zsn.service              0600     root:root
+service.strongswan        /usr/lib/systemd/system/strongswan.service       0600     root:root
 
 [[X86]]
 # this files just for x86_64

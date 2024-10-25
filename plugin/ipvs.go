@@ -695,7 +695,39 @@ func RefreshIpvsService(lbs map[string]LbInfo, enableLog bool) error {
 	}
 
 	for lbUuid, lb := range tempLbMaps {
-		gIpvsLbInfoMap[lbUuid] = lb
+		for listenerUuid, listener := range lb {
+			/* if there is no backend, delete listener */
+			if len(listener.NicIps) == 0 {
+				log.Debugf("no nics: %s", listenerUuid)
+				delete(lb, listenerUuid)
+				continue
+			}
+
+			if len(listener.ServerGroups) == 0 {
+				log.Debugf("no server group: %s", listenerUuid)
+				delete(lb, listenerUuid)
+				continue
+			}
+
+			var servers []string
+			for _, serverGroup := range listener.ServerGroups {
+				for _, bs := range serverGroup.BackendServers {
+					servers = append(servers, bs.Ip)
+				}
+			}
+			if len(servers) == 0 {
+				log.Debugf("no server group backend: %s", listenerUuid)
+				delete(lb, listenerUuid)
+				continue
+			}
+		}
+
+		if len(lb) == 0 {
+			log.Debugf("delete lb: %s", lbUuid)
+			delete(gIpvsLbInfoMap, lbUuid)
+		} else {
+			gIpvsLbInfoMap[lbUuid] = lb
+		}
 	}
 
 	gEnableLog = enableLog
@@ -922,7 +954,11 @@ func UpdateIpvsCounters() {
 }
 
 func StopIpvsHealthCheck() {
-	ipvsHealthCheckPidMon.Destroy()
+	if !utils.IsEuler2203() {
+		ipvsHealthCheckPidMon.Destroy()
+	} else {
+		utils.ServiceOperation("ipvsHealthCheck", "stop")
+	}
 }
 
 func startIpvsHealthCheckPidMon() {
@@ -947,7 +983,7 @@ func startIpvsHealthCheckPidMon() {
 	time.Sleep(1 * time.Second)
 
 	pid, err = utils.FindFirstPIDByPSExtern(true, binPath)
-	log.Errorf("ipvs health check pid %d", pid)
+	log.Debugf("ipvs health check pid %d", pid)
 
 	ipvsHealthCheckPidMon = utils.NewPidMon(pid, func() int {
 		log.Warnf("start ipvs health check in PidMon")
@@ -971,7 +1007,7 @@ func startIpvsHealthCheckPidMon() {
 
 		return pid
 	})
-	log.Debugf("created lvs health check PidMon")
+	log.Debugf("created ipvs health check PidMon")
 	err = ipvsHealthCheckPidMon.Start()
 	utils.PanicOnError(err)
 }
@@ -1000,7 +1036,7 @@ func InitIpvs() {
 	utils.PanicOnError(err)
 
 	if utils.IsEuler2203() {
-		utils.ServiceOperation("ipvsHealthCheck", "start")
+		utils.ServiceOperation("ipvsHealthCheck", "restart")
 	} else {
 		startIpvsHealthCheckPidMon()
 	}
