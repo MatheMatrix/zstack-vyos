@@ -46,8 +46,6 @@ var (
 	keepAlivedCheckStart     = false
 )
 
-var vyosHaKeepalivedConf *KeepalivedConf
-
 type syncVpcRouterHaRsp struct {
 	HaStatus string `json:"haStatus"`
 }
@@ -69,7 +67,6 @@ func SetVyosHa(cmd *SetVyosHaCmd) interface{} {
 
 	/* add firewall */
 	if utils.IsSkipVyosIptables() {
-		log.Debugf("vyosha configure firewall by linux")
 		table := utils.NewIpTables(utils.FirewallTable)
 		var rules []*utils.IpTableRule
 
@@ -168,55 +165,26 @@ func SetVyosHa(cmd *SetVyosHaCmd) interface{} {
 	checksum, err := getFileChecksum(GetKeepalivedConfigFile())
 	utils.PanicOnError(err)
 
-	pairs4 := []nicVipPair{}
-	pairs6 := []nicVipPair{}
-	for _, p := range pairs {
-		parsedIP := net.ParseIP(p.Vip)
-		if parsedIP != nil && parsedIP.To4() != nil {
-			pairs4 = append(pairs4, p)
-		} else if (parsedIP != nil && parsedIP.To16() != nil) {
-			pairs6 = append(pairs6, p)
-		}
-	}
-
-	instances := []*KeepalivedInstance{}
-	instance := NewKeepalivedInstance(KeepalivedInstIpv4.String(), heartbeatNicNme, cmd.LocalIp, cmd.PeerIp, cmd.Monitors, cmd.Keepalive, pairs4)
-	if !utils.IsSLB() {
-		/* vpc does not used keepalived manager vip */
-		instance.Vips = []nicVipPair{}
-	} else {
-		/* slb does not  use monitor ip and fault script */
-		instance.MonitorIps = []string{}
-		instance.FaultScript = ""
-	}
-	instances = append(instances, instance)
-	
-	if  utils.IsSLB() && len(pairs) == 2 {
-		instance6 := NewKeepalivedInstance(KeepalivedInstIpV6.String(), heartbeatNicNme, cmd.LocalIpV6, cmd.PeerIpV6, cmd.Monitors, cmd.Keepalive, pairs6)
-		instance6.MonitorIps = []string{}
-		instance6.FaultScript = ""
-		instances = append(instances, instance6)
-	}
-	
-	vyosHaKeepalivedConf = NewKeepalivedConf(instances)
-	vyosHaKeepalivedConf.BuildConf()
-
-	vyosHaKeepalivedConf.BuildCheckScript()
+	keepalivedConf := NewKeepalivedConf(heartbeatNicNme, cmd.LocalIp, cmd.LocalIpV6, cmd.PeerIp, cmd.PeerIpV6, cmd.Monitors, cmd.Keepalive, pairs)
+	keepalivedConf.BuildCheckScript()
 	if utils.IsSLB() {
 		knc := KeepalivedNotify{
 			VrUuid: utils.GetVirtualRouterUuid(),
 		}
 		knc.CreateSlbMasterScript()
 		knc.CreateSlbBackupScript()
-	} 
+		keepalivedConf.BuildSlbConf()
+	} else {
+		keepalivedConf.BuildConf()
+	}
 	newCheckSum, err := getFileChecksum(GetKeepalivedConfigFile())
 	utils.PanicOnError(err)
 	/* if keepalived is not started, RestartKeepalived will also start keepalived */
 	if newCheckSum != checksum {
-		vyosHaKeepalivedConf.RestartKeepalived(KeepAlivedProcess_Reload)
+		keepalivedConf.RestartKeepalived(KeepAlivedProcess_Reload)
 	} else {
 		log.Debugf("keepalived configure file unchanged")
-		vyosHaKeepalivedConf.RestartKeepalived(KeepAlivedProcess_Skip)
+		keepalivedConf.RestartKeepalived(KeepAlivedProcess_Skip)
 	}
 
 	if !getKeepAlivedStatusStart {
@@ -392,7 +360,7 @@ func generateNotityScripts() {
 	if utils.IsRuingUT() {
 		return
 	}
-	
+
 	if utils.IsSLB() {
 		/* slb don't need such script */
 		return

@@ -1,23 +1,13 @@
 package plugintest
 
 import (
-	"fmt"
 	"os"
-	"sync"
 	"zstack-vyos/plugin"
 	"zstack-vyos/utils"
 )
 
-var slbHaCreated bool
-var slbHaLock sync.Mutex
-
-type SlbHaEnv struct {
-	MgtNicForUT       utils.NicInfo
-	PubNicForUT       utils.NicInfo
-	PriNicForUT       utils.NicInfo
-	ConfigTcForVipQos bool
-	EnableVyosCmd     bool
-	SkipVyosIptables  bool
+type VpcHaIp4Env struct {
+	UtEnv
 
 	lb  plugin.LbInfo
 	lb1 plugin.LbInfo
@@ -31,20 +21,23 @@ type SlbHaEnv struct {
 	bs4 plugin.BackendServerInfo
 }
 
-func NewSlbHaEnv() *SlbHaEnv {
-	return &SlbHaEnv{
+func NewVpcHaIp4Env() *VpcHaIp4Env {
+	utEnv := UtEnv{
 		ConfigTcForVipQos: false,
 		EnableVyosCmd:     false,
 		SkipVyosIptables:  true,
 	}
+	return &VpcHaIp4Env{
+		UtEnv: utEnv,
+	}
 }
 
-func (env *SlbHaEnv) SetupSlbHaBootStrap() *SlbHaEnv {
+func (env *VpcHaIp4Env) SetupSlbHaBootStrap() *VpcHaIp4Env {
 	utils.InitLog(utils.GetVyosUtLogDir()+"slbha.log", true)
 	utils.InitVyosVersion()
 
-	slbHaLock.Lock()
-	defer slbHaLock.Unlock()
+	env.envLock.Lock()
+	defer env.envLock.Unlock()
 
 	err := utils.IpLinkAdd("ut-mgt", utils.IpLinkTypeVeth.String())
 	utils.PanicOnError(err)
@@ -178,13 +171,13 @@ func (env *SlbHaEnv) SetupSlbHaBootStrap() *SlbHaEnv {
 	}
 	plugin.ConfigureNic(nicCmd)
 
-	slbHaCreated = true
+	env.envCreated = true
 	return env
 }
 
-func (env *SlbHaEnv) DestroySlbHaBootStrap() {
-	slbHaLock.Lock()
-	defer slbHaLock.Unlock()
+func (env *VpcHaIp4Env) DestroySlbHaBootStrap() {
+	env.envLock.Lock()
+	defer env.envLock.Unlock()
 
 	nicCmd := &plugin.ConfigureNicCmd{
 		Nics: []utils.NicInfo{env.MgtNicForUT},
@@ -206,10 +199,74 @@ func (env *SlbHaEnv) DestroySlbHaBootStrap() {
 	utils.IpLinkDel("ut-pub")
 	utils.IpLinkDel("ut-pri")
 
-	slbHaCreated = false
+	env.envCreated = false
 }
 
-func (env *SlbHaEnv) SetupVyosHa() {
+func (env *VpcHaIp4Env) SetupVyosHa() {
+	/* keepalived conf
+	# cat zvr/keepalived/conf/keepalived.conf
+	# This file is auto-generated, edit with caution!
+	global_defs {
+	        vrrp_garp_master_refresh 60
+	        vrrp_check_unicast_src
+	        script_user zstack
+	    enable_script_security
+
+	        max_auto_priority  99
+
+	}
+
+	vrrp_script monitor_zvr {
+	       script "/home/zstack/zvr/keepalived/script/check_zvr.sh"        # cheaper than pidof
+	       interval 2                      # check every 2 seconds
+	       fall 2                          # require 2 failures for KO
+	       rise 2                          # require 2 successes for OK
+	}
+
+
+	vrrp_script monitor_1.1.1.1 {
+	        script "/home/zstack/zvr/keepalived/script/check_monitor_1.1.1.1.sh"
+	        interval 2
+	        weight -2
+	        fall 3
+	        rise 3
+	}
+
+
+	vrrp_instance vyos-ha {
+	        state BACKUP
+	        interface eth0
+	        virtual_router_id 50
+	        priority 100
+	        advert_int 10
+	        nopreempt
+
+	        unicast_src_ip 172.25.116.168
+	        unicast_peer {
+	                172.25.116.167
+	        }
+
+	        track_script {
+	                monitor_zvr
+
+	                monitor_1.1.1.1
+
+	        }
+
+	        notify_master "/home/zstack/zvr/keepalived/script/notifyMaster MASTER"
+	        notify_backup "/home/zstack/zvr/keepalived/script/notifyBackup BACKUP"
+	        notify_fault "/home/zstack/zvr/keepalived/script/notifyBackup FAULT"
+	}
+
+	/enableVyosha
+	"keepalive":10,
+	"heartbeatNic":"fa:22:f8:26:65:00",
+	"peerIp":"172.25.116.167",
+	"localIp":"172.25.116.168",
+	"monitors":["1.1.1.1"],
+	"vips":[{"nicMac":"fa:e0:76:9a:2c:01","nicVip":"10.86.5.176","netmask":"255.255.255.0"},
+	  {"nicMac":"fa:16:c9:1c:5a:02","nicVip":"10.1.1.200","netmask":"255.255.255.0"}
+	*/
 	vip4 := plugin.MacVipPair{
 		NicMac:  env.PubNicForUT.Mac,
 		NicVip:  "169.254.2.102",
@@ -234,7 +291,7 @@ func (env *SlbHaEnv) SetupVyosHa() {
 	plugin.SetVyosHa(vyoshacmd)
 }
 
-func (env *SlbHaEnv) SetupLb() {
+func (env *VpcHaIp4Env) SetupLb() {
 	plugin.InitLb()
 	os.Remove(plugin.IPVS_HEALTH_CHECK_CONFIG_FILE)
 	plugin.InitIpvs()
@@ -298,25 +355,6 @@ func (env *SlbHaEnv) SetupLb() {
 	env.lb1.RedirectRules = nil
 }
 
-func (env *SlbHaEnv) DestroyLb() {
+func (env *VpcHaIp4Env) DestroyLb() {
 	plugin.StopIpvsHealthCheck()
-}
-
-func (env *SlbHaEnv) AddPeerAddr(nicName, addr string) {
-	err := utils.IpAddrAdd(nicName+"-peer", addr)
-	utils.PanicOnError(err)
-	//log.Debugf("add peer addr success, nicName: %s, addr: %s", nicName, addr)
-}
-
-func (env *SlbHaEnv) GetNicMac(nicName string) string {
-	switch nicName {
-	case "mgt":
-		return env.MgtNicForUT.Mac
-	case "pub":
-		return env.PubNicForUT.Mac
-	case "pri":
-		return env.PriNicForUT.Mac
-	}
-	utils.PanicOnError(fmt.Errorf("can not found nic"))
-	return ""
 }

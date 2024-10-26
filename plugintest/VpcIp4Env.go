@@ -1,15 +1,10 @@
 package plugintest
 
 import (
-	"fmt"
 	"os"
-	"sync"
 	"zstack-vyos/plugin"
 	"zstack-vyos/utils"
 )
-
-var vpcCreated bool
-var vpcLock sync.Mutex
 
 /*
 	example
@@ -89,31 +84,30 @@ var vpcLock sync.Mutex
 	    "vyosPassword": "vrouter12#"
 	}
 */
-type VpcEnv struct {
-	MgtNicForUT       utils.NicInfo
-	PubNicForUT       utils.NicInfo
-	PriNicForUT       utils.NicInfo
-	ConfigTcForVipQos bool
-	EnableVyosCmd     bool
-	SkipVyosIptables  bool
+type VpcIp4Env struct {
+	UtEnv
 
 	ipsec1 plugin.IpsecInfo
 }
 
-func NewVpcEnv() *VpcEnv {
-	return &VpcEnv{
-		ConfigTcForVipQos: true,
-		EnableVyosCmd:     true,
-		SkipVyosIptables:  false,
+func NewVpcEnv() *VpcIp4Env {
+	utEnv := UtEnv{
+		ConfigTcForVipQos: false,
+		EnableVyosCmd:     false,
+		SkipVyosIptables:  true,
+	}
+
+	return &VpcIp4Env{
+		UtEnv: utEnv,
 	}
 }
 
-func (env *VpcEnv) SetupVpcBootStrap() *VpcEnv {
+func (env *VpcIp4Env) SetupVpcBootStrap() *VpcIp4Env {
 	utils.InitLog(utils.GetVyosUtLogDir()+"vpc.log", true)
 	utils.InitVyosVersion()
 
-	vpcLock.Lock()
-	defer vpcLock.Unlock()
+	env.envLock.Lock()
+	defer env.envLock.Unlock()
 
 	err := utils.IpLinkAdd("ut-mgt", utils.IpLinkTypeVeth.String())
 	utils.PanicOnError(err)
@@ -247,13 +241,13 @@ func (env *VpcEnv) SetupVpcBootStrap() *VpcEnv {
 	}
 	plugin.ConfigureNic(nicCmd)
 
-	vpcCreated = true
+	env.envCreated = true
 	return env
 }
 
-func (env *VpcEnv) DestroyVpcBootStrap() {
-	vpcLock.Lock()
-	defer vpcLock.Unlock()
+func (env *VpcIp4Env) DestroyVpcBootStrap() {
+	env.envLock.Lock()
+	defer env.envLock.Unlock()
 
 	nicCmd := &plugin.ConfigureNicCmd{
 		Nics: []utils.NicInfo{env.MgtNicForUT},
@@ -275,11 +269,11 @@ func (env *VpcEnv) DestroyVpcBootStrap() {
 	utils.IpLinkDel("ut-pub")
 	utils.IpLinkDel("ut-pri")
 
-	vpcCreated = false
+	env.envCreated = false
 }
 
 /*
-func (env *SlbHaEnv) SetupVpcLb() {
+func (env *SlbHaIp4Env) SetupVpcLb() {
 	plugin.InitLb()
 	plugin.InitIpvs()
 
@@ -342,12 +336,12 @@ func (env *SlbHaEnv) SetupVpcLb() {
 	env.lb1.RedirectRules = nil
 }
 
-func (env *SlbHaEnv) DestroyVpcLb() {
+func (env *SlbHaIp4Env) DestroyVpcLb() {
 	plugin.StopIpvsHealthCheck()
 }
 */
 
-func (env *VpcEnv) SetupIpsec() {
+func (env *VpcIp4Env) SetupIpsec() {
 	if utils.IsEuler2203() {
 		b := &utils.Bash{
 			Command: "systemctl restart strongswan",
@@ -386,7 +380,7 @@ func (env *VpcEnv) SetupIpsec() {
 
 }
 
-func (env *VpcEnv) DestroyIpsec() {
+func (env *VpcIp4Env) DestroyIpsec() {
 	if utils.IsEuler2203() {
 		b := &utils.Bash{
 			Command: "systemctl stop strongswan",
@@ -397,23 +391,4 @@ func (env *VpcEnv) DestroyIpsec() {
 
 		os.ReadDir(plugin.SwanConnectionConfPath)
 	}
-}
-
-func (env *VpcEnv) AddPeerAddr(nicName, addr string) {
-	err := utils.IpAddrAdd(nicName+"-peer", addr)
-	utils.PanicOnError(err)
-	//log.Debugf("add peer addr success, nicName: %s, addr: %s", nicName, addr)
-}
-
-func (env *VpcEnv) GetNicMac(nicName string) string {
-	switch nicName {
-	case "mgt":
-		return env.MgtNicForUT.Mac
-	case "pub":
-		return env.PubNicForUT.Mac
-	case "pri":
-		return env.PriNicForUT.Mac
-	}
-	utils.PanicOnError(fmt.Errorf("can not found nic"))
-	return ""
 }
