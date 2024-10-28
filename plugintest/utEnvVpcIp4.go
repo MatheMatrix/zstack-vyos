@@ -102,7 +102,7 @@ func NewVpcEnv() *VpcIp4Env {
 	}
 }
 
-func (env *VpcIp4Env) SetupVpcBootStrap() *VpcIp4Env {
+func (env *VpcIp4Env) SetupBootStrap() *VpcIp4Env {
 	utils.InitLog(utils.GetVyosUtLogDir()+"vpc.log", true)
 	utils.InitVyosVersion()
 
@@ -131,9 +131,9 @@ func (env *VpcIp4Env) SetupVpcBootStrap() *VpcIp4Env {
 	utils.PanicOnError(err)
 	pubMac, _ := utils.IpLinkGetMAC("ut-pub")
 	env.PubNicForUT = utils.NicInfo{
-		Ip:                    "192.168.2.100",
+		Ip:                    "10.1.1.100",
 		Netmask:               "255.255.255.0",
-		Gateway:               "192.168.2.1",
+		Gateway:               "10.1.1.1",
 		Mac:                   pubMac,
 		Category:              "Public",
 		L2Type:                "L2NoVlanNetwork",
@@ -148,9 +148,9 @@ func (env *VpcIp4Env) SetupVpcBootStrap() *VpcIp4Env {
 	err = utils.IpLinkAdd("ut-pri", utils.IpLinkTypeVeth.String())
 	priMac, _ := utils.IpLinkGetMAC("ut-pri")
 	env.PriNicForUT = utils.NicInfo{
-		Ip:                    "192.168.3.1",
+		Ip:                    "10.2.2.1",
 		Netmask:               "255.255.255.0",
-		Gateway:               "192.168.3.1",
+		Gateway:               "10.2.2.1",
 		Mac:                   priMac,
 		Category:              "Priviate",
 		L2Type:                "L2NoVlanNetwork",
@@ -162,6 +162,42 @@ func (env *VpcIp4Env) SetupVpcBootStrap() *VpcIp4Env {
 		IsDefault:             false,
 	}
 
+	err = utils.IpLinkAdd("ut-pub1", utils.IpLinkTypeVeth.String())
+	utils.PanicOnError(err)
+	pubMac1, _ := utils.IpLinkGetMAC("ut-pub1")
+	env.additionalPubNicForUT1 = utils.NicInfo{
+		Ip:                    "10.1.2.100",
+		Netmask:               "255.255.255.0",
+		Gateway:               "10.1.2.1",
+		Mac:                   pubMac1,
+		Category:              "Public",
+		L2Type:                "L2NoVlanNetwork",
+		PhysicalInterface:     "ens3",
+		Vni:                   0,
+		FirewallDefaultAction: "drop",
+		Mtu:                   1400,
+		Name:                  "ut-pub1",
+		IsDefault:             false,
+	}
+
+	err = utils.IpLinkAdd("ut-pub2", utils.IpLinkTypeVeth.String())
+	utils.PanicOnError(err)
+	pubMac2, _ := utils.IpLinkGetMAC("ut-pub2")
+	env.additionalPubNicForUT2 = utils.NicInfo{
+		Ip:                    "10.1.3.100",
+		Netmask:               "255.255.255.0",
+		Gateway:               "10.1.3.1",
+		Mac:                   pubMac2,
+		Category:              "Public",
+		L2Type:                "L2NoVlanNetwork",
+		PhysicalInterface:     "ens3",
+		Vni:                   0,
+		FirewallDefaultAction: "drop",
+		Mtu:                   1400,
+		Name:                  "ut-pub2",
+		IsDefault:             false,
+	}
+
 	utils.PrivateNicsForUT = append(utils.PrivateNicsForUT, env.PriNicForUT)
 
 	utils.BootstrapInfo["ConfigTcForVipQos"] = true
@@ -169,7 +205,7 @@ func (env *VpcIp4Env) SetupVpcBootStrap() *VpcIp4Env {
 	utils.BootstrapInfo["SkipVyosIptables"] = false
 	utils.BootstrapInfo["abnormalFileMaxSize"] = 100
 	utils.BootstrapInfo["applianceVmSubType"] = utils.APPLIANCETYPE_VPC
-	utils.BootstrapInfo["haStatus"] = "Backup"
+	utils.BootstrapInfo["haStatus"] = "NoHa"
 	utils.BootstrapInfo["managementNodeCidr"] = "172.25.0.0/16"
 	utils.BootstrapInfo["managementNodeIp"] = "172.25.116.181"
 	utils.BootstrapInfo["publicKey"] = ""
@@ -241,11 +277,21 @@ func (env *VpcIp4Env) SetupVpcBootStrap() *VpcIp4Env {
 	}
 	plugin.ConfigureNic(nicCmd)
 
+	nicCmd = &plugin.ConfigureNicCmd{
+		Nics: []utils.NicInfo{env.additionalPubNicForUT1},
+	}
+	plugin.ConfigureNic(nicCmd)
+
+	nicCmd = &plugin.ConfigureNicCmd{
+		Nics: []utils.NicInfo{env.additionalPubNicForUT2},
+	}
+	plugin.ConfigureNic(nicCmd)
+
 	env.envCreated = true
 	return env
 }
 
-func (env *VpcIp4Env) DestroyVpcBootStrap() {
+func (env *VpcIp4Env) DestroyBootStrap() {
 	env.envLock.Lock()
 	defer env.envLock.Unlock()
 

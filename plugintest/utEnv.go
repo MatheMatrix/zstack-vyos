@@ -10,9 +10,13 @@ type UtEnv struct {
 	envCreated bool
 	envLock    sync.Mutex
 
-	MgtNicForUT       utils.NicInfo
-	PubNicForUT       utils.NicInfo
-	PriNicForUT       utils.NicInfo
+	MgtNicForUT utils.NicInfo
+	PubNicForUT utils.NicInfo
+	PriNicForUT utils.NicInfo
+
+	additionalPubNicForUT1 utils.NicInfo
+	additionalPubNicForUT2 utils.NicInfo
+
 	ConfigTcForVipQos bool
 	EnableVyosCmd     bool
 	SkipVyosIptables  bool

@@ -46,7 +46,7 @@ func (z *ZebraRoute) SetDev(devName string) *ZebraRoute {
 	return z
 }
 
-//If the param is "null0", then zebra installs a blackhole route
+// If the param is "null0", then zebra installs a blackhole route
 func (z *ZebraRoute) SetNextHop(nexthop string) *ZebraRoute {
 	z.NextHop = nexthop
 
@@ -71,6 +71,35 @@ func (z *ZebraRoute) Apply() error {
 	)
 	if z.Dst == "" {
 		return errors.New("dst can not be empty")
+	}
+
+	if IsEuler2203() {
+		if z.Distance != 0 && z.OutDev != "" {
+			return errors.New("cannot set out device and distance at the same time")
+		} else if z.NextHop == BLACKHOLE_ROUTE {
+			cmd = fmt.Sprintf("blackhole %s", z.Dst)
+		} else if z.Distance != 0 && z.OutDev == "" {
+			cmd = fmt.Sprintf("%s via %s metric %d", z.Dst, z.NextHop, z.Distance)
+		} else if z.Distance == 0 && z.OutDev != "" {
+			cmd = fmt.Sprintf("%s via %s dev %s", z.Dst, z.NextHop, z.OutDev)
+		} else {
+			cmd = fmt.Sprintf("%s via %s", z.Dst, z.NextHop)
+		}
+
+		if z.isDelete {
+			cmd = "ip route del " + cmd
+		} else {
+			cmd = "ip route add " + cmd
+		}
+
+		bash := Bash{
+			Command: cmd,
+		}
+
+		if _, _, stde, err := bash.RunWithReturn(); err != nil {
+			return fmt.Errorf("%+v, stderr: %s", err, stde)
+		}
+		return nil
 	}
 
 	if z.Distance != 0 && z.OutDev != "" {
