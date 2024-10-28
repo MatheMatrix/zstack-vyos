@@ -248,6 +248,86 @@ func GetCurrentRouteEntries(tableId int) []ZStackRouteEntry {
 	if tableId == ROUTETABLE_ID_MAIN {
 		cmd = fmt.Sprintf("vtysh -c 'show ip route' | grep ^S")
 	}
+	if IsEuler2203() {
+		cmd = fmt.Sprintf("ip route show table %d", tableId)
+		bash := Bash{
+			Command: cmd,
+		}
+		/*
+					output format:
+				default via 172.25.0.1 dev eth0
+				1.1.1.0/24 via 10.1.1.101 dev ut-pub-peer metric 100 linkdown
+				1.1.2.0/24 via 10.1.1.101 dev ut-pub-peer metric 110 linkdown
+				1.1.3.0/24 via 10.1.2.101 dev ut-pub1-peer metric 120 linkdown
+				1.1.4.0/24 via 10.1.2.101 dev ut-pub1-peer metric 130 linkdown
+				1.1.5.0/24 via 10.1.1.101 dev ut-pub-peer metric 80 linkdown
+				1.1.6.0/24 via 10.1.1.101 dev ut-pub-peer metric 90 linkdown
+				7.7.7.0/24 via 10.1.1.101 dev ut-pub-peer metric 150 linkdown
+				8.8.8.0/24 via 10.1.1.101 dev ut-pub-peer metric 151 linkdown
+			    blackhole 1.1.6.0/24
+				10.1.1.0/24 dev ut-pub-peer proto kernel scope link src 10.1.1.101 linkdown
+				10.1.2.0/24 dev ut-pub1-peer proto kernel scope link src 10.1.2.101 linkdown
+				10.1.3.0/24 dev ut-pub2-peer proto kernel scope link src 10.1.3.101 linkdown
+				169.254.169.254 via 172.25.116.191 dev eth0 proto static
+				172.25.0.0/16 dev eth0 proto kernel scope link src 172.25.116.190
+		*/
+		ret, result, _, err := bash.RunWithReturn()
+		if err == nil && ret == 0 {
+			result = strings.TrimSpace(result)
+			lines := strings.Split(result, "\n")
+			for _, line := range lines {
+				if line == "" {
+					continue
+				}
+
+				items := strings.Fields(line)
+
+				dst := items[0]
+				if items[0] == "blackhole" {
+					dst = items[1]
+					e := ZStackRouteEntry{
+						TableId:         tableId,
+						DestinationCidr: dst,
+						NicName:         BLACKHOLE_ROUTE,
+					}
+					entries = append(entries, e)
+					continue
+				} else if items[0] == "default" {
+					dst = "0.0.0.0/0"
+				}
+
+				if items[1] == "via" {
+					nh := items[2]
+					dev := items[4]
+
+					distance := 0
+					if len(items) >= 7 {
+						distance, _ = strconv.Atoi(items[6])
+					}
+
+					e := ZStackRouteEntry{
+						TableId:         tableId,
+						DestinationCidr: dst,
+						NextHopIp:       nh, /* 1.1.1.2, */
+						NicName:         dev,
+						Distance:        distance,
+					}
+					entries = append(entries, e)
+				} else {
+					dev := items[2]
+
+					e := ZStackRouteEntry{
+						TableId:         tableId,
+						DestinationCidr: dst,
+						NicName:         dev,
+					}
+					entries = append(entries, e)
+				}
+			}
+		}
+
+		return entries
+	}
 
 	bash := Bash{
 		Command: cmd,
@@ -315,6 +395,24 @@ func GetCurrentRouteEntries(tableId int) []ZStackRouteEntry {
 }
 
 func deleteRouteEntries(entries []ZStackRouteEntry) interface{} {
+	if IsEuler2203() {
+		cmds := []string{}
+		for _, r := range entries {
+			cmds = append(cmds, r.deleteCommand())
+		}
+
+		bash := Bash{
+			Command: fmt.Sprintf("%s", strings.Join(cmds, ";")),
+		}
+
+		ret, _, e, err := bash.RunWithReturn()
+		if err != nil || ret != 0 {
+			return fmt.Errorf("delete ip route: %s failed, because: %s", strings.Join(cmds, " "), e)
+		}
+
+		return nil
+	}
+
 	cmds := []string{"vtysh -c 'configure terminal'"}
 	for _, r := range entries {
 		cmds = append(cmds, fmt.Sprintf("-c '%s'", r.deleteCommand()))
@@ -333,6 +431,24 @@ func deleteRouteEntries(entries []ZStackRouteEntry) interface{} {
 }
 
 func addRouteEntries(entries []ZStackRouteEntry) interface{} {
+	if IsEuler2203() {
+		cmds := []string{}
+		for _, r := range entries {
+			cmds = append(cmds, r.addCommand())
+		}
+
+		bash := Bash{
+			Command: fmt.Sprintf("%s", strings.Join(cmds, ";")),
+		}
+
+		ret, _, e, err := bash.RunWithReturn()
+		if err != nil || ret != 0 {
+			return fmt.Errorf("add ip route: %s failed, because: %s", strings.Join(cmds, " "), e)
+		}
+
+		return nil
+	}
+
 	cmds := []string{"vtysh -c 'configure terminal'"}
 	for _, r := range entries {
 		cmds = append(cmds, fmt.Sprintf("-c '%s'", r.addCommand()))

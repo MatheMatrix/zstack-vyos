@@ -9,7 +9,7 @@ var _ = Describe("euler22.03 ipsec test", func() {
 	Context("vpc ipsec test", func() {
 		env := NewVpcEnv()
 		It("ipsec_euler :test prepare env", func() {
-			env.SetupVpcBootStrap()
+			env.SetupBootStrap()
 			env.SetupIpsec()
 		})
 
@@ -46,7 +46,7 @@ var _ = Describe("euler22.03 ipsec test", func() {
 
 		It("ipsec_euler: test destroy env", func() {
 			env.DestroyIpsec()
-			env.DestroyVpcBootStrap()
+			env.DestroyBootStrap()
 		})
 	})
 })
