@@ -16,9 +16,9 @@ import (
 
 var _ = Describe("ipvs test", func() {
 	Context("slbha ipvs test", func() {
-		env := NewSlbHaEnv()
+		env := NewSlbHaIp4Env()
 		It("ipvs: test prepare env", func() {
-			env.SetupSlbHaBootStrap()
+			env.SetupStrap()
 			env.SetupLb()
 		})
 
@@ -315,7 +315,7 @@ var _ = Describe("ipvs test", func() {
 		})
 
 		It("ipvs: test destroy env", func() {
-			env.DestroySlbHaBootStrap()
+			env.DestroyBootStrap()
 			env.DestroyLb()
 		})
 	})

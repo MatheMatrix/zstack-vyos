@@ -299,6 +299,7 @@ func GetNicForRoute(ip string) string {
 	dev := ""
 	if IsRuingUT() {
 		for _, nic := range PrivateNicsForUT {
+			log.Debugf("PrivateNicForUT %+v", nic)
 			cidr, _ := GetNetworkNumber(nic.Ip, nic.Netmask)
 			ip := net.ParseIP(nic.Ip)
 			_, cidrNet, _ := net.ParseCIDR(cidr)
