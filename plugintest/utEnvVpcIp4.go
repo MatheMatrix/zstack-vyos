@@ -148,9 +148,9 @@ func (env *VpcIp4Env) SetupBootStrap() *VpcIp4Env {
 	err = utils.IpLinkAdd("ut-pri", utils.IpLinkTypeVeth.String())
 	priMac, _ := utils.IpLinkGetMAC("ut-pri")
 	env.PriNicForUT = utils.NicInfo{
-		Ip:                    "10.2.2.1",
+		Ip:                    "10.2.1.1",
 		Netmask:               "255.255.255.0",
-		Gateway:               "10.2.2.1",
+		Gateway:               "10.2.1.1",
 		Mac:                   priMac,
 		Category:              "Priviate",
 		L2Type:                "L2NoVlanNetwork",
@@ -195,6 +195,23 @@ func (env *VpcIp4Env) SetupBootStrap() *VpcIp4Env {
 		FirewallDefaultAction: "drop",
 		Mtu:                   1400,
 		Name:                  "ut-pub2",
+		IsDefault:             false,
+	}
+
+	err = utils.IpLinkAdd("ut-pri1", utils.IpLinkTypeVeth.String())
+	priMac1, _ := utils.IpLinkGetMAC("ut-pri1")
+	env.PriNicForUT1 = utils.NicInfo{
+		Ip:                    "10.2.2.1",
+		Netmask:               "255.255.255.0",
+		Gateway:               "10.2.2.1",
+		Mac:                   priMac1,
+		Category:              "priMac1",
+		L2Type:                "L2NoVlanNetwork",
+		PhysicalInterface:     "ens3",
+		Vni:                   0,
+		FirewallDefaultAction: "drop",
+		Mtu:                   1400,
+		Name:                  "ut-pri1",
 		IsDefault:             false,
 	}
 
@@ -284,6 +301,11 @@ func (env *VpcIp4Env) SetupBootStrap() *VpcIp4Env {
 
 	nicCmd = &plugin.ConfigureNicCmd{
 		Nics: []utils.NicInfo{env.additionalPubNicForUT2},
+	}
+	plugin.ConfigureNic(nicCmd)
+
+	nicCmd = &plugin.ConfigureNicCmd{
+		Nics: []utils.NicInfo{env.PriNicForUT1},
 	}
 	plugin.ConfigureNic(nicCmd)
 

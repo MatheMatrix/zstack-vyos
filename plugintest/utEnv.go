@@ -14,6 +14,8 @@ type UtEnv struct {
 	PubNicForUT utils.NicInfo
 	PriNicForUT utils.NicInfo
 
+	PriNicForUT1 utils.NicInfo
+
 	additionalPubNicForUT1 utils.NicInfo
 	additionalPubNicForUT2 utils.NicInfo
 
