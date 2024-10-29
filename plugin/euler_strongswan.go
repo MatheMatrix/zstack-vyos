@@ -47,7 +47,7 @@ connections {
                 {{- if ne .Dpdaction ""}}
                 dpd_action = {{.Dpdaction}}
                 {{- end}}
-                start_action = trap|start
+                start_action = start
                 policies_fwd_out = yes
                 mode = tunnel
             }

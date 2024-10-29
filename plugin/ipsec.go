@@ -140,7 +140,7 @@ func writeIpsecHaScript(enable bool) {
 	}
 
 	if utils.IsEuler2203() {
-		conent := "system restart strongswan"
+		conent := "systemctl restart strongswan"
 		err := os.WriteFile(getHaIpsecScript(), []byte(conent), 0755)
 		utils.PanicOnError(err)
 		return
