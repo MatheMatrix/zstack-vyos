@@ -129,7 +129,53 @@ func (e ZStackRouteEntry) Equal(b ZStackRouteEntry) error {
 	return nil
 }
 
+func (e ZStackRouteEntry) addCommandEuler2203() string {
+	if e.TableId == ROUTETABLE_ID_MAIN {
+		if e.NextHopIp != "" {
+			if e.Distance != 0 {
+				return fmt.Sprintf("ip route add %s via %s metric %d", e.DestinationCidr, e.NextHopIp, e.Distance)
+			} else {
+				return fmt.Sprintf("ip route add %s via %s", e.DestinationCidr, e.NextHopIp)
+			}
+		} else if e.NicName != "" {
+			if e.Distance != 0 {
+				return fmt.Sprintf("ip route add %s dev %s metric %d",
+					e.DestinationCidr, e.NicName, e.Distance)
+			} else {
+				return fmt.Sprintf("ip route add %s dev %s",
+					e.DestinationCidr, e.NicName)
+			}
+		} else {
+			log.Debugf("can not add route entry,because nexthopIp and nicName is null")
+			return ""
+		}
+	}
+
+	if e.NextHopIp != "" {
+		if e.Distance != 0 {
+			return fmt.Sprintf("ip route add %s via %s table %d metric %d", e.DestinationCidr, e.NextHopIp, e.TableId, e.Distance)
+		} else {
+			return fmt.Sprintf("ip route add %s via %s table %d", e.DestinationCidr, e.NextHopIp, e.TableId)
+		}
+	} else if e.NicName != "" {
+		if e.Distance != 0 {
+			return fmt.Sprintf("ip route add %s via %s table %d metric %d",
+				e.DestinationCidr, e.NicName, e.TableId, e.Distance)
+		} else {
+			return fmt.Sprintf("ip route add %s via %s table %d",
+				e.DestinationCidr, e.NicName, e.TableId)
+		}
+	} else {
+		log.Debugf("can not add route entry,because nexthopIp and nicName is null")
+		return ""
+	}
+}
+
 func (e ZStackRouteEntry) addCommand() string {
+	if IsEuler2203() {
+		return e.addCommandEuler2203()
+	}
+
 	if e.TableId == ROUTETABLE_ID_MAIN {
 		if e.NextHopIp != "" {
 			if e.Distance != 0 {
@@ -171,7 +217,52 @@ func (e ZStackRouteEntry) addCommand() string {
 	}
 }
 
+func (e ZStackRouteEntry) deleteCommandEuler2203() string {
+	if e.TableId == ROUTETABLE_ID_MAIN {
+		if e.NextHopIp != "" {
+			if e.Distance != 0 {
+				return fmt.Sprintf("ip route del %s via %s metric %d", e.DestinationCidr, e.NextHopIp, e.Distance)
+			} else {
+				return fmt.Sprintf("ip route del %s via %s", e.DestinationCidr, e.NextHopIp)
+			}
+		} else if e.NicName != "" {
+			if e.Distance != 0 {
+				return fmt.Sprintf("ip route del %s dev %s metric %d",
+					e.DestinationCidr, e.NicName, e.Distance)
+			} else {
+				return fmt.Sprintf("ip route del %s dev %s",
+					e.DestinationCidr, e.NicName)
+			}
+		} else {
+			log.Debugf("can not del route entry,because nexthopIp and nicName is null")
+			return ""
+		}
+	}
+
+	if e.NextHopIp != "" {
+		if e.Distance != 0 {
+			return fmt.Sprintf("ip route del %s via %s table %d metric %d", e.DestinationCidr, e.NextHopIp, e.TableId, e.Distance)
+		} else {
+			return fmt.Sprintf("ip route del %s via %s table %d", e.DestinationCidr, e.NextHopIp, e.TableId)
+		}
+	} else if e.NicName != "" {
+		if e.Distance != 0 {
+			return fmt.Sprintf("ip route del %s dev %s table %d metric %d",
+				e.DestinationCidr, e.NicName, e.TableId, e.Distance)
+		} else {
+			return fmt.Sprintf("ip route del %s dev %s table %d",
+				e.DestinationCidr, e.NicName, e.TableId)
+		}
+	} else {
+		log.Debugf("can not del route entry,because nexthopIp and nicName is null")
+		return ""
+	}
+}
+
 func (e ZStackRouteEntry) deleteCommand() string {
+	if IsEuler2203() {
+		return e.deleteCommandEuler2203()
+	}
 	if e.TableId == ROUTETABLE_ID_MAIN {
 		if e.NextHopIp != "" {
 			if e.Distance != 0 {
