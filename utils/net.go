@@ -109,7 +109,7 @@ func GetAllNics() (map[string]Nic, error) {
 			continue
 		}
 
-		if f.Name() == "gre0" || f.Name() == "pimreg" || f.Name() == "mgmt" {
+		if f.Name() == "gre0" || f.Name() == "pimreg" || f.Name() == "mgmt" || strings.Contains(f.Name(), "ipsec") {
 			continue
 		}
 
