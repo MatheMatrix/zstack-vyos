@@ -209,10 +209,13 @@ func syncVpcRouterHaHandler(ctx *server.CommandContext) interface{} {
 	var haStatus string
 	if !utils.IsHaEnabled() {
 		haStatus = utils.NOHA
-	} else if IsMaster() {
-		haStatus = utils.HAMASTER
 	} else {
-		haStatus = utils.HABACKUP
+		time.Sleep(time.Duration(5) * time.Second)
+		if IsMaster() {
+			haStatus = utils.HAMASTER
+		} else {
+			haStatus = utils.HABACKUP
+		}
 	}
 	return syncVpcRouterHaRsp{HaStatus: haStatus}
 }
@@ -444,8 +447,11 @@ func InitHaNicState() {
 		Command: strings.Join(cmds, ";"),
 	}
 
-	b.Run()
-	b.PanicIfError()
+	err := b.Run()
+	if err != nil {
+		/* it will failed for vyos 1.1.7, kernel 3.13 */
+		log.Debugf("set ip_nonlocal_bind failed, %+v", err)
+	}
 }
 
 var haVipPairs = vyosNicVipPairs{

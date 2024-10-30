@@ -464,7 +464,7 @@ type KeepalivedConf struct {
 	Vips                []nicVipPair
 	VipV4               *nicVipPair
 	VipV6               *nicVipPair
-	MaxAutoPriority     int
+	IsEuler2203         bool
 }
 
 func NewKeepalivedConf(hearbeatNic, LocalIp, LocalIpV6, PeerIp, PeerIpV6 string, MonitorIps []string, Interval int, vips []nicVipPair) *KeepalivedConf {
@@ -499,9 +499,9 @@ func NewKeepalivedConf(hearbeatNic, LocalIp, LocalIpV6, PeerIp, PeerIpV6 string,
 	}
 
 	if utils.IsEuler2203() {
-		kc.MaxAutoPriority = 99
+		kc.IsEuler2203 = true
 	} else {
-		kc.MaxAutoPriority = 0
+		kc.IsEuler2203 = false
 		kc.ScriptUser = "root"
 	}
 
@@ -562,15 +562,18 @@ global_defs {
 	vrrp_garp_master_refresh 60
 	vrrp_check_unicast_src
 	script_user {{.ScriptUser}}
-    enable_script_security
-	{{ if ne .MaxAutoPriority 0 }}
-	max_auto_priority  {{.MaxAutoPriority}}
-	{{ end }}
+	enable_script_security
+	{{- if .IsEuler2203 }}
+	max_auto_priority  99
+	{{- end }}
 }
 
 vrrp_script monitor_zvr {
        script "{{.ScriptPath}}/check_zvr.sh"        # cheaper than pidof
        interval 2                      # check every 2 seconds
+{{- if .IsEuler2203 }}
+       weight -10
+{{- end }}
        fall 2                          # require 2 failures for KO
        rise 2                          # require 2 successes for OK
 }
@@ -616,15 +619,18 @@ global_defs {
 	vrrp_garp_master_refresh 60
 	vrrp_check_unicast_src
 	script_user {{.ScriptUser}}
-    enable_script_security
-	{{ if ne .MaxAutoPriority 0 }}
-	max_auto_priority  {{.MaxAutoPriority}}
-	{{ end }}
+	enable_script_security
+	{{- if .IsEuler2203 }}
+	max_auto_priority  99
+	{{- end }}
 }
 
 vrrp_script monitor_zvr {
        script "{{.ScriptPath}}/check_zvr.sh"        # cheaper than pidof
        interval 2                      # check every 2 seconds
+{{- if .IsEuler2203 }}
+       weight -10
+{{- end }}
        fall 2                          # require 2 failures for KO
        rise 2                          # require 2 successes for OK
 }
@@ -681,15 +687,18 @@ global_defs {
 	vrrp_garp_master_refresh 60
 	vrrp_check_unicast_src
 	script_user {{.ScriptUser}}
-    enable_script_security
-	{{ if ne .MaxAutoPriority 0 }}
-	max_auto_priority  {{.MaxAutoPriority}}
-	{{ end }}
+	enable_script_security
+	{{- if .IsEuler2203 }}
+	max_auto_priority  99
+	{{- end }}
 }
 
 vrrp_script monitor_zvr {
        script "{{.ScriptPath}}/check_zvr.sh"        # cheaper than pidof
        interval 2                      # check every 2 seconds
+{{- if .IsEuler2203 }}
+       weight -10
+{{- end }}
        fall 2                          # require 2 failures for KO
        rise 2                          # require 2 successes for OK
 }
@@ -975,7 +984,7 @@ func getKeepAlivedStatus() KeepAlivedStatus {
 	pid := getKeepalivedPid()
 	if pid == PID_ERROR {
 		log.Debugf("Error occurs while get keepalived pid, return keepalived status as unkdonw")
-		return KeepAlivedStatus_Unknown
+		return KeepAlivedStatus_Backup
 	}
 
 	bash := utils.Bash{
