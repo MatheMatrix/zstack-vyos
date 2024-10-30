@@ -94,6 +94,24 @@ func SyncZStackRouteTables(tables []ZStackRouteTable) error {
 		return fmt.Errorf("copy temp route table file failed: %s", e)
 	}
 
+	if IsEuler2203() {
+		// enable policy route, must disable rp_filter
+		if len(tables) > 0 {
+			bash = Bash{
+				Command: "sysctl -a | grep -w \"rp_filter\" | awk '{print $1}' | xargs -I{} sysctl -w {}=0",
+			}
+			err := bash.Run()
+			PanicOnError(err)
+		} else {
+			// disable policy route, restore rp_filter
+			bash = Bash{
+				Command: "sysctl -a | grep -w \"rp_filter\" | awk '{print $1}' | xargs -I{} sysctl -w {}=1",
+			}
+			err := bash.Run()
+			PanicOnError(err)
+		}
+	}
+
 	return nil
 }
 
@@ -159,10 +177,10 @@ func (e ZStackRouteEntry) addCommandEuler2203() string {
 		}
 	} else if e.NicName != "" {
 		if e.Distance != 0 {
-			return fmt.Sprintf("ip route add %s via %s table %d metric %d",
+			return fmt.Sprintf("ip route add %s dev %s table %d metric %d",
 				e.DestinationCidr, e.NicName, e.TableId, e.Distance)
 		} else {
-			return fmt.Sprintf("ip route add %s via %s table %d",
+			return fmt.Sprintf("ip route add %s dev %s table %d",
 				e.DestinationCidr, e.NicName, e.TableId)
 		}
 	} else {
