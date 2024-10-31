@@ -78,6 +78,9 @@ func NewIPSetByFamily(name, ipsetType, family string) *IpSet {
 func (s *IpSet) Create() error {
 	var cmdStr string
 	if s.Family != "" {
+		if s.Family == IPSET_FAMILY_INET6 && IsVYOS() {
+			return fmt.Errorf("VyOS ipset not support family %s, use openEuler upgrade it", s.Family)
+		}
 		cmdStr = fmt.Sprintf("ipset create %s %s family %s -exist; ipset flush %s", s.Name, s.IpSetType, s.Family, s.Name)
 	} else {
 		cmdStr = fmt.Sprintf("ipset create %s %s -exist; ipset flush %s", s.Name, s.IpSetType, s.Name)
