@@ -101,6 +101,9 @@ func checkEipIpTableRules(eipList []eipInfo) error {
 		if err != nil {
 			return err
 		}
+		if eip.IpVersion == IP_VERSION_6 {
+			return fmt.Errorf("checkEipIpTableRules: ipv6 not support with VyOS, use openEuler upgrade it")
+		}
 		rule := utils.NewIpTableRule(utils.RULESET_DNAT.String())
 		rule.SetAction(utils.IPTABLES_ACTION_DNAT)
 		rule.SetDstIp(eip.VipIp + "/32").SetDnatTargetIp(eip.GuestIp)
