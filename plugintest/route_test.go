@@ -23,7 +23,7 @@ func IsRouteExisted(rts []utils.ZStackRouteEntry, rinfo plugin.RouteInfo) bool {
 var _ = Describe("routingTable test", func() {
 
 	Context("vpc linux routingTable test", func() {
-		env := NewVpcEnv()
+		env := NewVpcIpv4Env()
 		var r1, r2, r3, r4, r5, r6, r7, r8 plugin.RouteInfo
 		It("routingTable test: prepare env", func() {
 			env.SetupBootStrap()
