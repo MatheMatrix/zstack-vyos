@@ -43,6 +43,7 @@ func loadPlugins() {
 	plugin.FirewallEntryPoint()
 	plugin.PerformanceEntryPoint()
 	plugin.MiscEntryPoint()
+	plugin.InitStrongswanService()
 }
 
 func initPlugins() {

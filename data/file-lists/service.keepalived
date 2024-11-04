@@ -10,7 +10,7 @@ EnvironmentFile=-/etc/sysconfig/keepalived
 ExecStart=/usr/sbin/keepalived $KEEPALIVED_OPTIONS
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
-RestartSec=5s
+RestartSec=1s
 
 [Install]
 WantedBy=multi-user.target

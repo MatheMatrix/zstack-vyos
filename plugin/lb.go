@@ -1563,7 +1563,7 @@ func DelRuleForTcpSyncByLinux(lbs []Listener) error {
 	return table.Apply()
 }
 
-/* del iptables rule added by addPreRulesForLbs */
+/* del iptables rule */
 func delPreRulesForLbs(lbs []Listener) error {
 	var err error
 	tcpLbs := []Listener{}
@@ -1577,9 +1577,9 @@ func delPreRulesForLbs(lbs []Listener) error {
 	}
 
 	if utils.IsSkipVyosIptables() {
-		err = addRuleForTcpSyncByIptables(tcpLbs)
+		err = DelRuleForTcpSyncByLinux(tcpLbs)
 	} else {
-		err = addRuleForTcpSyncByVyos(tcpLbs)
+		err = DelRuleForTcpSyncByVyos(tcpLbs)
 	}
 	utils.PanicOnError(err)
 	return nil
