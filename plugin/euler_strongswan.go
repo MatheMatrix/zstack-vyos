@@ -323,6 +323,7 @@ func checkIpsecConnectStatusTask() {
 		case <-taskTimer.C:
 			restart := true
 			ipsecStateMap := getAllIpsecConnStatus()
+			log.Debugf("getAllIpsecConnStatus map: %+v", ipsecStateMap)
 			for _, status := range ipsecStateMap {
 				if status == IPSEC_STATE_UP {
 					restart = false
