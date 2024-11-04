@@ -7,7 +7,7 @@ import (
 
 var _ = Describe("euler22.03 ipsec test", func() {
 	Context("vpc ipsec test", func() {
-		env := NewVpcEnv()
+		env := NewVpcIpv4Env()
 		It("ipsec_euler :test prepare env", func() {
 			env.SetupBootStrap()
 			env.SetupIpsec()

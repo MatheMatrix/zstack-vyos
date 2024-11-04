@@ -90,7 +90,7 @@ type VpcIp4Env struct {
 	ipsec1 plugin.IpsecInfo
 }
 
-func NewVpcEnv() *VpcIp4Env {
+func NewVpcIpv4Env() *VpcIp4Env {
 	utEnv := UtEnv{
 		ConfigTcForVipQos: false,
 		EnableVyosCmd:     false,

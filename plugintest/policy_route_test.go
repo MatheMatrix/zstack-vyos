@@ -13,7 +13,7 @@ import (
 var _ = Describe("policyRoute test", func() {
 
 	Context("vpc linux policyRoute test", func() {
-		env := NewVpcEnv()
+		env := NewVpcIpv4Env()
 		It("policyRoute: test preparing", func() {
 			env.SetupBootStrap()
 		})
