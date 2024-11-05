@@ -1653,8 +1653,6 @@ func addRuleForTcpListenerByLinux(lbs []Listener) error {
 			}
 		}
 
-		rules, _ = lb.getIcmpIptablesRule()
-		table.AddIpTableRules(rules)
 	}
 
 	if changed {
@@ -1741,9 +1739,6 @@ func addRuleForUdpListenerByLinux(lbs []Listener) error {
 				table.AddIpTableRules([]*utils.IpTableRule{newRule})
 			}
 		}
-
-		rules, _ = lb.getIcmpIptablesRule()
-		table.AddIpTableRules(rules)
 	}
 
 	if changed {
