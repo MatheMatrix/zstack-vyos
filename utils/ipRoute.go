@@ -2,6 +2,7 @@ package utils
 
 import (
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -147,53 +148,7 @@ func (e ZStackRouteEntry) Equal(b ZStackRouteEntry) error {
 	return nil
 }
 
-func (e ZStackRouteEntry) addCommandEuler2203() string {
-	if e.TableId == ROUTETABLE_ID_MAIN {
-		if e.NextHopIp != "" {
-			if e.Distance != 0 {
-				return fmt.Sprintf("ip route add %s via %s metric %d", e.DestinationCidr, e.NextHopIp, e.Distance)
-			} else {
-				return fmt.Sprintf("ip route add %s via %s", e.DestinationCidr, e.NextHopIp)
-			}
-		} else if e.NicName != "" {
-			if e.Distance != 0 {
-				return fmt.Sprintf("ip route add %s dev %s metric %d",
-					e.DestinationCidr, e.NicName, e.Distance)
-			} else {
-				return fmt.Sprintf("ip route add %s dev %s",
-					e.DestinationCidr, e.NicName)
-			}
-		} else {
-			log.Debugf("can not add route entry,because nexthopIp and nicName is null")
-			return ""
-		}
-	}
-
-	if e.NextHopIp != "" {
-		if e.Distance != 0 {
-			return fmt.Sprintf("ip route add %s via %s table %d metric %d", e.DestinationCidr, e.NextHopIp, e.TableId, e.Distance)
-		} else {
-			return fmt.Sprintf("ip route add %s via %s table %d", e.DestinationCidr, e.NextHopIp, e.TableId)
-		}
-	} else if e.NicName != "" {
-		if e.Distance != 0 {
-			return fmt.Sprintf("ip route add %s dev %s table %d metric %d",
-				e.DestinationCidr, e.NicName, e.TableId, e.Distance)
-		} else {
-			return fmt.Sprintf("ip route add %s dev %s table %d",
-				e.DestinationCidr, e.NicName, e.TableId)
-		}
-	} else {
-		log.Debugf("can not add route entry,because nexthopIp and nicName is null")
-		return ""
-	}
-}
-
 func (e ZStackRouteEntry) addCommand() string {
-	if IsEuler2203() {
-		return e.addCommandEuler2203()
-	}
-
 	if e.TableId == ROUTETABLE_ID_MAIN {
 		if e.NextHopIp != "" {
 			if e.Distance != 0 {
@@ -235,52 +190,7 @@ func (e ZStackRouteEntry) addCommand() string {
 	}
 }
 
-func (e ZStackRouteEntry) deleteCommandEuler2203() string {
-	if e.TableId == ROUTETABLE_ID_MAIN {
-		if e.NextHopIp != "" {
-			if e.Distance != 0 {
-				return fmt.Sprintf("ip route del %s via %s metric %d", e.DestinationCidr, e.NextHopIp, e.Distance)
-			} else {
-				return fmt.Sprintf("ip route del %s via %s", e.DestinationCidr, e.NextHopIp)
-			}
-		} else if e.NicName != "" {
-			if e.Distance != 0 {
-				return fmt.Sprintf("ip route del %s dev %s metric %d",
-					e.DestinationCidr, e.NicName, e.Distance)
-			} else {
-				return fmt.Sprintf("ip route del %s dev %s",
-					e.DestinationCidr, e.NicName)
-			}
-		} else {
-			log.Debugf("can not del route entry,because nexthopIp and nicName is null")
-			return ""
-		}
-	}
-
-	if e.NextHopIp != "" {
-		if e.Distance != 0 {
-			return fmt.Sprintf("ip route del %s via %s table %d metric %d", e.DestinationCidr, e.NextHopIp, e.TableId, e.Distance)
-		} else {
-			return fmt.Sprintf("ip route del %s via %s table %d", e.DestinationCidr, e.NextHopIp, e.TableId)
-		}
-	} else if e.NicName != "" {
-		if e.Distance != 0 {
-			return fmt.Sprintf("ip route del %s dev %s table %d metric %d",
-				e.DestinationCidr, e.NicName, e.TableId, e.Distance)
-		} else {
-			return fmt.Sprintf("ip route del %s dev %s table %d",
-				e.DestinationCidr, e.NicName, e.TableId)
-		}
-	} else {
-		log.Debugf("can not del route entry,because nexthopIp and nicName is null")
-		return ""
-	}
-}
-
 func (e ZStackRouteEntry) deleteCommand() string {
-	if IsEuler2203() {
-		return e.deleteCommandEuler2203()
-	}
 	if e.TableId == ROUTETABLE_ID_MAIN {
 		if e.NextHopIp != "" {
 			if e.Distance != 0 {
@@ -322,6 +232,70 @@ func (e ZStackRouteEntry) deleteCommand() string {
 	}
 }
 
+func GetCurrentRouteEntriesEuler2203(tableId int) []ZStackRouteEntry {
+	var entries []ZStackRouteEntry
+	var cmd string
+	if tableId == ROUTETABLE_ID_MAIN {
+		cmd = fmt.Sprintf("vtysh -c 'show run' | | grep  'ip route' | grep -v 'table'")
+	} else {
+		cmd = fmt.Sprintf("vtysh -c 'show run' | grep 'table %d'", tableId)
+	}
+
+	bash := Bash{
+		Command: cmd,
+		Sudo:    true,
+	}
+	/*
+		# vtysh -c 'show run' | grep 'table 181'
+		ip route 0.0.0.0/0 192.168.100.1 table 181
+		ip route 192.168.1.0/24 eth3 table 181
+		ip route 192.168.2.0/24 eth4 table 181
+		ip route 192.168.100.0/24 192.168.100.109 table 181
+
+		# vtysh -c 'show run' | grep  'ip route' | grep -v 'table'
+		ip route 1.1.1.0/24 192.168.100.2 128
+		ip route 1.1.2.0/24 192.168.100.3 128
+		ip route 2.2.2.0/24 1.1.1.100 128
+		ip route 3.3.3.0/24 Null0 128
+	*/
+	ret, result, _, err := bash.RunWithReturn()
+	if err == nil && ret == 0 {
+		result = strings.TrimSpace(result)
+		lines := strings.Split(result, "\n")
+		for _, line := range lines {
+			if line == "" {
+				continue
+			}
+
+			items := strings.Fields(line)
+			dst := items[2]
+			var nh, dev string
+			var metric int
+			if addr, err := netip.ParseAddr(items[3]); err == nil {
+				nh = addr.String()
+			} else {
+				dev = items[3]
+			}
+
+			if items[4] != "table" {
+				metric, _ = strconv.Atoi(items[4])
+			}
+
+			e := ZStackRouteEntry{
+				TableId:         tableId,
+				DestinationCidr: dst,
+				NextHopIp:       nh,
+				NicName:         dev,
+				Distance:        metric,
+			}
+			entries = append(entries, e)
+		}
+	}
+
+	return entries
+
+}
+
 func GetCurrentRouteEntries(tableId int) []ZStackRouteEntry {
 	/* some table can not be operate
 	vyos@vyos:~/vyos_ut/zstack-vyos$ vtysh -c 'show ip route table 0'
@@ -352,6 +326,10 @@ func GetCurrentRouteEntries(tableId int) []ZStackRouteEntry {
 		panic("valid route table id range [1, 250]")
 	}
 
+	if IsEuler2203() {
+		return GetCurrentRouteEntriesEuler2203(tableId)
+	}
+
 	var entries []ZStackRouteEntry
 	cmd := fmt.Sprintf("vtysh -c 'show ip route table %d' | grep ^S", tableId)
 	if tableId == ROUTETABLE_ID_MAIN {
@@ -362,28 +340,19 @@ func GetCurrentRouteEntries(tableId int) []ZStackRouteEntry {
 		Command: cmd,
 	}
 	/*
-		  output format:
-		  $ vtysh -c "show ip route table 2"  | grep "^S"
-		  S>* 3.2.4.0/24 [100/0] is directly connected, eth1
-		  S>* 3.2.5.0/24 [1/0] is directly connected, eth1
-		  S>* 3.3.3.0/24 [200/0] via 1.1.1.2, eth2
-		  $ vtysh -c "show ip route"  | grep "^S"
-		   S>* 0.0.0.0/0 [1/0] via 172.25.0.1, eth1
-		   S   2.2.2.0/24 [200/0] via 1.1.2.101
-		   S>* 2.2.2.0/24 [128/0] via 1.1.2.100 (recursive via 172.25.0.1)
-		   S>* 2.2.3.0/24 [128/0] is directly connected, Null0, bh
-		   S>* 2.2.4.0/24 [120/0] via 1.1.2.104 (recursive via 172.25.0.1)
-		   S>* 2.2.5.0/24 [120/0] via 1.1.2.104 (recursive via 172.25.0.1)
-		   S>* 3.2.4.0/24 [2/0] via 1.1.1.104, eth2
-
-		S>* 1.1.1.0/24 [100/0] via 10.1.1.101, ut-pub, weight 1, 00:59:37
-		S>* 1.1.2.0/24 [110/0] via 10.1.1.101, ut-pub, weight 1, 00:59:37
-		S>* 1.1.3.0/24 [120/0] via 10.1.2.101, ut-pub1, weight 1, 00:59:35
-		S>* 1.1.4.0/24 [130/0] via 10.1.2.101, ut-pub1, weight 1, 00:59:35
-		S   1.1.5.0/24 [80/0] via 10.1.1.101, ut-pub, weight 1, 00:59:37
-		S   1.1.5.0/24 [1/0] unreachable (blackhole), weight 1, 01:03:53
-		S   1.1.6.0/24 [90/0] via 10.1.1.101, ut-pub, weight 1, 00:59:37
-		S   1.1.6.0/24 [1/0] unreachable (blackhole), weight 1, 01:03:53
+	  output format:
+	  $ vtysh -c "show ip route table 2"  | grep "^S"
+	  S>* 3.2.4.0/24 [100/0] is directly connected, eth1
+	  S>* 3.2.5.0/24 [1/0] is directly connected, eth1
+	  S>* 3.3.3.0/24 [200/0] via 1.1.1.2, eth2
+	  $ vtysh -c "show ip route"  | grep "^S"
+	   S>* 0.0.0.0/0 [1/0] via 172.25.0.1, eth1
+	   S   2.2.2.0/24 [200/0] via 1.1.2.101
+	   S>* 2.2.2.0/24 [128/0] via 1.1.2.100 (recursive via 172.25.0.1)
+	   S>* 2.2.3.0/24 [128/0] is directly connected, Null0, bh
+	   S>* 2.2.4.0/24 [120/0] via 1.1.2.104 (recursive via 172.25.0.1)
+	   S>* 2.2.5.0/24 [120/0] via 1.1.2.104 (recursive via 172.25.0.1)
+	   S>* 3.2.4.0/24 [2/0] via 1.1.1.104, eth2
 	*/
 	ret, result, _, err := bash.RunWithReturn()
 	if err == nil && ret == 0 {
@@ -413,11 +382,8 @@ func GetCurrentRouteEntries(tableId int) []ZStackRouteEntry {
 					Distance:        distance,
 				}
 				entries = append(entries, e)
-			} else {
-				nicName := items[len(items)-1] /* ethx or bh */
-				if nicName == "bh" {
-					nicName = "null0"
-				}
+			} else if items[3] == "unreachable" {
+				nicName := "null0"
 				e := ZStackRouteEntry{
 					TableId:         tableId,
 					DestinationCidr: items[1],
@@ -425,6 +391,17 @@ func GetCurrentRouteEntries(tableId int) []ZStackRouteEntry {
 					Distance:        distance,
 				}
 				entries = append(entries, e)
+			} else if items[3] == "is" {
+				nicName := items[6][:len(items[6])-1]
+				e := ZStackRouteEntry{
+					TableId:         tableId,
+					DestinationCidr: items[1],
+					NicName:         nicName,
+					Distance:        distance,
+				}
+				entries = append(entries, e)
+			} else {
+				log.Errorf("unknow route format: %s", line)
 			}
 		}
 	}
@@ -433,24 +410,6 @@ func GetCurrentRouteEntries(tableId int) []ZStackRouteEntry {
 }
 
 func deleteRouteEntries(entries []ZStackRouteEntry) interface{} {
-	if IsEuler2203() {
-		cmds := []string{}
-		for _, r := range entries {
-			cmds = append(cmds, r.deleteCommand())
-		}
-
-		bash := Bash{
-			Command: fmt.Sprintf("%s", strings.Join(cmds, ";")),
-		}
-
-		ret, _, e, err := bash.RunWithReturn()
-		if err != nil || ret != 0 {
-			return fmt.Errorf("delete ip route: %s failed, because: %s", strings.Join(cmds, " "), e)
-		}
-
-		return nil
-	}
-
 	cmds := []string{"vtysh -c 'configure terminal'"}
 	for _, r := range entries {
 		cmds = append(cmds, fmt.Sprintf("-c '%s'", r.deleteCommand()))
@@ -469,24 +428,6 @@ func deleteRouteEntries(entries []ZStackRouteEntry) interface{} {
 }
 
 func addRouteEntries(entries []ZStackRouteEntry) interface{} {
-	if IsEuler2203() {
-		cmds := []string{}
-		for _, r := range entries {
-			cmds = append(cmds, r.addCommand())
-		}
-
-		bash := Bash{
-			Command: fmt.Sprintf("%s", strings.Join(cmds, ";")),
-		}
-
-		ret, _, e, err := bash.RunWithReturn()
-		if err != nil || ret != 0 {
-			return fmt.Errorf("add ip route: %s failed, because: %s", strings.Join(cmds, " "), e)
-		}
-
-		return nil
-	}
-
 	cmds := []string{"vtysh -c 'configure terminal'"}
 	for _, r := range entries {
 		cmds = append(cmds, fmt.Sprintf("-c '%s'", r.addCommand()))
