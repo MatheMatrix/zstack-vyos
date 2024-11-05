@@ -715,7 +715,7 @@ func main() {
 	}
 	utils.Truncate(plugin.IPVS_HEALTH_CHECK_CONFIG_FILE, 0)
 	if utils.IsEuler2203() {
-		plugin.InitEulerStrongswan()
+		plugin.CleanIpSecconnectionFiles()
 	}
 	startZvr()
 	log.Debugf("successfully configured the sysmtem and bootstrap the zstack virtual router agents")

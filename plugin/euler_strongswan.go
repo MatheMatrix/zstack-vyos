@@ -104,13 +104,8 @@ func (driver *EulerStrongSWan) ExistConnWorking() bool {
 }
 
 func (driver *EulerStrongSWan) CreateIpsecConns(cmd *CreateIPsecCmd) error {
-	//swanctl --initiate --ike xxx to start a ipsec connection
-	//swanctl --initiate --child xxx to start a child
-
+	//swanctl --initiate --ike xxx --child xxx to start a ipsec connection
 	var conns []*ipsecConf
-	downConnMap := map[string]*ipsecConf{}
-	connMd5Map := map[string]string{}
-	md5ChangedConnMap := map[string]string{}
 
 	for _, info := range cmd.Infos {
 		err, conn := getStrongswanConnConf(&info) // 转换配置
@@ -126,30 +121,15 @@ func (driver *EulerStrongSWan) CreateIpsecConns(cmd *CreateIPsecCmd) error {
 		utils.PanicOnError(err)
 		err = tmpl.Execute(&buf, conn)
 		utils.PanicOnError(err)
-
-		md5, err := getFileChecksum(getEulerIpsecConnConfPath(*conn))
-		if err == nil {
-			connMd5Map[conn.ConnName] = md5
-		} else {
-			connMd5Map[conn.ConnName] = ""
-		}
 		err = os.WriteFile(getEulerIpsecConnConfPath(*conn), buf.Bytes(), 0644)
 		utils.PanicOnError(err)
-	}
 
-	for _, conn := range conns {
-		downConnMap[conn.ConnName] = conn
-		md5, err := getFileChecksum(getEulerIpsecConnConfPath(*conn))
-		if err != nil {
-			md5 = ""
+		b := utils.Bash{
+			Command: fmt.Sprintf("nohup swanctl -i -i %s -c %s > /dev/null 2>&1 &", conn.ConnName, conn.ConnName),
+			Sudo:    true,
 		}
-		if md5 != connMd5Map[conn.ConnName] {
-			md5ChangedConnMap[conn.ConnName] = conn.ConnName
-		}
-	}
-
-	if len(md5ChangedConnMap) != 0 {
-		utils.ServiceOperation("strongswan", "restart")
+		err = b.Run()
+		utils.PanicOnError(err)
 	}
 
 	return nil
@@ -160,13 +140,15 @@ func (driver *EulerStrongSWan) DeleteIpsecConns(cmd *DeleteIPsecCmd) error {
 		err, conf := getStrongswanConnConf(&info) // 转换配置
 		if err != nil {
 			log.Error(err.Error())
-			return err
 		}
 
-		os.Remove(getEulerIpsecConnConfPath(*conf))
+		err = os.Remove(getEulerIpsecConnConfPath(*conf))
+		if err != nil {
+			log.Errorf("delete ipsec conf file failed:%s", err)
+		}
 
 		b := utils.Bash{
-			Command: fmt.Sprintf("swanctl -t --ike %s", conf.ConnName),
+			Command: fmt.Sprintf("nohup swanctl -t --ike %s > /dev/null 2>&1 &", conf.ConnName),
 			Sudo:    true,
 		}
 
@@ -184,8 +166,6 @@ func (driver *EulerStrongSWan) ModifyIpsecConns(cmd *updateIPsecCmd) error {
 }
 
 func (driver *EulerStrongSWan) SyncIpsecConns(cmd *SyncIPsecCmd) []string {
-	//swanctl --initiate --ike xxx to start a ipsec connection
-	//swanctl --initiate --child xxx to start a child
 
 	var downConnList []string
 	var conns []*ipsecConf
@@ -230,8 +210,13 @@ func (driver *EulerStrongSWan) SyncIpsecConns(cmd *SyncIPsecCmd) []string {
 		}
 	}
 
-	if len(md5ChangedConnMap) != 0 {
-		utils.ServiceOperation("strongswan", "restart")
+	for connName, _ := range md5ChangedConnMap {
+		b := utils.Bash{
+			Command: fmt.Sprintf("nohup swanctl -i -i %s -c %s > /dev/null 2>&1 &", connName, connName),
+			Sudo:    true,
+		}
+		err := b.Run()
+		log.Debugf("init ipsec connection[uuid:%s] failed %+v", conns, err)
 	}
 
 	// wait ipsec up
@@ -270,10 +255,8 @@ func (driver *EulerStrongSWan) GetIpsecLog(cmd *getIPsecLogCmd) string {
 	return ipsecLog
 }
 
-func InitEulerStrongswan() {
+func CleanIpSecconnectionFiles() {
 	utils.SudoRmFile(SwanConnectionConfPath)
-	utils.ServiceOperation("strongswan", "restart")
-	go checkIpsecConnectStatusTask()
 }
 
 func isEulerIpsecConnUp(connName string) bool {
@@ -317,22 +300,37 @@ func getAllIpsecConnStatus() map[string]string {
 }
 
 func checkIpsecConnectStatusTask() {
-	taskTimer := time.NewTimer(time.Second * 120)
+	taskTimer := time.NewTicker(time.Second * 60)
 	for {
 		select {
 		case <-taskTimer.C:
-			restart := true
 			ipsecStateMap := getAllIpsecConnStatus()
-			for _, status := range ipsecStateMap {
-				if status == IPSEC_STATE_UP {
-					restart = false
-					break
+			log.Debugf("getAllIpsecConnStatus map: %+v", ipsecStateMap)
+			for conn, status := range ipsecStateMap {
+				if status == IPSEC_STATE_DOWN {
+					b := utils.Bash{
+						Command: fmt.Sprintf("nohup swanctl -i -i %s -c %s > /dev/null 2>&1 &", conn, conn),
+						Sudo:    true,
+					}
+					err := b.Run()
+					log.Errorf("restart failed: %+v", err)
 				}
-			}
-
-			if restart {
-				utils.ServiceOperation("strongswan", "restart")
 			}
 		}
 	}
+}
+
+func InitStrongswanService() {
+	if !utils.IsEuler2203() {
+		return
+	}
+
+	b := utils.Bash{
+		Command: fmt.Sprintf("systemctl status strongswan || systemctl restart strongswan"),
+		Sudo:    true,
+	}
+	err := b.Run()
+	log.Errorf("start strongswan failed: %+v", err)
+
+	go checkIpsecConnectStatusTask()
 }
