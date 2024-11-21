@@ -1,0 +1,41 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /var/lib/promtail/positions.yaml
+
+clients:
+  - url: http://127.0.0.1:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: haproxy
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: haproxy
+          __path__: /var/log/haproxy.log
+    pipeline_stages:
+      - regex:
+          expression: '^.*haproxy\[\d+\]:\s+(?P<listener_uuid>\S+)\s+(?P<client_ip>\S+):(?P<client_port>\d+)\s+->\s+(?P<frontend_ip>\S+):(?P<frontend_port>\d+)\s+->\s+(?P<backend_ip>\S+):(?P<backend_port>\d+)\s+(?P<status_code>\d+)\s+.*\s+(?P<flags>\S+)\s+(?P<connections>\S+)\s+.*\s+-\s+-\s+(?P<out_bytes>\d+)\s+(?P<in_bytes>\d+)\s+(?P<http_time>\d+)\s+(?P<timestamp>.+)$'
+      - regex:
+          expression: '^.*haproxy\[\d+\]:\s+(?P<listener_uuid>\S+)\s+(?P<client_ip>\S+):(?P<client_port>\d+)\s+->\s+(?P<frontend_ip>\S+):(?P<frontend_port>\d+)\s+->\s+(?P<backend_ip>\S+):(?P<backend_port>\d+)\s+----\s+(?P<connections>[\d\/]+)\s+(?P<queue_stats>\d+\/\d+)\s+(?P<out_bytes>\d+)\s+(?P<in_bytes>\d+)\s+(?P<http_time>\d+)\s+(?P<timestamp>.+)$'
+      - regex:
+          expression: '(?P<active_connections>\d+)/(?P<frontend_connections>\d+)/(?P<backend_connections>\d+)/(?P<server_connections>\d+)/(?P<retries_count>\d+)'
+          source: connections
+      - labels:
+          listener_uuid:
+          status_code:
+          client_ip:
+          frontend_ip:
+          backend_ip:
+          out_bytes:                 # 传输的字节数
+          in_bytes:                  # 请求的字节数
+          active_connections:        # 当前活跃连接数
+          # frontend_connections:    # 前端并发连接数 same with active_connections
+          backend_connections:       # 后端并发连接数
+          server_connections:        # 后端当前连接数
+          retries_count:             # 重试次数
+          http_time:                 # HTTP处理时间
+          timestamp:                 # 时间戳

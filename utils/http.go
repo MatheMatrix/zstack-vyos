@@ -2,10 +2,12 @@ package utils
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	"io"
 	"io/ioutil"
 	"net/http"
 )
@@ -100,4 +102,57 @@ func HttpPost(url string, headers map[string]string, obj interface{}) ([]byte, e
 	}
 
 	return body, nil
+}
+
+func HttpGet(url string, params map[string]string) (string, error) {
+	reqURL := url
+	if params != nil && len(params) > 0 {
+		query := "?"
+		for key, value := range params {
+			query += fmt.Sprintf("%s=%s&", key, value)
+		}
+		reqURL += query[:len(query)-1]
+	}
+
+	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
+	if err != nil {
+		return "", errors.Wrap(err, fmt.Sprintf("failed to create HTTP GET request for %s", reqURL))
+	}
+
+	logrus.Debugf("[HTTP GET] %s", reqURL)
+	req.Header.Set("Accept-Encoding", "gzip")
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", errors.Wrap(err, fmt.Sprintf("failed to send HTTP GET request to %s", reqURL))
+	}
+	defer resp.Body.Close()
+
+	body, err := decompressIfNeeded(resp)
+	if err != nil {
+		return "", errors.Wrap(err, "failed to process response body")
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return "", errors.New(fmt.Sprintf("HTTP GET request failed: %s, status code: %d, response: %s", reqURL, resp.StatusCode, string(body)))
+	}
+
+	return string(body), nil
+}
+
+func decompressIfNeeded(resp *http.Response) (string, error) {
+	var reader io.Reader = resp.Body
+	if resp.Header.Get("Content-Encoding") == "gzip" {
+		gzipReader, err := gzip.NewReader(resp.Body)
+		if err != nil {
+			return "", fmt.Errorf("failed to create gzip reader: %v", err)
+		}
+		defer gzipReader.Close()
+		reader = gzipReader
+	}
+	body, err := ioutil.ReadAll(reader)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response body: %v", err)
+	}
+	return string(body), nil
 }
