@@ -1,0 +1,13 @@
+[Unit]
+Description=Promtail service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/promtail -config.file=/home/zstack/zvr/promtail/promtail-config.yaml
+Restart=always
+TimeoutStopSec=5s
+
+[Install]
+WantedBy=multi-user.target
+

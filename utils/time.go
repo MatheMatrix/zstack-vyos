@@ -33,3 +33,19 @@ func LoopRunUntilSuccessOrTimeout(fn func() bool, timeout, interval time.Duratio
 		}
 	}
 }
+
+func ParseISO8601(date string) (time.Time, error) {
+	parsedTime, err := time.Parse(time.RFC3339, date)
+	if err == nil {
+		return parsedTime, nil
+	}
+	parsedTime, err = time.Parse("2006-01-02T15:04:05Z07:00", date)
+	if err == nil {
+		return parsedTime, nil
+	}
+	parsedTime, err = time.Parse("2006-01-02T15:04:05", date)
+	if err == nil {
+		return parsedTime, nil
+	}
+	return time.Time{}, errors.Wrap(err, fmt.Sprintf("failed to parse date: %s", date))
+}

@@ -32,6 +32,10 @@ service.ipvsHealthCheck   /usr/lib/systemd/system/ipvsHealthCheck.service  0600 
 service.zvrboot           /usr/lib/systemd/system/zvrboot.service          0600     root:root
 service.zsn               /usr/lib/systemd/system/zsn.service              0600     root:root
 service.strongswan        /usr/lib/systemd/system/strongswan.service       0600     root:root
+service.promtail          /usr/lib/systemd/system/promtail.service         0600     root:root
+conf.promtail             __ZVR_ROOT_PATH__/promtail/promtail-config.template.yaml 0755     root:root
+conf.promtail.positions   /var/lib/promtail/positions.yaml                 0755     root:root
+
 zs-tools/config_linux.py           /usr/local/zstack/zs-tools/config_linux.py           0755 __USER__:users
 zs-tools/log.py                    /usr/local/zstack/zs-tools/log.py                    0755 __USER__:users
 zs-tools/net_config.py             /usr/local/zstack/zs-tools/net_config.py             0755 __USER__:users
@@ -49,6 +53,7 @@ zs-tools/guesttools                /usr/local/zstack/guesttools                 
 zvr_x86_64       __BIN_PATH__/zvr            0755      __USER__:users
 zvrboot_x86_64   __BIN_PATH__/zvrboot        0755      root:root
 ipvsHealthCheck_x86_64       __BIN_PATH__/ipvsHealthCheck                       0755      __USER__:users
+promtail-linux-amd64  __BIN_PATH__/promtail      0755      __USER__:users
 
 [[ARM]]
 # this files just for aarch64
