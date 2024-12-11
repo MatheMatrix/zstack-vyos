@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"zstack-vyos/utils"
@@ -368,12 +369,12 @@ func configureOspfByVtysh(cmd *setOspfCmd) {
 	var (
 		oldCmd *utils.VtyshOspfCmd
 		newCmd *utils.VtyshOspfCmd
-		tmp    *utils.VtyshOspfCmd
 		err    error
 	)
+
 	// 1. get old ospf cmd
-	oldCmd = utils.NewVtyshOspfCmd().SetDelete()
-	utils.JsonLoadConfig(utils.GetOspfJsonFile(), &oldCmd)
+	oldCmd, err = getCurrentOspfConfig()
+	utils.PanicOnError(err)
 
 	// 2. get new ospf cmd
 	newCmd, err = parseOspfToVtyshCmd(cmd)
@@ -406,10 +407,100 @@ func configureOspfByVtysh(cmd *setOspfCmd) {
 	log.Debugf("vtysh-ospf: start apply ospf cmd[%+v]", newCmd)
 	err = newCmd.Apply()
 	utils.PanicOnError(err)
+}
 
-	// 5. store new cmd
-	tmp, err = parseOspfToVtyshCmd(cmd)
-	utils.PanicOnError(err)
-	err = utils.JsonStoreConfig(utils.GetOspfJsonFile(), tmp)
-	utils.PanicOnError(err)
+func getCurrentOspfConfig() (*utils.VtyshOspfCmd, error) {
+
+	bash := utils.Bash{
+		Command: fmt.Sprintf("vtysh -c 'show running-config'"),
+	}
+	ret, output, _, err := bash.RunWithReturn()
+	if err != nil {
+		return nil, fmt.Errorf("execute vtysh command failed: %v", err)
+	}
+	if ret != 0 {
+		return nil, fmt.Errorf("vtysh command returned non-zero: %d", ret)
+	}
+
+	return parseRunningConfig([]byte(output))
+}
+
+// this func is Parse the current configuration for return comparison
+func parseRunningConfig(output []byte) (*utils.VtyshOspfCmd, error) {
+
+	var (
+		v     = utils.NewVtyshOspfCmd()
+		lines = strings.Split(string(output), "\n")
+
+		inOspfSection      bool
+		inInterfaceSection bool
+		currentInterface   string
+
+		routerIdRegex  = regexp.MustCompile(`ospf router-id ([0-9.]+)`)
+		networkRegex   = regexp.MustCompile(`network ([0-9./]+) area ([0-9.]+)`)
+		areaRegex      = regexp.MustCompile(`area ([0-9.]+) (normal|stub|nssa)`)
+		areaAuthRegex  = regexp.MustCompile(`area ([0-9.]+) authentication (simple|md5)`)
+		interfaceRegex = regexp.MustCompile(`interface (.+)`)
+		authTypeRegex  = regexp.MustCompile(`ip ospf authentication (simple|md5)`)
+		authParamRegex = regexp.MustCompile(`ip ospf authentication-key (.+)`)
+	)
+
+	if len(output) == 0 {
+		return nil, fmt.Errorf("empty configuration output")
+	}
+	//parse the configuration line by line
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+
+		//determine whether to enter the corresponding position
+		if strings.Contains(line, "router ospf") {
+			inOspfSection = true
+			continue
+		}
+
+		if matches := interfaceRegex.FindStringSubmatch(line); len(matches) > 1 {
+			inOspfSection = false
+			inInterfaceSection = true
+			currentInterface = matches[1]
+			continue
+		}
+
+		//! is end
+		if strings.HasPrefix(line, "!") {
+			inOspfSection = false
+			inInterfaceSection = false
+			continue
+		}
+
+		// parse configuration
+		if inOspfSection {
+			if matches := routerIdRegex.FindStringSubmatch(line); len(matches) > 1 {
+				v.SetRouteId(matches[1])
+			}
+
+			if matches := networkRegex.FindStringSubmatch(line); len(matches) > 1 {
+				v.SetNetwork(matches[1], matches[2])
+			}
+
+			if matches := areaRegex.FindStringSubmatch(line); len(matches) > 1 {
+				if authMatches := areaAuthRegex.FindStringSubmatch(line); len(authMatches) > 1 {
+					v.SetArea(matches[1], matches[2], authMatches[2])
+				} else {
+					v.SetArea(matches[1], matches[2], "")
+				}
+			}
+		}
+
+		if inInterfaceSection {
+			if matches := authTypeRegex.FindStringSubmatch(line); len(matches) > 1 {
+				authParam := ""
+				if paramMatches := authParamRegex.FindStringSubmatch(line); len(paramMatches) > 1 {
+					authParam = paramMatches[1]
+				}
+				v.SetInterface(currentInterface, matches[1], authParam)
+			}
+		}
+	}
+
+	return v, nil
 }
