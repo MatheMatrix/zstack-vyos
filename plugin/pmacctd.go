@@ -78,7 +78,10 @@ func (fc *flowConfig) startPmacctdServers() {
 					Command: fmt.Sprintf("%s -f %s -d", getUacctdBinFile(), uacctd_conf_file),
 					Sudo:    true,
 				}
-				bash.Run()
+				err := bash.Run()
+				if err != nil {
+					utils.PanicOnError(err)
+				}
 			}
 		}
 	} else {
@@ -95,7 +98,9 @@ func (fc *flowConfig) startPmacctdServers() {
 }
 
 func (fc *flowConfig) setupFlowIpTables(enable bool) {
-	if utils.Kernel_version == utils.Kernel_3_13_11 {
+	if !utils.IsVYOS() {
+		setupFlowIpTablesForEuler(fc.NicsNames, enable)
+	} else if utils.Kernel_version == utils.Kernel_3_13_11 {
 		setupFlowIpTablesForKernel3(fc.NicsNames, enable)
 	} else {
 		setupFlowIpTablesForKernel5_4_80(fc.NicsNames, enable)
@@ -117,7 +122,10 @@ func setupFlowIpTablesForKernel3(nics []string, enable bool) {
 	bash := utils.Bash{
 		Command: strings.Join(cmds, ";"),
 	}
-	bash.Run()
+	err := bash.Run()
+	if err != nil {
+		utils.PanicOnError(err)
+	}
 }
 
 func setupFlowIpTablesForKernel5_4_80(nics []string, enable bool) {
@@ -135,7 +143,10 @@ func setupFlowIpTablesForKernel5_4_80(nics []string, enable bool) {
 	bash := utils.Bash{
 		Command: strings.Join(cmds, ";"),
 	}
-	bash.Run()
+	err := bash.Run()
+	if err != nil {
+		utils.PanicOnError(err)
+	}
 }
 
 func writeFlowHaScript(enable bool) {
@@ -175,6 +186,49 @@ func getUacctdPid() int {
 		return PID_ERROR
 	} else {
 		return n
+	}
+}
+
+func setupFlowIpTablesForEuler(nics []string, enable bool) {
+	// create new chain for netflow
+	bash := utils.Bash{
+		Command: `
+        iptables -t raw -N netflow 2>/dev/null || true
+        if ! iptables -t raw -L PREROUTING -v -n | grep -q "netflow"; then
+            iptables -t raw -A PREROUTING -j netflow
+        fi
+    `,
+	}
+	err := bash.Run()
+	if err != nil {
+		utils.PanicOnError(err)
+	}
+	if !enable {
+		bash := utils.Bash{
+			Command: fmt.Sprintf("iptables -t raw -F netflow; iptables -t raw -D PREROUTING -j netflow; iptables -t raw -X netflow"),
+		}
+		err = bash.Run()
+		if err != nil {
+			utils.PanicOnError(err)
+		}
+		return
+	}
+	var cmds []string
+	cmd := fmt.Sprintf("iptables -t raw -F netflow")
+	cmds = append(cmds, cmd)
+	for _, nicName := range nics {
+		cmd = fmt.Sprintf(
+			"iptables -t raw -C netflow -i %s -j NFLOG --nflog-group 2 --nflog-size 64 --nflog-threshold 10 || "+
+				"iptables -t raw -I netflow -i %s -j NFLOG --nflog-group 2 --nflog-size 64 --nflog-threshold 10",
+			nicName, nicName)
+		cmds = append(cmds, cmd)
+	}
+	bash = utils.Bash{
+		Command: strings.Join(cmds, ";"),
+	}
+	err = bash.Run()
+	if err != nil {
+		utils.PanicOnError(err)
 	}
 }
 
