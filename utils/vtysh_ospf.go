@@ -28,21 +28,21 @@ func GetOspfJsonFile() string {
 const ospfAddTemplate = `'configure terminal
 router ospf
 ospf router-id {{.RouterIdCmd}}
-{{range $m, $n := .NetworkCmd}}
-network {{$n.Network}} area {{$n.AreaId}}
+{{range .NetworkCmd}}
+network {{.Network}} area {{.AreaId}}
 {{- end}}
-{{range $k, $v := .AreaCmd}}
-{{if eq $v.Type "Stub"}}area {{$v.Id}} stub{{end}}
-{{if eq $v.Auth "Plaintext"}}area {{$v.Id}} authentication{{else if eq $v.Auth "MD5"}}area {{$v.Id}} authentication message-digest{{end}}
+{{range .AreaCmd}}
+{{if eq .Type "Stub"}}area {{.Id}} stub{{end}}
+{{if eq .Auth "Plaintext"}}area {{.Id}} authentication{{else if eq .Auth "MD5"}}area {{.Id}} authentication message-digest{{end}}
 {{- end}}
-{{range $i, $j := .IfaceCmd}}
-interface {{$j.Name}}
-{{if eq $j.Auth "Plaintext"}}
+{{range .IfaceCmd}}
+interface {{.Name}}
+{{if eq .Auth "Plaintext"}}
 ip ospf authentication
-ip ospf authentication-key {{$j.Password}}
-{{else if eq $j.Auth "MD5"}}
+ip ospf authentication-key {{.Password}}
+{{else if eq .Auth "MD5"}}
 ip ospf authentication message-digest
-ip ospf message-digest-key {{$j.Key}} md5 {{$j.Password}}
+ip ospf message-digest-key {{.Key}} md5 {{.Password}}
 {{- end}}
 {{- end}}
 exit'
@@ -50,21 +50,22 @@ exit'
 
 const ospfDeleteTemplate = `'configure terminal
 router ospf
-{{range $m, $n := .NetworkCmd}}
-no network {{$n.Network}} area {{$n.AreaId}}
+{{if .RouterIdCmd}}no ospf router-id {{.RouterIdCmd}}{{end}}
+{{range .NetworkCmd}}
+no network {{.Network}} area {{.AreaId}}
 {{- end}}
-{{range $k, $v := .AreaCmd}}
-{{if eq $v.Type "Stub"}}no area {{$v.Id}} stub{{end}}
-{{if eq $v.Auth "Plaintext" "MD5"}}no area {{$v.Id}} authentication{{end}}
+{{range .AreaCmd}}
+{{if eq .Type "Stub"}}no area {{.Id}} stub{{end}}
+{{if eq .Auth "Plaintext"}}no area {{.Id}} authentication{{else if eq .Auth "MD5"}}no area {{.Id}} authentication{{end}}
 {{- end}}
-{{range $i, $j := .IfaceCmd}}
-interface {{$j.Name}}
-{{if eq $j.Auth "Plaintext"}}
+{{range .IfaceCmd}}
+interface {{.Name}}
+{{if eq .Auth "Plaintext"}}
 no ip ospf authentication
-no ip ospf authentication-key
-{{else if eq $j.Auth "MD5"}}
-no ip ospf authentication
-no ip ospf message-digest-key {{$j.Key}}
+no ip ospf authentication-key {{.Password}}
+{{else if eq .Auth "MD5"}}
+no ip ospf authentication message-digest
+no ip ospf message-digest-key {{.Key}} md5 {{.Password}}
 {{- end}}
 {{- end}}
 exit'
@@ -89,7 +90,7 @@ type AreaAttrs struct {
 type VtyshOspfCmd struct {
 	RouterIdCmd string
 	IfaceCmd    map[string]IfaceAttrs
-	NetworkCmd  map[string]NetworkAttrs
+	NetworkCmd  []NetworkAttrs
 	AreaCmd     map[string]AreaAttrs
 	isDelete    bool
 }
@@ -98,7 +99,7 @@ func NewVtyshOspfCmd() *VtyshOspfCmd {
 	cmd := &VtyshOspfCmd{
 		RouterIdCmd: "",
 		IfaceCmd:    make(map[string]IfaceAttrs),
-		NetworkCmd:  make(map[string]NetworkAttrs),
+		NetworkCmd:  []NetworkAttrs{},
 		AreaCmd:     make(map[string]AreaAttrs),
 		isDelete:    false,
 	}
@@ -141,23 +142,13 @@ func (v *VtyshOspfCmd) SetInterface(ifname string, authType string, authParam st
 
 	return v
 }
-func (v *VtyshOspfCmd) DeleteInterface(ifname string) *VtyshOspfCmd {
-	delete(v.IfaceCmd, ifname)
 
-	return v
-}
-
-func (v *VtyshOspfCmd) SetNetwork(network string, areaId string) *VtyshOspfCmd {
+func (v *VtyshOspfCmd) AddNetwork(network string, areaId string) *VtyshOspfCmd {
 	attrs := NetworkAttrs{
 		Network: network,
 		AreaId:  areaId,
 	}
-	v.NetworkCmd[network] = attrs
-
-	return v
-}
-func (v *VtyshOspfCmd) DeleteNetwork(network string) *VtyshOspfCmd {
-	delete(v.NetworkCmd, network)
+	v.NetworkCmd = append(v.NetworkCmd, attrs)
 
 	return v
 }
@@ -169,11 +160,6 @@ func (v *VtyshOspfCmd) SetArea(areaId string, areaType string, authType string) 
 		Auth: authType,
 	}
 	v.AreaCmd[areaId] = attr
-
-	return v
-}
-func (v *VtyshOspfCmd) DeleteArea(areaId string) *VtyshOspfCmd {
-	delete(v.AreaCmd, areaId)
 
 	return v
 }

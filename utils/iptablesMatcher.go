@@ -125,11 +125,32 @@ func (r *IpTableRule) SetIcmpType(icmpType string) *IpTableRule {
 }
 
 func (r *IpTableRule) SetSrcIp(srcIp string) *IpTableRule {
-	r.srcIp = srcIp
+	if srcIp == "" {
+		return r
+	}
+
+	// If it is a single IP address (excluding slashes), the /32 mask is automatically added
+	if !strings.Contains(srcIp, "/") {
+		srcIp = srcIp + "/32"
+	}
+
+	if _, _, err := net.ParseCIDR(srcIp); err == nil {
+		r.srcIp = srcIp
+	}
+
 	return r
 }
 
 func (r *IpTableRule) SetDstIp(dstIp string) *IpTableRule {
+	if dstIp == "" {
+		return r
+	}
+
+	// If it is a single IP address (excluding slashes), the /32 mask is automatically added
+	if !strings.Contains(dstIp, "/") {
+		dstIp = dstIp + "/32"
+	}
+
 	if _, _, err := net.ParseCIDR(dstIp); err == nil {
 		r.dstIp = dstIp
 	}

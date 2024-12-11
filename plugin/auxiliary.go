@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"zstack-vyos/utils"
@@ -339,19 +340,14 @@ func SetZebraRoutes(infos []RouteInfo) {
 }
 
 func parseOspfToVtyshCmd(cmd *setOspfCmd) (*utils.VtyshOspfCmd, error) {
-	var (
-		v       *utils.VtyshOspfCmd
-		nicName string
-		err     error
-	)
-
-	v = utils.NewVtyshOspfCmd().SetRouteId(cmd.RouterId)
+	v := utils.NewVtyshOspfCmd().SetRouteId(cmd.RouterId)
 	for _, area := range cmd.AreaInfos {
 		v.SetArea(area.AreaId, string(area.AreaType), string(area.AuthType))
 	}
 	for _, net := range cmd.NetworkInfos {
-		v.SetNetwork(net.Network, net.AreaId)
-		if nicName, err = utils.GetNicNameByMac(net.NicMac); err != nil {
+		v.AddNetwork(net.Network, net.AreaId)
+		nicName, err := utils.GetNicNameByMac(net.NicMac)
+		if err != nil {
 			return nil, err
 		}
 		for _, area := range cmd.AreaInfos {
@@ -360,7 +356,6 @@ func parseOspfToVtyshCmd(cmd *setOspfCmd) (*utils.VtyshOspfCmd, error) {
 			}
 		}
 	}
-
 	return v, nil
 }
 
@@ -368,48 +363,426 @@ func configureOspfByVtysh(cmd *setOspfCmd) {
 	var (
 		oldCmd *utils.VtyshOspfCmd
 		newCmd *utils.VtyshOspfCmd
-		tmp    *utils.VtyshOspfCmd
 		err    error
 	)
+
 	// 1. get old ospf cmd
-	oldCmd = utils.NewVtyshOspfCmd().SetDelete()
-	utils.JsonLoadConfig(utils.GetOspfJsonFile(), &oldCmd)
+	oldCmd, err = getCurrentOspfConfig()
+	utils.PanicOnError(err)
 
 	// 2. get new ospf cmd
 	newCmd, err = parseOspfToVtyshCmd(cmd)
 	utils.PanicOnError(err)
 
+	if isOspfConfigEqual(oldCmd, newCmd) {
+		log.Debugf("ospf config is equal")
+		return
+	}
+
 	// 3. delete the same cmd in new and old
-	for k, new := range newCmd.NetworkCmd {
-		if old, ok := oldCmd.NetworkCmd[k]; ok && new == old {
-			newCmd.DeleteNetwork(k)
-			oldCmd.DeleteNetwork(k)
+	oldCmd.SetDelete()
+
+	// 4. delete old cmd, and apply new cmd
+	log.Debugf("vtysh-ospf: start delete all old ospf config[%+v]", oldCmd)
+	err = oldCmd.Apply()
+	utils.PanicOnError(err)
+
+	log.Debugf("vtysh-ospf: start apply new ospf config[%+v]", newCmd)
+	err = newCmd.Apply()
+	utils.PanicOnError(err)
+
+}
+
+func getCurrentOspfConfig() (*utils.VtyshOspfCmd, error) {
+
+	bash := utils.Bash{
+		Command: fmt.Sprintf("vtysh -c 'show running-config'"),
+	}
+	ret, output, _, err := bash.RunWithReturn()
+	if err != nil {
+		return nil, fmt.Errorf("execute vtysh command failed: %v", err)
+	}
+	if ret != 0 {
+		return nil, fmt.Errorf("vtysh command returned non-zero: %d", ret)
+	}
+
+	return parseRunningOspfConfig([]byte(output))
+}
+
+// this func is Parse the current configuration for return comparison
+func parseRunningOspfConfig(output []byte) (*utils.VtyshOspfCmd, error) {
+
+	var (
+		v     = utils.NewVtyshOspfCmd()
+		lines = strings.Split(string(output), "\n")
+
+		inOspfSection      bool
+		inInterfaceSection bool
+		currentInterface   string
+
+		routerIdRegex  = regexp.MustCompile(`ospf router-id ([0-9.]+)`)
+		networkRegex   = regexp.MustCompile(`network ([0-9./]+) area ([0-9.]+)`)
+		areaAuthRegex  = regexp.MustCompile(`area ([0-9.]+) authentication( message-digest)?`)
+		areaStubRegex  = regexp.MustCompile(`area ([0-9.]+) stub`)
+		interfaceRegex = regexp.MustCompile(`interface (.+)`)
+		authRegex      = regexp.MustCompile(`ip ospf authentication( message-digest)?`)
+		authKeyRegex   = regexp.MustCompile(`ip ospf authentication-key (.+)`)
+		md5KeyRegex    = regexp.MustCompile(`ip ospf message-digest-key (\d+) md5 (.+)`)
+
+		stubAreas = make(map[string]bool)
+	)
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if matches := areaStubRegex.FindStringSubmatch(line); len(matches) > 1 {
+			stubAreas[matches[1]] = true
+			v.SetArea(matches[1], "Stub", string(None))
 		}
 	}
-	for k, new := range newCmd.AreaCmd {
-		if old, ok := oldCmd.AreaCmd[k]; ok && new == old {
-			newCmd.DeleteArea(k)
-			oldCmd.DeleteArea(k)
+
+	if len(output) == 0 {
+		return nil, fmt.Errorf("empty configuration output")
+	}
+	//parse the configuration line by line
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+
+		//determine whether to enter the corresponding position
+		if strings.Contains(line, "router ospf") {
+			inOspfSection = true
+			inInterfaceSection = false
+			continue
+		}
+
+		if matches := interfaceRegex.FindStringSubmatch(line); len(matches) > 1 {
+			inOspfSection = false
+			inInterfaceSection = true
+			currentInterface = matches[1]
+			continue
+		}
+
+		if line == "exit" || line == "!" {
+			inOspfSection = false
+			inInterfaceSection = false
+			continue
+		}
+
+		// parse configuration
+		if inOspfSection {
+			if matches := routerIdRegex.FindStringSubmatch(line); len(matches) > 1 {
+				v.SetRouteId(matches[1])
+			}
+
+			if matches := networkRegex.FindStringSubmatch(line); len(matches) > 1 {
+				v.AddNetwork(matches[1], matches[2])
+			}
+
+			if matches := areaAuthRegex.FindStringSubmatch(line); len(matches) > 1 {
+				authType := "Plaintext"
+				if len(matches) > 2 && matches[2] != "" {
+					authType = "MD5"
+				}
+				areaType := ""
+				if stubAreas[matches[1]] {
+					areaType = "Stub"
+				}
+				v.SetArea(matches[1], areaType, authType)
+			}
+		}
+
+		if inInterfaceSection {
+			if matches := authRegex.FindStringSubmatch(line); len(matches) > 0 {
+				authType := "Plaintext"
+				if len(matches) > 1 && matches[1] != "" {
+					authType = "MD5"
+				}
+				v.SetInterface(currentInterface, authType, "1/1")
+			}
+
+			if matches := authKeyRegex.FindStringSubmatch(line); len(matches) > 1 {
+				v.SetInterface(currentInterface, "Plaintext", matches[1])
+			}
+
+			if matches := md5KeyRegex.FindStringSubmatch(line); len(matches) > 2 {
+				keyId := matches[1]
+				password := matches[2]
+				v.SetInterface(currentInterface, "MD5", fmt.Sprintf("%s/%s", keyId, password))
+			}
 		}
 	}
-	for k, new := range newCmd.IfaceCmd {
-		if old, ok := oldCmd.IfaceCmd[k]; ok && new == old {
+
+	return v, nil
+}
+
+func isOspfConfigEqual(old, new *utils.VtyshOspfCmd) bool {
+	if old == nil && new == nil {
+		return true
+	}
+
+	if old == nil || new == nil {
+		return false
+	}
+
+	// Compare Network config
+	if len(old.NetworkCmd) != len(new.NetworkCmd) {
+		return false
+	}
+	for k, oldNetwork := range old.NetworkCmd {
+		if oldNetwork != new.NetworkCmd[k] {
+			return false
+		}
+	}
+
+	// Compare Area
+	if len(old.AreaCmd) != len(new.AreaCmd) {
+		return false
+	}
+	for k, oldArea := range old.AreaCmd {
+		if newArea, exists := new.AreaCmd[k]; !exists || oldArea != newArea {
+			return false
+		}
+	}
+
+	// Compare interface config
+	if len(old.IfaceCmd) == 0 {
+		// If old.IfaceCmd is None, check whether all configurations of new.IfaceCmd are None.
+		allNone := true
+		for _, newIface := range new.IfaceCmd {
+			if newIface.Auth != "None" {
+				allNone = false
+				break
+			}
+		}
+		if allNone {
+			log.Debugf("all configurations of new.IfaceCmd are None")
+			return true
+		}
+	}
+
+	if len(old.IfaceCmd) != len(new.IfaceCmd) {
+		return false
+	}
+	for k, oldIface := range old.IfaceCmd {
+		if newIface, exists := new.IfaceCmd[k]; !exists || oldIface != newIface {
+			return false
+		}
+	}
+
+	return true
+}
+
+func configurePimdByVtysh(cmd *enablePimdCmd) error {
+
+	var (
+		oldCmd *utils.VtyshPimdCmd
+		newCmd *utils.VtyshPimdCmd
+		err    error
+	)
+
+	// 1. get current config
+	oldCmd, err = getCurrentPimdConfig()
+	if err != nil {
+		return err
+	}
+
+	// 2. create new config
+	newCmd = utils.NewVtyshPimdCmd()
+
+	// add interface config
+	nics, err := utils.GetAllNics()
+	if err != nil {
+		return err
+	}
+	for _, nic := range nics {
+		newCmd.SetInterface(nic.Name)
+	}
+
+	// add RP config
+	for _, rp := range cmd.Rps {
+		newCmd.SetRp(rp.RpAddress, rp.GroupAddress)
+	}
+
+	if isPimdConfigEqual(oldCmd, newCmd) {
+		return nil
+	}
+
+	// 3. delete same config
+	for k, new := range newCmd.InterfaceCmd {
+		if old, ok := oldCmd.InterfaceCmd[k]; ok && new == old {
 			newCmd.DeleteInterface(k)
 			oldCmd.DeleteInterface(k)
 		}
 	}
 
-	// 4. delete old cmd, and apply new cmd
-	log.Debugf("vtysh-ospf: start delete ospf cmd[%+v]", oldCmd)
-	err = oldCmd.Apply()
-	utils.PanicOnError(err)
-	log.Debugf("vtysh-ospf: start apply ospf cmd[%+v]", newCmd)
-	err = newCmd.Apply()
-	utils.PanicOnError(err)
+	for k, new := range newCmd.RpCmd {
+		if old, ok := oldCmd.RpCmd[k]; ok && new == old {
+			newCmd.DeleteRp(new.RpAddress, new.GroupAddress)
+			oldCmd.DeleteRp(old.RpAddress, old.GroupAddress)
+		}
+	}
 
-	// 5. store new cmd
-	tmp, err = parseOspfToVtyshCmd(cmd)
-	utils.PanicOnError(err)
-	err = utils.JsonStoreConfig(utils.GetOspfJsonFile(), tmp)
-	utils.PanicOnError(err)
+	// 4. apply config
+	log.Debugf("vtysh-pimd: start delete pimd cmd[%+v]", oldCmd)
+	oldCmd.SetDelete()
+	err = oldCmd.Apply()
+	if err != nil {
+		return err
+	}
+
+	log.Debugf("vtysh-pimd: start apply pimd cmd[%+v]", newCmd)
+	err = newCmd.Apply()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func getCurrentPimdConfig() (*utils.VtyshPimdCmd, error) {
+	bash := utils.Bash{
+		Command: fmt.Sprintf("vtysh -c 'show running-config'"),
+	}
+	ret, output, _, err := bash.RunWithReturn()
+	if err != nil {
+		return nil, fmt.Errorf("execute vtysh command failed: %v", err)
+	}
+	if ret != 0 {
+		return nil, fmt.Errorf("vtysh command returned non-zero: %d", ret)
+	}
+
+	return parseRunningPimdConfig([]byte(output))
+}
+
+func parseRunningPimdConfig(output []byte) (*utils.VtyshPimdCmd, error) {
+	var (
+		v     = utils.NewVtyshPimdCmd()
+		lines = strings.Split(string(output), "\n")
+
+		inInterfaceSection bool
+		currentInterface   string
+
+		interfaceRegex = regexp.MustCompile(`interface (.+)`)
+		rpRegex        = regexp.MustCompile(`ip pim rp ([0-9.]+) ([0-9./]+)`)
+		pimRegex       = regexp.MustCompile(`ip pim`)
+		igmpRegex      = regexp.MustCompile(`ip igmp`)
+	)
+
+	if len(output) == 0 {
+		return nil, fmt.Errorf("empty configuration output")
+	}
+
+	// parse the configuration line by line
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+
+		// determine whether to enter the corresponding position
+		if matches := interfaceRegex.FindStringSubmatch(line); len(matches) > 1 {
+			inInterfaceSection = true
+			currentInterface = matches[1]
+			continue
+		}
+
+		// ! is end
+		if strings.HasPrefix(line, "!") {
+			inInterfaceSection = false
+			continue
+		}
+
+		// parse interface config
+		if inInterfaceSection {
+			if pimRegex.MatchString(line) && igmpRegex.MatchString(line) {
+				v.SetInterface(currentInterface)
+			}
+			continue
+		}
+
+		// parse PR config
+		if matches := rpRegex.FindStringSubmatch(line); len(matches) > 1 {
+			v.SetRp(matches[1], matches[2])
+		}
+	}
+
+	return v, nil
+}
+
+func stopVtyshPimd() error {
+
+	deleteCmd := utils.NewVtyshPimdCmd()
+	deleteCmd.SetDelete()
+
+	// 1. get current config and delete
+	currentCmd, err := getCurrentPimdConfig()
+	if err != nil {
+		return fmt.Errorf("failed to get current PIMD config: %v", err)
+	}
+
+	for _, rp := range currentCmd.RpCmd {
+		deleteCmd.SetRp(rp.RpAddress, rp.GroupAddress)
+	}
+
+	// 2. get all nics and delete
+	nics, err := utils.GetAllNics()
+	if err != nil {
+		return fmt.Errorf("failed to get network interfaces: %v", err)
+	}
+
+	for _, nic := range nics {
+		deleteCmd.SetInterface(nic.Name)
+	}
+
+	// 3. no match return
+	if len(deleteCmd.InterfaceCmd) == 0 && len(deleteCmd.RpCmd) == 0 {
+		log.Debug("No PIMD configuration to remove")
+		return nil
+	}
+
+	// 4. Apply deletecmd
+	log.Debugf("Removing PIMD configuration: %+v", deleteCmd)
+	if err := deleteCmd.Apply(); err != nil {
+		return fmt.Errorf("failed to remove PIMD configuration: %v", err)
+	}
+
+	return nil
+}
+
+func isPimdConfigEqual(old, new *utils.VtyshPimdCmd) bool {
+
+	if old == nil && new == nil {
+		return true
+	}
+
+	if old == nil || new == nil {
+		return false
+	}
+
+	// compare Rp config
+	if len(old.RpCmd) != len(new.RpCmd) {
+		return false
+	}
+	oldRps := make(map[string]struct{})
+	for _, rp := range old.RpCmd {
+		key := fmt.Sprintf("%s-%s", rp.RpAddress, rp.GroupAddress)
+		oldRps[key] = struct{}{}
+	}
+	for _, rp := range new.RpCmd {
+		key := fmt.Sprintf("%s-%s", rp.RpAddress, rp.GroupAddress)
+		if _, exists := oldRps[key]; !exists {
+			return false
+		}
+	}
+
+	// Compare interface config
+	if len(old.InterfaceCmd) != len(new.InterfaceCmd) {
+		return false
+	}
+	oldIfaces := make(map[string]struct{})
+	for _, iface := range old.InterfaceCmd {
+		oldIfaces[iface.Name] = struct{}{}
+	}
+	for _, iface := range new.InterfaceCmd {
+		if _, exists := oldIfaces[iface.Name]; !exists {
+			return false
+		}
+	}
+
+	return true
 }

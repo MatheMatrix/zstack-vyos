@@ -276,7 +276,7 @@ func getFlowCounterByPmacct() []counter {
 
 func getFlowCounter(ctx *server.CommandContext) interface{} {
 	log.Debugf(fmt.Sprintf("start get flow counter: %v", ctx))
-	if utils.Kernel_version == utils.Kernel_5_4_80 {
+	if utils.Kernel_version == utils.Kernel_5_4_80 || utils.IsEuler2203() {
 		counters := getFlowCounterByPmacct()
 		return getFlowCounterRsp{Counters: counters}
 	}
