@@ -291,14 +291,21 @@ func enablePimdHandler(ctx *server.CommandContext) interface{} {
 		}
 		tree.Apply(false)
 	}
+  if !utils.IsEnableVyosCmd() {
+		err := configurePimdByVtysh(cmd)
+		if err != nil {
+			utils.PanicOnError(err)
+		}
+	} else {
+		/* generate pimd.conf */
+		changed := updatePimdConf(cmd)
+		restartPimd(changed)
 
-	/* generate pimd.conf */
-	changed := updatePimdConf(cmd)
-	restartPimd(changed)
+		writePimdHaScript(true)
 
+	}
+	//enable
 	pimdEnable = true
-
-	writePimdHaScript(true)
 
 	return nil
 }
@@ -338,12 +345,17 @@ func disablePimdHandler(ctx *server.CommandContext) interface{} {
 		}
 		tree.Apply(false)
 	}
-
-	stopPimd()
+  if !utils.IsEnableVyosCmd() {
+		err := stopVtyshPimd()
+		if err != nil {
+			utils.PanicOnError(err)
+		}
+	} else {
+		stopPimd()
+		writePimdHaScript(false)
+	}
 
 	pimdEnable = false
-
-	writePimdHaScript(false)
 
 	return nil
 }
