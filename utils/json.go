@@ -66,3 +66,11 @@ func JsonStoreConfig(filepath string, v interface{}) error {
 
 	return ioutil.WriteFile(filepath, []byte(content), 0664)
 }
+
+func JsonUnmarshal(msg []byte, v interface{}) (err error) {
+	err = json.Unmarshal(msg, v)
+	if err != nil {
+		return errors.Wrap(err, fmt.Sprintf("failed to unmarshal JSON: %s", string(msg)))
+	}
+	return nil
+}

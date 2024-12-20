@@ -44,6 +44,7 @@ func loadPlugins() {
 	plugin.PerformanceEntryPoint()
 	plugin.MiscEntryPoint()
 	plugin.InitStrongswanService()
+	plugin.PromtailEntryPoint()
 }
 
 func initPlugins() {
