@@ -511,10 +511,14 @@ func parseListenerPrameter(lb LbInfo) (map[string]interface{}, error) {
 	}
 
 	if lb.EnableStatsLog {
+		lbUuid := lb.LbUuid
+		if len(lbUuid) > 10 {
+			lbUuid = lb.LbUuid[len(lb.LbUuid)-10:]
+		}
 		if lb.Mode == "tcp" {
-			m["StatsLog"] = template.HTML("log-format \"" + lb.ListenerUuid + " %ci:%cp -> %fi:%fp -> %si:%sp %tsc %ac/%fc/%bc/%sc/%rc %sq/%bq %B %U %Tt %T\"")
+			m["StatsLog"] = template.HTML("log-format \"" + lbUuid + " " + lb.ListenerUuid + " %ci:%cp -> %fi:%fp -> %si:%sp %tsc %ac/%fc/%bc/%sc/%rc %sq/%bq %B %U %Tt %T\"")
 		} else if lb.Mode == "http" || lb.Mode == "https" {
-			m["StatsLog"] = template.HTML("log-format \"" + lb.ListenerUuid + " %ci:%cp -> %fi:%fp -> %si:%sp %hr %ST %TR/%Tw/%Tc/%Tr/%Tt %tsc %ac/%fc/%bc/%sc/%rc %sq/%bq %CC %CS %B %U %Tt %T\"")
+			m["StatsLog"] = template.HTML("log-format \"" + lbUuid + " " + lb.ListenerUuid + " %ci:%cp -> %fi:%fp -> %si:%sp %hr %ST %TR/%Tw/%Tc/%Tr/%Tt %tsc %ac/%fc/%bc/%sc/%rc %sq/%bq %CC %CS %B %U %Tt %T\"")
 		}
 	}
 
