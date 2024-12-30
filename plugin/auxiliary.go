@@ -422,12 +422,21 @@ func parseRunningOspfConfig(output []byte) (*utils.VtyshOspfCmd, error) {
 		routerIdRegex  = regexp.MustCompile(`ospf router-id ([0-9.]+)`)
 		networkRegex   = regexp.MustCompile(`network ([0-9./]+) area ([0-9.]+)`)
 		areaAuthRegex  = regexp.MustCompile(`area ([0-9.]+) authentication( message-digest)?`)
+		areaStubRegex  = regexp.MustCompile(`area ([0-9.]+) stub`)
 		interfaceRegex = regexp.MustCompile(`interface (.+)`)
 		authRegex      = regexp.MustCompile(`ip ospf authentication( message-digest)?`)
 		authKeyRegex   = regexp.MustCompile(`ip ospf authentication-key (.+)`)
 		md5KeyRegex    = regexp.MustCompile(`ip ospf message-digest-key (\d+) md5 (.+)`)
+		
+		stubAreas = make(map[string]bool)
 	)
-
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if matches := areaStubRegex.FindStringSubmatch(line); len(matches) > 1 {
+			stubAreas[matches[1]] = true
+		}
+	}
+	
 	if len(output) == 0 {
 		return nil, fmt.Errorf("empty configuration output")
 	}
@@ -470,7 +479,11 @@ func parseRunningOspfConfig(output []byte) (*utils.VtyshOspfCmd, error) {
 				if len(matches) > 2 && matches[2] != "" {
 					authType = "MD5"
 				}
-				v.SetArea(matches[1], "", authType)
+				areaType := ""
+				if stubAreas[matches[1]] {
+					areaType = "Stub"
+				}
+				v.SetArea(matches[1], areaType, authType)
 			}
 		}
 
@@ -571,7 +584,7 @@ func configurePimdByVtysh(cmd *enablePimdCmd) error {
 		newCmd.SetRp(rp.RpAddress, rp.GroupAddress)
 	}
   
-  if isPimdConfigEqual(oldCmd, newCmd) {
+	if isPimdConfigEqual(oldCmd, newCmd) {
 		return nil
 	}
 
