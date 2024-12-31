@@ -192,7 +192,12 @@ func getUacctdPid() int {
 func setupFlowIpTablesForEuler(nics []string, enable bool) {
 	// create new chain for netflow
 	bash := utils.Bash{
-		Command: fmt.Sprintf("iptables -t raw -N netflow 2>/dev/null || true;iptables -t raw -A PREROUTING -j netflow 2>/dev/null || true"),
+		Command: `
+        iptables -t raw -N netflow 2>/dev/null || true
+        if ! iptables -t raw -L PREROUTING -v -n | grep -q "netflow"; then
+            iptables -t raw -A PREROUTING -j netflow
+        fi
+    `,
 	}
 	err := bash.Run()
 	if err != nil {
@@ -202,7 +207,10 @@ func setupFlowIpTablesForEuler(nics []string, enable bool) {
 		bash := utils.Bash{
 			Command: fmt.Sprintf("iptables -t raw -F netflow; iptables -t raw -D PREROUTING -j netflow; iptables -t raw -X netflow"),
 		}
-		bash.Run()
+		err = bash.Run()
+		if err != nil {
+			utils.PanicOnError(err)
+		}
 		return
 	}
 	var cmds []string
