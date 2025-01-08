@@ -125,7 +125,7 @@ func setupFlowIpTablesForKernel3(nics []string, enable bool) {
 	err := bash.Run()
 	if err != nil {
 		utils.PanicOnError(err)
-  }
+	}
 }
 
 func setupFlowIpTablesForKernel5_4_80(nics []string, enable bool) {
@@ -214,8 +214,10 @@ func setupFlowIpTablesForEuler(nics []string, enable bool) {
 		return
 	}
 	var cmds []string
+	cmd := fmt.Sprintf("iptables -t raw -F netflow")
+	cmds = append(cmds, cmd)
 	for _, nicName := range nics {
-		cmd := fmt.Sprintf(
+		cmd = fmt.Sprintf(
 			"iptables -t raw -C netflow -i %s -j NFLOG --nflog-group 2 --nflog-size 64 --nflog-threshold 10 || "+
 				"iptables -t raw -I netflow -i %s -j NFLOG --nflog-group 2 --nflog-size 64 --nflog-threshold 10",
 			nicName, nicName)
