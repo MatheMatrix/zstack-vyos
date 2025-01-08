@@ -375,6 +375,7 @@ func configureOspfByVtysh(cmd *setOspfCmd) {
 	utils.PanicOnError(err)
 
 	if isOspfConfigEqual(oldCmd, newCmd) {
+		log.Debugf("ospf config is equal")
 		return
 	}
 
@@ -427,16 +428,17 @@ func parseRunningOspfConfig(output []byte) (*utils.VtyshOspfCmd, error) {
 		authRegex      = regexp.MustCompile(`ip ospf authentication( message-digest)?`)
 		authKeyRegex   = regexp.MustCompile(`ip ospf authentication-key (.+)`)
 		md5KeyRegex    = regexp.MustCompile(`ip ospf message-digest-key (\d+) md5 (.+)`)
-		
+
 		stubAreas = make(map[string]bool)
 	)
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if matches := areaStubRegex.FindStringSubmatch(line); len(matches) > 1 {
 			stubAreas[matches[1]] = true
+			v.SetArea(matches[1], "Stub", string(None))
 		}
 	}
-	
+
 	if len(output) == 0 {
 		return nil, fmt.Errorf("empty configuration output")
 	}
@@ -541,6 +543,21 @@ func isOspfConfigEqual(old, new *utils.VtyshOspfCmd) bool {
 	}
 
 	// Compare interface config
+	if len(old.IfaceCmd) == 0 {
+		// If old.IfaceCmd is None, check whether all configurations of new.IfaceCmd are None.
+		allNone := true
+		for _, newIface := range new.IfaceCmd {
+			if newIface.Auth != "None" {
+				allNone = false
+				break
+			}
+		}
+		if allNone {
+			log.Debugf("all configurations of new.IfaceCmd are None")
+			return true
+		}
+	}
+
 	if len(old.IfaceCmd) != len(new.IfaceCmd) {
 		return false
 	}
@@ -583,7 +600,7 @@ func configurePimdByVtysh(cmd *enablePimdCmd) error {
 	for _, rp := range cmd.Rps {
 		newCmd.SetRp(rp.RpAddress, rp.GroupAddress)
 	}
-  
+
 	if isPimdConfigEqual(oldCmd, newCmd) {
 		return nil
 	}
