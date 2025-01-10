@@ -645,10 +645,11 @@ func addAclRules(table *utils.IpTables, fs *IpvsFrontendService, nicname string,
 	}
 
 	// create new chain
-	chainName := fmt.Sprintf("acl-rules@%s", nicname)
+	chainName := fmt.Sprintf("acl-rules@%s@%v", nicname, fs.FrontPort)
 	table.AddChain(chainName)
-	rule := utils.NewIpTableRule(utils.GetRuleSetName(nicname, utils.RULESET_IN))
-	rule.SetAction(chainName).SetInNic(nicname).SetProto(proto).SetComment(utils.IpvsComment).SetPriority(1)
+	rule := utils.NewIpTableRule(utils.GetRuleSetName(nicname, utils.RULESET_LOCAL))
+	// Make sure this firewall rule is positioned at the top
+	rule.SetAction(chainName).SetInNic(nicname).SetProto(proto).SetComment(utils.IpvsComment).SetDstPort(fs.FrontPort).SetPriority(-1)
 	rules = append(rules, rule)
 
 	// Basic rules for blacklist and whitelist
@@ -660,7 +661,16 @@ func addAclRules(table *utils.IpTables, fs *IpvsFrontendService, nicname string,
 		} else {
 			rule.SetAction(utils.IPTABLES_ACTION_ACCEPT)
 		}
-		rule.SetSrcIp(entry)
+		if strings.Contains(entry, "-") {
+			ipRange := strings.Split(entry, "-")
+			if len(ipRange) == 2 {
+				startIP := ipRange[0]
+				endIP := ipRange[1]
+				rule.SetSrcIpRange(fmt.Sprintf("%s-%s", startIP, endIP))
+			}
+		} else {
+			rule.SetSrcIp(entry)
+		}
 		rules = append(rules, rule)
 	}
 
