@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	PROMTAIL_CONFIG_PATH = "/promtail/config"
-	PROMTAIL_CONFIG      = "promtail-config.yaml"
+	PROMTAIL_CONFIG_PATH     = "/promtail/config"
+	PROMTAIL_CONFIG          = "promtail-config.yaml"
+	PROMTAIL_TEMPLATE_CONFIG = "promtail-config.template.yaml"
 )
 
 func getPromtailRootPath() string {
@@ -51,9 +52,23 @@ func promtailConfigHandler(ctx *server.CommandContext) interface{} {
 	}
 
 	PROMTAIL_CONFIG_PATH := filepath.Join(getPromtailRootPath(), PROMTAIL_CONFIG)
+	PROMTAIL_TEMPLATE_CONFIG_PATH := filepath.Join(getPromtailRootPath(), PROMTAIL_TEMPLATE_CONFIG)
 	lokiURL := fmt.Sprintf("http://%s:3100/loki/api/v1/push", cmd.LogTarget)
 
 	if cmd.Enable {
+		if _, err := os.Stat(PROMTAIL_CONFIG_PATH); os.IsNotExist(err) {
+			log.Warnf("Promtail config file not found: %s", PROMTAIL_CONFIG_PATH)
+			if _, err := os.Stat(PROMTAIL_TEMPLATE_CONFIG_PATH); os.IsNotExist(err) {
+				log.Warnf("Promtail config template not found: %s. Using default behavior.", PROMTAIL_TEMPLATE_CONFIG_PATH)
+			} else {
+				log.Infof("Copying template config from %s to %s", PROMTAIL_TEMPLATE_CONFIG_PATH, PROMTAIL_CONFIG_PATH)
+				err := utils.CopyFile(PROMTAIL_TEMPLATE_CONFIG_PATH, PROMTAIL_CONFIG_PATH)
+				if err != nil {
+					log.Errorf("Failed to copy template config: %+v", err)
+					return nil
+				}
+			}
+		}
 		configData, err := os.ReadFile(PROMTAIL_CONFIG_PATH)
 		if err != nil {
 			log.Errorf("Failed to read promtail config file: %+v", err)
