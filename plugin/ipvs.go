@@ -703,6 +703,7 @@ func RefreshIpvsBackend() error {
 			// parse ACL config
 			var aclType string
 			var aclEntries []string
+			enableAcl := false
 			for _, param := range listener.Parameters {
 				parts := strings.Split(param, "::")
 				if len(parts) != 2 {
@@ -712,8 +713,8 @@ func RefreshIpvsBackend() error {
 				switch parts[0] {
 				case "accessControlStatus":
 					// Acl are processed only when accessControlStatus is enabled
-					if parts[1] != "enable" {
-						continue
+					if parts[1] == "enable" {
+						enableAcl = true
 					}
 				case "aclType":
 					aclType = parts[1]
@@ -727,14 +728,19 @@ func RefreshIpvsBackend() error {
 			if listener.Vip != "" {
 				fs4 = NewIpvsFrontService(listener, lbParam, listener.Vip, map[string]*IpvsBackendServer{})
 				services[fs4.getFrontendServiceKey()] = fs4
-				fs4.AclType = aclType
-				fs4.AclEntry = aclEntries
+				if enableAcl {
+					fs4.AclType = aclType
+					fs4.AclEntry = aclEntries
+				}
 			}
+
 			if listener.Vip6 != "" {
 				fs6 = NewIpvsFrontService(listener, lbParam, listener.Vip6, map[string]*IpvsBackendServer{})
 				services[fs6.getFrontendServiceKey()] = fs6
-				fs6.AclType = aclType
-				fs6.AclEntry = aclEntries
+				if enableAcl {
+					fs6.AclType = aclType
+					fs6.AclEntry = aclEntries
+				}
 			}
 
 			for _, sg := range listener.ServerGroups {
