@@ -39,6 +39,6 @@ scrape_configs:
           # frontend_connections:    # 前端并发连接数 same with active_connections
           backend_connections:       # 后端并发连接数
           # server_connections:      # 后端当前连接数
-          retries_count:             # 重试次数
-          http_time:                 # HTTP处理时间
-          timestamp:                 # 时间戳
+          # retries_count:           # 重试次数
+          # http_time:               # HTTP处理时间
+          # timestamp:               # 时间戳
