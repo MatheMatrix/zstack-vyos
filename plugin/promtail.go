@@ -169,6 +169,15 @@ func promtailConfigHandler(ctx *server.CommandContext) interface{} {
 		} else {
 			log.Infof("Promtail disabled at boot successfully")
 		}
+		if err := os.Remove(PROMTAIL_CONFIG_PATH); err != nil {
+			if os.IsNotExist(err) {
+				log.Warnf("Promtail config file already deleted: %s", PROMTAIL_CONFIG_PATH)
+			} else {
+				log.Errorf("Failed to delete promtail config file: %+v", err)
+			}
+		} else {
+			log.Infof("Promtail config file deleted: %s", PROMTAIL_CONFIG_PATH)
+		}
 	}
 
 	return nil
