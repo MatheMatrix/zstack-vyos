@@ -629,11 +629,10 @@ func refreshIpvsFirewallRuleByIptables(services map[string]*IpvsFrontendService)
 			rules = append(rules, addAclRules(table, fs, nicname, proto)...)
 		}
 	}
-	if len(rules) == 0 {
-		return nil
+	if len(rules) != 0 {
+		table.AddIpTableRules(rules)
 	}
 	log.Debugf("all rules list are %s", rules)
-	table.AddIpTableRules(rules)
 	return table.Apply()
 }
 
