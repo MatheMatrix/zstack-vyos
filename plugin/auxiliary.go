@@ -340,19 +340,14 @@ func SetZebraRoutes(infos []RouteInfo) {
 }
 
 func parseOspfToVtyshCmd(cmd *setOspfCmd) (*utils.VtyshOspfCmd, error) {
-	var (
-		v       *utils.VtyshOspfCmd
-		nicName string
-		err     error
-	)
-
-	v = utils.NewVtyshOspfCmd().SetRouteId(cmd.RouterId)
+	v := utils.NewVtyshOspfCmd().SetRouteId(cmd.RouterId)
 	for _, area := range cmd.AreaInfos {
 		v.SetArea(area.AreaId, string(area.AreaType), string(area.AuthType))
 	}
 	for _, net := range cmd.NetworkInfos {
-		v.SetNetwork(net.Network, net.AreaId)
-		if nicName, err = utils.GetNicNameByMac(net.NicMac); err != nil {
+		v.AddNetwork(net.Network, net.AreaId)
+		nicName, err := utils.GetNicNameByMac(net.NicMac)
+		if err != nil {
 			return nil, err
 		}
 		for _, area := range cmd.AreaInfos {
@@ -361,7 +356,6 @@ func parseOspfToVtyshCmd(cmd *setOspfCmd) (*utils.VtyshOspfCmd, error) {
 			}
 		}
 	}
-
 	return v, nil
 }
 
@@ -384,33 +378,23 @@ func configureOspfByVtysh(cmd *setOspfCmd) {
 		return
 	}
 
-	// 3. delete the same cmd in new and old
-	for k, new := range newCmd.NetworkCmd {
-		if old, ok := oldCmd.NetworkCmd[k]; ok && new == old {
-			newCmd.DeleteNetwork(k)
-			oldCmd.DeleteNetwork(k)
-		}
-	}
-	for k, new := range newCmd.AreaCmd {
-		if old, ok := oldCmd.AreaCmd[k]; ok && new == old {
-			newCmd.DeleteArea(k)
-			oldCmd.DeleteArea(k)
-		}
-	}
-	for k, new := range newCmd.IfaceCmd {
-		if old, ok := oldCmd.IfaceCmd[k]; ok && new == old {
-			newCmd.DeleteInterface(k)
-			oldCmd.DeleteInterface(k)
-		}
+	if isOspfConfigEqual(oldCmd, newCmd) {
+		log.Debugf("ospf config is equal")
+		return
 	}
 
+	// 3. delete the same cmd in new and old
+	oldCmd.SetDelete()
+
 	// 4. delete old cmd, and apply new cmd
-	log.Debugf("vtysh-ospf: start delete ospf cmd[%+v]", oldCmd)
+	log.Debugf("vtysh-ospf: start delete all old ospf config[%+v]", oldCmd)
 	err = oldCmd.Apply()
 	utils.PanicOnError(err)
-	log.Debugf("vtysh-ospf: start apply ospf cmd[%+v]", newCmd)
+
+	log.Debugf("vtysh-ospf: start apply new ospf config[%+v]", newCmd)
 	err = newCmd.Apply()
 	utils.PanicOnError(err)
+
 }
 
 func getCurrentOspfConfig() (*utils.VtyshOspfCmd, error) {
@@ -426,11 +410,11 @@ func getCurrentOspfConfig() (*utils.VtyshOspfCmd, error) {
 		return nil, fmt.Errorf("vtysh command returned non-zero: %d", ret)
 	}
 
-	return parseRunningConfig([]byte(output))
+	return parseRunningOspfConfig([]byte(output))
 }
 
 // this func is Parse the current configuration for return comparison
-func parseRunningConfig(output []byte) (*utils.VtyshOspfCmd, error) {
+func parseRunningOspfConfig(output []byte) (*utils.VtyshOspfCmd, error) {
 
 	var (
 		v     = utils.NewVtyshOspfCmd()
@@ -442,12 +426,22 @@ func parseRunningConfig(output []byte) (*utils.VtyshOspfCmd, error) {
 
 		routerIdRegex  = regexp.MustCompile(`ospf router-id ([0-9.]+)`)
 		networkRegex   = regexp.MustCompile(`network ([0-9./]+) area ([0-9.]+)`)
-		areaRegex      = regexp.MustCompile(`area ([0-9.]+) (normal|stub|nssa)`)
-		areaAuthRegex  = regexp.MustCompile(`area ([0-9.]+) authentication (simple|md5)`)
+		areaAuthRegex  = regexp.MustCompile(`area ([0-9.]+) authentication( message-digest)?`)
+		areaStubRegex  = regexp.MustCompile(`area ([0-9.]+) stub`)
 		interfaceRegex = regexp.MustCompile(`interface (.+)`)
-		authTypeRegex  = regexp.MustCompile(`ip ospf authentication (simple|md5)`)
-		authParamRegex = regexp.MustCompile(`ip ospf authentication-key (.+)`)
+		authRegex      = regexp.MustCompile(`ip ospf authentication( message-digest)?`)
+		authKeyRegex   = regexp.MustCompile(`ip ospf authentication-key (.+)`)
+		md5KeyRegex    = regexp.MustCompile(`ip ospf message-digest-key (\d+) md5 (.+)`)
+
+		stubAreas = make(map[string]bool)
 	)
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if matches := areaStubRegex.FindStringSubmatch(line); len(matches) > 1 {
+			stubAreas[matches[1]] = true
+			v.SetArea(matches[1], "Stub", string(None))
+		}
+	}
 
 	if len(output) == 0 {
 		return nil, fmt.Errorf("empty configuration output")
@@ -459,6 +453,7 @@ func parseRunningConfig(output []byte) (*utils.VtyshOspfCmd, error) {
 		//determine whether to enter the corresponding position
 		if strings.Contains(line, "router ospf") {
 			inOspfSection = true
+			inInterfaceSection = false
 			continue
 		}
 
@@ -469,8 +464,7 @@ func parseRunningConfig(output []byte) (*utils.VtyshOspfCmd, error) {
 			continue
 		}
 
-		//! is end
-		if strings.HasPrefix(line, "!") {
+		if line == "exit" || line == "!" {
 			inOspfSection = false
 			inInterfaceSection = false
 			continue
@@ -483,25 +477,39 @@ func parseRunningConfig(output []byte) (*utils.VtyshOspfCmd, error) {
 			}
 
 			if matches := networkRegex.FindStringSubmatch(line); len(matches) > 1 {
-				v.SetNetwork(matches[1], matches[2])
+				v.AddNetwork(matches[1], matches[2])
 			}
 
-			if matches := areaRegex.FindStringSubmatch(line); len(matches) > 1 {
-				if authMatches := areaAuthRegex.FindStringSubmatch(line); len(authMatches) > 1 {
-					v.SetArea(matches[1], matches[2], authMatches[2])
-				} else {
-					v.SetArea(matches[1], matches[2], "")
+			if matches := areaAuthRegex.FindStringSubmatch(line); len(matches) > 1 {
+				authType := "Plaintext"
+				if len(matches) > 2 && matches[2] != "" {
+					authType = "MD5"
 				}
+				areaType := ""
+				if stubAreas[matches[1]] {
+					areaType = "Stub"
+				}
+				v.SetArea(matches[1], areaType, authType)
 			}
 		}
 
 		if inInterfaceSection {
-			if matches := authTypeRegex.FindStringSubmatch(line); len(matches) > 1 {
-				authParam := ""
-				if paramMatches := authParamRegex.FindStringSubmatch(line); len(paramMatches) > 1 {
-					authParam = paramMatches[1]
+			if matches := authRegex.FindStringSubmatch(line); len(matches) > 0 {
+				authType := "Plaintext"
+				if len(matches) > 1 && matches[1] != "" {
+					authType = "MD5"
 				}
-				v.SetInterface(currentInterface, matches[1], authParam)
+				v.SetInterface(currentInterface, authType, "1/1")
+			}
+
+			if matches := authKeyRegex.FindStringSubmatch(line); len(matches) > 1 {
+				v.SetInterface(currentInterface, "Plaintext", matches[1])
+			}
+
+			if matches := md5KeyRegex.FindStringSubmatch(line); len(matches) > 2 {
+				keyId := matches[1]
+				password := matches[2]
+				v.SetInterface(currentInterface, "MD5", fmt.Sprintf("%s/%s", keyId, password))
 			}
 		}
 	}
@@ -523,7 +531,7 @@ func isOspfConfigEqual(old, new *utils.VtyshOspfCmd) bool {
 		return false
 	}
 	for k, oldNetwork := range old.NetworkCmd {
-		if newNetwork, exists := new.NetworkCmd[k]; !exists || oldNetwork != newNetwork {
+		if oldNetwork != new.NetworkCmd[k] {
 			return false
 		}
 	}
@@ -539,6 +547,21 @@ func isOspfConfigEqual(old, new *utils.VtyshOspfCmd) bool {
 	}
 
 	// Compare interface config
+	if len(old.IfaceCmd) == 0 {
+		// If old.IfaceCmd is None, check whether all configurations of new.IfaceCmd are None.
+		allNone := true
+		for _, newIface := range new.IfaceCmd {
+			if newIface.Auth != "None" {
+				allNone = false
+				break
+			}
+		}
+		if allNone {
+			log.Debugf("all configurations of new.IfaceCmd are None")
+			return true
+		}
+	}
+
 	if len(old.IfaceCmd) != len(new.IfaceCmd) {
 		return false
 	}
@@ -581,8 +604,8 @@ func configurePimdByVtysh(cmd *enablePimdCmd) error {
 	for _, rp := range cmd.Rps {
 		newCmd.SetRp(rp.RpAddress, rp.GroupAddress)
 	}
-  
-  if isPimdConfigEqual(oldCmd, newCmd) {
+
+	if isPimdConfigEqual(oldCmd, newCmd) {
 		return nil
 	}
 

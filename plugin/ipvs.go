@@ -135,6 +135,9 @@ type IpvsFrontendService struct {
 	FrontPort      string
 	SessionNumber  uint64
 
+	AclType  string   // "black" or "white"
+	AclEntry []string // List of IP addresses or CIDR ranges
+
 	BackendServers map[string]*IpvsBackendServer
 	LbInfo
 	LbParams
@@ -518,6 +521,10 @@ func refreshIpvsFirewallRuleByVyos(services map[string]*IpvsFrontendService) err
 				)
 			}
 		}
+		if fs.AclType != "" && len(fs.AclEntry) > 0 {
+			err := fmt.Errorf("can not set UDP Load Balancer ACL on VyOS;please upgrade to ZStack Euler VRouter image")
+			utils.PanicOnError(err)
+		}
 	}
 
 	if changed {
@@ -618,14 +625,67 @@ func refreshIpvsFirewallRuleByIptables(services map[string]*IpvsFrontendService)
 			rule.SetSrcIp(bs.BackendIp).SetSrcPort(bs.BackendPort).SetProto(proto)
 			rules = append(rules, rule)
 		}
+		if fs.AclType != "" && len(fs.AclEntry) > 0 {
+			rules = append(rules, addAclRules(table, fs, nicname, proto)...)
+		}
 	}
-
-	if len(rules) == 0 {
-		return nil
+	if len(rules) != 0 {
+		table.AddIpTableRules(rules)
 	}
-
-	table.AddIpTableRules(rules)
+	log.Debugf("all rules list are %s", rules)
 	return table.Apply()
+}
+
+func addAclRules(table *utils.IpTables, fs *IpvsFrontendService, nicname string, proto string) []*utils.IpTableRule {
+	var rules []*utils.IpTableRule
+
+	if fs.AclType == "" || len(fs.AclEntry) == 0 {
+		return rules
+	}
+
+	// create new chain
+	chainName := fmt.Sprintf("acl-rules@%s@%v", nicname, fs.FrontPort)
+	table.AddChain(chainName)
+	rule := utils.NewIpTableRule(utils.GetRuleSetName(nicname, utils.RULESET_LOCAL))
+	// Make sure this firewall rule is positioned at the top
+	rule.SetAction(chainName).SetInNic(nicname).SetProto(proto).SetComment(utils.IpvsComment).SetDstPort(fs.FrontPort).SetPriority(-1)
+	rules = append(rules, rule)
+
+	// Basic rules for blacklist and whitelist
+	for _, entry := range fs.AclEntry {
+		rule := utils.NewIpTableRule(chainName)
+		rule.SetDstIp(fs.FrontIp).SetDstPort(fs.FrontPort).SetProto(proto).SetComment(utils.IpvsComment)
+		if fs.AclType == "black" {
+			rule.SetAction(utils.IPTABLES_ACTION_REJECT).SetRejectType(utils.REJECT_TYPE_ICMP_UNREACHABLE)
+		} else {
+			rule.SetAction(utils.IPTABLES_ACTION_ACCEPT)
+		}
+		if strings.Contains(entry, "-") {
+			ipRange := strings.Split(entry, "-")
+			if len(ipRange) == 2 {
+				startIP := ipRange[0]
+				endIP := ipRange[1]
+				rule.SetSrcIpRange(fmt.Sprintf("%s-%s", startIP, endIP))
+			}
+		} else {
+			rule.SetSrcIp(entry)
+		}
+		rules = append(rules, rule)
+	}
+
+	// For the whitelist, add the default rejection rule
+	if fs.AclType == "white" {
+		rule := utils.NewIpTableRule(chainName)
+		rule.SetDstIp(fs.FrontIp).SetDstPort(fs.FrontPort).SetProto(proto).SetComment(utils.IpvsComment)
+		rule.SetAction(utils.IPTABLES_ACTION_REJECT).SetRejectType(utils.REJECT_TYPE_ICMP_UNREACHABLE)
+		rules = append(rules, rule)
+	}
+
+	rule = utils.NewIpTableRule(chainName)
+	rule.SetAction(utils.IPTABLES_ACTION_RETURN).SetComment(utils.IpvsComment)
+	rules = append(rules, rule)
+
+	return rules
 }
 
 func RefreshIpvsBackend() error {
@@ -639,14 +699,47 @@ func RefreshIpvsBackend() error {
 
 			lbParam := ParseLbParams(listener)
 
+			// parse ACL config
+			var aclType string
+			var aclEntries []string
+			enableAcl := false
+			for _, param := range listener.Parameters {
+				parts := strings.Split(param, "::")
+				if len(parts) != 2 {
+					continue
+				}
+
+				switch parts[0] {
+				case "accessControlStatus":
+					// Acl are processed only when accessControlStatus is enabled
+					if parts[1] == "enable" {
+						enableAcl = true
+					}
+				case "aclType":
+					aclType = parts[1]
+				case "aclEntry":
+					// If multiple IP addresses are separated by commas (,), split them
+					aclEntries = strings.Split(parts[1], ",")
+				}
+			}
+
 			var fs4, fs6 *IpvsFrontendService
 			if listener.Vip != "" {
 				fs4 = NewIpvsFrontService(listener, lbParam, listener.Vip, map[string]*IpvsBackendServer{})
 				services[fs4.getFrontendServiceKey()] = fs4
+				if enableAcl {
+					fs4.AclType = aclType
+					fs4.AclEntry = aclEntries
+				}
 			}
+
 			if listener.Vip6 != "" {
 				fs6 = NewIpvsFrontService(listener, lbParam, listener.Vip6, map[string]*IpvsBackendServer{})
 				services[fs6.getFrontendServiceKey()] = fs6
+				if enableAcl {
+					fs6.AclType = aclType
+					fs6.AclEntry = aclEntries
+				}
 			}
 
 			for _, sg := range listener.ServerGroups {

@@ -65,6 +65,19 @@ type getOspfNeighborRsp struct {
 	Neighbors []neighbor `json:"neighbors"`
 }
 
+type ospfNeighbor struct {
+	Id              string
+	Priority        string
+	State           string
+	uptime          string
+	DeadTime        string
+	NeighborAddress string
+	Device          string
+	RXmtL           string
+	RqstL           string
+	DBsmL           string
+}
+
 type protocol interface {
 	init(*server.VyosConfigTree) (err error)
 	setRouterId() (err error)
@@ -355,6 +368,7 @@ func refreshOspf(ctx *server.CommandContext) interface{} {
 
 func parseNeighbor(input string) ([]neighbor, error) {
 	neighbors := make([]neighbor, 0, 50)
+	var newneighbor ospfNeighbor
 
 	if input == "" {
 		return neighbors, nil
@@ -369,30 +383,56 @@ func parseNeighbor(input string) ([]neighbor, error) {
 			log.Debugf(fmt.Sprintf("rows: %v row:%v columns:%v", rows, row, len(columns)))
 
 			return nil, errors.Errorf("invalid neighbor string: %s", input)
+		} else if utils.IsEuler2203() {
+			newneighbor = ospfNeighbor{
+				Id:              columns[0],
+				Priority:        columns[1],
+				State:           columns[2],
+				uptime:          columns[3],
+				DeadTime:        columns[4],
+				NeighborAddress: columns[5],
+				Device:          columns[6],
+				RXmtL:           columns[7],
+				RqstL:           columns[8],
+				DBsmL:           columns[9],
+			}
+		} else {
+			newneighbor = ospfNeighbor{
+				Id:              columns[0],
+				Priority:        columns[1],
+				State:           columns[2],
+				DeadTime:        columns[3],
+				NeighborAddress: columns[4],
+				Device:          columns[5],
+				RXmtL:           columns[6],
+				RqstL:           columns[7],
+				DBsmL:           columns[8],
+			}
 		}
-
-		neighbors = append(neighbors, neighbor{Id: columns[0], Priority: columns[1], State: columns[2],
-			DeadTime: columns[3], NeighborAddress: columns[4], Device: columns[5]})
+		neighbors = append(neighbors, neighbor{Id: newneighbor.Id, Priority: newneighbor.Priority, State: newneighbor.State,
+			DeadTime: newneighbor.DeadTime, NeighborAddress: newneighbor.NeighborAddress, Device: newneighbor.Device})
 	}
 	return neighbors, nil
 }
 
-/*testneighbors :=  []neighbor{
-	neighbor{
-		Id:"1.1.1.1",
-		Priority:"5",
-		State:"Full/DR",
-		DeadTime:"40.88s",
-		NeighborAddress:"192.168.251.244",
-		Device:"eth2:192.168.251.12"},
-	neighbor{
-		Id:"1.1.2.1",
-		Priority:"5",
-		State:"Full/Backup",
-		DeadTime:"40.88s",
-		NeighborAddress:"192.168.252.244",
-		Device:"eth2:192.168.252.18"},
-}*/
+/*
+	testneighbors :=  []neighbor{
+		neighbor{
+			Id:"1.1.1.1",
+			Priority:"5",
+			State:"Full/DR",
+			DeadTime:"40.88s",
+			NeighborAddress:"192.168.251.244",
+			Device:"eth2:192.168.251.12"},
+		neighbor{
+			Id:"1.1.2.1",
+			Priority:"5",
+			State:"Full/Backup",
+			DeadTime:"40.88s",
+			NeighborAddress:"192.168.252.244",
+			Device:"eth2:192.168.252.18"},
+	}
+*/
 func getNeighbors(ctx *server.CommandContext) interface{} {
 	bash := utils.Bash{
 		Command: fmt.Sprintf("vtysh -c 'show ip ospf neighbor' | tail -n +3; vtysh -c 'show ip ospf neighbor' >/dev/null"),
