@@ -1106,7 +1106,10 @@ func startIpvsHealthCheckPidMon() {
 	})
 	log.Debugf("created ipvs health check PidMon")
 	err = ipvsHealthCheckPidMon.Start()
-	utils.PanicOnError(err)
+	//utils.PanicOnError(err)
+	if err != nil {
+		log.Warnf("failed to start ipvs health check PidMon: %v", err)
+	}
 }
 
 func InitIpvs() {
