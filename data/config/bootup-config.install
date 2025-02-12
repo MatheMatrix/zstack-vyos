@@ -2,63 +2,63 @@
 # this files for all archs
 # format: [source file]  [dst file]  [file mode]  [file owner]
 #
-sysctl.conf             /etc/sysctl.conf                            0644     root:root
-cpu-monitor             /etc/logrotate.d/cpu-monitor                0644     root:root
-mail-monitor            /etc/logrotate.d/mail-monitor               0644     root:root
-conntrackd.conf         /etc/conntrackd/conntrackd.conf             0644     root:root
-healthcheck.sh          /usr/share/healthcheck.sh                   0755     __USER__:users
-sshd.sh                 __ZVR_ROOT_PATH__/ssh/sshd.sh               0755     __USER__:users
-rsyslog.sh              __ZVR_ROOT_PATH__/ssh/rsyslog.sh            0755     __USER__:users
-zvr-monitor.sh          __ZVR_ROOT_PATH__/ssh/zvr-monitor.sh        0755     __USER__:users
-zvr-reboot.sh           __ZVR_ROOT_PATH__/ssh/zvr-reboot.sh         0755     __USER__:users
-file-monitor.sh         __ZVR_ROOT_PATH__/ssh/file-monitor.sh       0755     __USER__:users
-ipsec.sh                __ZVR_ROOT_PATH__/keepalived/temp/ipsec.sh  0755     __USER__:users
-version                 __ZVR_ROOT_PATH__/version                   0644     __USER__:users
-zsn-crontab.sh          /usr/local/zstack/zsn-agent/bin/zsn-crontab.sh        0755     __USER__:users
-zstack-virtualrouteragent        /etc/init.d/zstack-virtualrouteragent        0755     root:root
+sysctl.conf                /etc/sysctl.conf                                0644     root:root
+cpu-monitor                /etc/logrotate.d/cpu-monitor                    0644     root:root
+mail-monitor               /etc/logrotate.d/mail-monitor                   0644     root:root
+conntrackd.conf            /etc/conntrackd/conntrackd.conf                 0644     root:root
+healthcheck.sh             /usr/share/healthcheck.sh                       0755     __USER__:users
+sshd.sh                    __ZVR_ROOT_PATH__/ssh/sshd.sh                   0755     __USER__:users
+rsyslog.sh                 __ZVR_ROOT_PATH__/ssh/rsyslog.sh                0755     __USER__:users
+zvr-monitor.sh             __ZVR_ROOT_PATH__/ssh/zvr-monitor.sh            0755     __USER__:users
+zvr-reboot.sh              __ZVR_ROOT_PATH__/ssh/zvr-reboot.sh             0755     __USER__:users
+file-monitor.sh            __ZVR_ROOT_PATH__/ssh/file-monitor.sh           0755     __USER__:users
+ipsec.sh                   __ZVR_ROOT_PATH__/keepalived/temp/ipsec.sh      0755     __USER__:users
+version                    __ZVR_ROOT_PATH__/version                       0644     __USER__:users
+zsn-crontab.sh             /usr/local/zstack/zsn-agent/bin/zsn-crontab.sh  0755     __USER__:users
+zstack-virtualrouteragent  /etc/init.d/zstack-virtualrouteragent           0755     root:root
 rsyslog.haproxy            /etc/rsyslog.d/haproxy.conf                     0600     root:root
-rsyslog.iptables        /etc/rsyslog.d/iptables.conf                     0600     root:root
-rsyslog.keepalived        /etc/rsyslog.d/keepalived.conf                     0600     root:root
-rsyslog.dhcp        /etc/rsyslog.d/dhcp.conf                     0600     root:root
-logrotate.auth                /etc/logrotate.d/auth                       0600     root:root
-logrotate.charon             /etc/logrotate.d/charon                      0600     root:root
-logrotate.dhcp            /etc/logrotate.d/dhcp                      0600     root:root
-logrotate.dnsamsq         /etc/logrotate.d/dnsamsq                       0600     root:root
-logrotate.gobetween       /etc/logrotate.d/gobetween                       0600     root:root
-logrotate.haproxy         /etc/logrotate.d/haproxy                       0600     root:root
-logrotate.keepalived      /etc/logrotate.d/keepalived                       0600     root:root
-logrotate.zsn                  /etc/logrotate.d/zsn                       0600     root:root
-logrotate.zvr                 /etc/logrotate.d/zvr                       0600     root:root
-logrotate.zvrMonitor      /etc/logrotate.d/zvrMonitor                       0600     root:root
-logrotate.zvrstartup      /etc/logrotate.d/zvrstartup                       0600     root:root
-logrotate.ipvs      /etc/logrotate.d/ipvs                       0600     root:root
-logrotate.ipvsHealthCheck /etc/logrotate.d/ipvsHealthCheck                       0600     root:root
+rsyslog.iptables           /etc/rsyslog.d/iptables.conf                    0600     root:root
+rsyslog.keepalived         /etc/rsyslog.d/keepalived.conf                  0600     root:root
+rsyslog.dhcp               /etc/rsyslog.d/dhcp.conf                        0600     root:root
+logrotate.auth             /etc/logrotate.d/auth                           0600     root:root
+logrotate.charon           /etc/logrotate.d/charon                         0600     root:root
+logrotate.dhcp             /etc/logrotate.d/dhcp                           0600     root:root
+logrotate.dnsamsq          /etc/logrotate.d/dnsamsq                        0600     root:root
+logrotate.gobetween        /etc/logrotate.d/gobetween                      0600     root:root
+logrotate.haproxy          /etc/logrotate.d/haproxy                        0600     root:root
+logrotate.keepalived       /etc/logrotate.d/keepalived                     0600     root:root
+logrotate.zsn              /etc/logrotate.d/zsn                            0600     root:root
+logrotate.zvr.vyos         /etc/logrotate.d/zvr                            0600     root:root
+logrotate.zvrMonitor.vyos  /etc/logrotate.d/zvrMonitor                     0600     root:root
+logrotate.zvrstartup.vyos  /etc/logrotate.d/zvrstartup                     0600     root:root
+logrotate.ipvs             /etc/logrotate.d/ipvs                           0600     root:root
+logrotate.ipvsHealthCheck  /etc/logrotate.d/ipvsHealthCheck                0600     root:root
 
 [[X86]]
 # this files just for x86_64
 # format: [source file]  [dst file]  [file mode]  [file owner]
 #
-keepalived       /usr/sbin/keepalived        0755      __USER__:users
-haproxy          __BIN_PATH__/haproxy        0755      __USER__:users
-ndsend           /usr/sbin/ndsend            0755      __USER__:users
-gobetween        __BIN_PATH__/gobetween      0755      __USER__:users
-pimd             __BIN_PATH__/pimd           0755      __USER__:users
-uacctd           __BIN_PATH__/uacctd         0755      __USER__:users
-goprlimit        __BIN_PATH__/goprlimit      0755      __USER__:users
-zvr_x86_64       __BIN_PATH__/zvr            0755      __USER__:users
-zvrboot_x86_64   __BIN_PATH__/zvrboot        0755      root:root
-ipvsHealthCheck_x86_64       __BIN_PATH__/ipvsHealthCheck                       0755      __USER__:users
+keepalived                 /usr/sbin/keepalived                            0755     __USER__:users
+haproxy                    __BIN_PATH__/haproxy                            0755     __USER__:users
+ndsend                     /usr/sbin/ndsend                                0755     __USER__:users
+gobetween                  __BIN_PATH__/gobetween                          0755     __USER__:users
+pimd                       __BIN_PATH__/pimd                               0755     __USER__:users
+uacctd                     __BIN_PATH__/uacctd                             0755     __USER__:users
+goprlimit                  __BIN_PATH__/goprlimit                          0755     __USER__:users
+zvr_x86_64                 __BIN_PATH__/zvr                                0755     __USER__:users
+zvrboot_x86_64             __BIN_PATH__/zvrboot                            0755     root:root
+ipvsHealthCheck_x86_64     __BIN_PATH__/ipvsHealthCheck                    0755     __USER__:users
 
 [[ARM]]
 # this files just for aarch64
 # format: [source file]  [dst file]  [file mode]  [file owner]
 #
-keepalived_aarch64        /usr/sbin/keepalived         0755      __USER__:users
-haproxy_aarch64           __BIN_PATH__/haproxy         0755      __USER__:users
-gobetween_aarch64         __BIN_PATH__/gobetween       0755      __USER__:users
-pimd_aarch64              __BIN_PATH__/pimd            0755      __USER__:users
-zvr_aarch64               __BIN_PATH__/zvr             0755      __USER__:users
-zvrboot_aarch64           __BIN_PATH__/zvrboot         0755      __USER__:users
+keepalived_aarch64         /usr/sbin/keepalived                            0755     __USER__:users
+haproxy_aarch64            __BIN_PATH__/haproxy                            0755     __USER__:users
+gobetween_aarch64          __BIN_PATH__/gobetween                          0755     __USER__:users
+pimd_aarch64               __BIN_PATH__/pimd                               0755     __USER__:users
+zvr_aarch64                __BIN_PATH__/zvr                                0755     __USER__:users
+zvrboot_aarch64            __BIN_PATH__/zvrboot                            0755     __USER__:users
 
 [[MIPS]]
 # Use for add/sync files just for mips64
@@ -66,5 +66,5 @@ zvrboot_aarch64           __BIN_PATH__/zvrboot         0755      __USER__:users
 #
 
 [[LOONG]]
-zvr_loongarch64            __BIN_PATH__/zvr           0755      __USER__:users
-zvrboot_loongarch64        __BIN_PATH__/zvrboot       0755      __USER__:users
+zvr_loongarch64            __BIN_PATH__/zvr                                0755     __USER__:users
+zvrboot_loongarch64        __BIN_PATH__/zvrboot                            0755     __USER__:users
