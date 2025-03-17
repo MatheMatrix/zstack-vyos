@@ -136,6 +136,7 @@ type LbInfo struct {
 	Vip6               string             `json:"vip6"`
 	PublicNic          string             `json:"publicNic"`
 	EnableFullLog      bool               `json:"enableFullLog"`
+	EnableStatsLog     bool               `json:"enableStatsLog"`
 	NicIps             []string           `json:"nicIps"`
 	InstancePort       int                `json:"instancePort"`
 	LoadBalancerPort   int                `json:"loadBalancerPort"`
@@ -497,11 +498,23 @@ func parseListenerPrameter(lb LbInfo) (map[string]interface{}, error) {
 		m["HttpCompressType"] = "compression type text/xml text/plain text/css application/javascript application/x-javascript application/rss+xml application/atom+xml application/xml application/json"
 	}
 
-	if lb.EnableFullLog {
+	if lb.EnableFullLog && !lb.EnableStatsLog {
 		if lb.Mode == "tcp" {
 			m["OptionLog"] = "option tcplog"
 		} else if lb.Mode == "http" || lb.Mode == "https" {
 			m["OptionLog"] = "option httplog"
+		}
+	}
+
+	if lb.EnableStatsLog {
+		lbUuid := lb.LbUuid
+		if len(lbUuid) > 10 {
+			lbUuid = lb.LbUuid[len(lb.LbUuid)-10:]
+		}
+		if lb.Mode == "tcp" {
+			m["StatsLog"] = template.HTML("log-format \"" + lbUuid + " " + lb.ListenerUuid + " %ci:%cp -> %fi:%fp -> %si:%sp %tsc %ac/%fc/%bc/%sc/%rc %sq/%bq %B %U %Tt %T\"")
+		} else if lb.Mode == "http" || lb.Mode == "https" {
+			m["StatsLog"] = template.HTML("log-format \"" + lbUuid + " " + lb.ListenerUuid + " %ci:%cp -> %fi:%fp -> %si:%sp %hr %ST %TR/%Tw/%Tc/%Tr/%Tt %tsc %ac/%fc/%bc/%sc/%rc %sq/%bq %CC %CS %B %U %Tt %T\"")
 		}
 	}
 
@@ -605,6 +618,9 @@ func (this *HaproxyListener) createListenerServiceConfigure(lb LbInfo) (err erro
 	{{.SecurityOptions}}
 defaults
     log global
+{{- if .StatsLog }}
+    {{.StatsLog}}
+{{- end }}
     option dontlognull
     option redispatch
 {{- if eq .Mode "https" "http"}}
