@@ -129,13 +129,26 @@ func (r *IpTableRule) SetSrcIp(srcIp string) *IpTableRule {
 		return r
 	}
 
-	// If it is a single IP address (excluding slashes), the /32 mask is automatically added
+	negate := false
+	raw := srcIp
+
+	if strings.HasPrefix(srcIp, "! ") {
+		negate = true
+		srcIp = strings.TrimPrefix(srcIp, "! ")
+	}
+
 	if !strings.Contains(srcIp, "/") {
 		srcIp = srcIp + "/32"
 	}
 
 	if _, _, err := net.ParseCIDR(srcIp); err == nil {
-		r.srcIp = srcIp
+		if negate {
+			r.srcIp = "! " + srcIp
+		} else {
+			r.srcIp = srcIp
+		}
+	} else {
+		log.Debugf("invalid source CIDR: %s", raw)
 	}
 
 	return r
@@ -146,13 +159,26 @@ func (r *IpTableRule) SetDstIp(dstIp string) *IpTableRule {
 		return r
 	}
 
-	// If it is a single IP address (excluding slashes), the /32 mask is automatically added
+	negate := false
+	raw := dstIp
+
+	if strings.HasPrefix(dstIp, "! ") {
+		negate = true
+		dstIp = strings.TrimPrefix(dstIp, "! ")
+	}
+
 	if !strings.Contains(dstIp, "/") {
 		dstIp = dstIp + "/32"
 	}
 
 	if _, _, err := net.ParseCIDR(dstIp); err == nil {
-		r.dstIp = dstIp
+		if negate {
+			r.dstIp = "! " + dstIp
+		} else {
+			r.dstIp = dstIp
+		}
+	} else {
+		log.Debugf("invalid destination CIDR: %s", raw)
 	}
 
 	return r
