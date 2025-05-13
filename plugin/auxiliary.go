@@ -96,19 +96,25 @@ func changeDefaultNicByLinux(cmd *ChangeDefaultNicCmd) interface{} {
 	pubNic, err := utils.GetNicNameByMac(cmd.NewNic.Mac)
 	utils.PanicOnError(err)
 
-	if cmd.NewNic.Gateway != "" {
-		err := utils.Ip4RouteDelDefault(utils.RT_TABLES_MAIN)
-		utils.Assertf(err == nil, "IpRoute4DelDefault[] error: %+v", err)
-		routeEntry := utils.NewIpRoute().SetGW(cmd.NewNic.Gateway).SetDev(pubNic).SetProto(utils.RT_PROTOS_STATIC).SetTable(utils.RT_TABLES_MAIN)
-		err = utils.IpRouteAdd(routeEntry)
-		utils.Assertf(err == nil, "IpRouteAdd[%+v] error: %+v", routeEntry, err)
-	}
-	if cmd.NewNic.Gateway6 != "" {
-		err := utils.Ip6RouteDelDefault(utils.RT_TABLES_MAIN)
-		utils.Assertf(err == nil, "IpRoute6DelDefault[] error: %+v", err)
-		routeEntry := utils.NewIpRoute().SetGW(cmd.NewNic.Gateway).SetDev(pubNic).SetProto(utils.RT_PROTOS_STATIC).SetTable(utils.RT_TABLES_MAIN)
-		err = utils.IpRouteAdd(routeEntry)
-		utils.Assertf(err == nil, "IpRouteAdd[%+v] error: %+v", routeEntry, err)
+	if utils.IsEuler2203() {
+		nicName, _ := utils.GetNicNameByIp(cmd.NewNic.Ip)
+		err = utils.AddDefaultRouteEuler2203(cmd.NewNic.Gateway, cmd.NewNic.Gateway6, nicName)
+		return err
+	} else {
+		if cmd.NewNic.Gateway != "" {
+			err := utils.Ip4RouteDelDefault(utils.RT_TABLES_MAIN)
+			utils.Assertf(err == nil, "IpRoute4DelDefault[] error: %+v", err)
+			routeEntry := utils.NewIpRoute().SetGW(cmd.NewNic.Gateway).SetDev(pubNic).SetProto(utils.RT_PROTOS_STATIC).SetTable(utils.RT_TABLES_MAIN)
+			err = utils.IpRouteAdd(routeEntry)
+			utils.Assertf(err == nil, "IpRouteAdd[%+v] error: %+v", routeEntry, err)
+		}
+		if cmd.NewNic.Gateway6 != "" {
+			err := utils.Ip6RouteDelDefault(utils.RT_TABLES_MAIN)
+			utils.Assertf(err == nil, "IpRoute6DelDefault[] error: %+v", err)
+			routeEntry := utils.NewIpRoute().SetGW(cmd.NewNic.Gateway6).SetDev(pubNic).SetProto(utils.RT_PROTOS_STATIC).SetTable(utils.RT_TABLES_MAIN)
+			err = utils.IpRouteAdd(routeEntry)
+			utils.Assertf(err == nil, "IpRouteAdd[%+v] error: %+v", routeEntry, err)
+		}
 	}
 
 	defaultNic := &utils.Nic{Name: pubNic, Gateway: cmd.NewNic.Gateway, Gateway6: cmd.NewNic.Gateway6, Mac: cmd.NewNic.Mac,
@@ -373,8 +379,8 @@ func configureOspfByVtysh(cmd *setOspfCmd) {
 	// 2. get new ospf cmd
 	newCmd, err = parseOspfToVtyshCmd(cmd)
 	utils.PanicOnError(err)
-  
-  if isOspfConfigEqual(oldCmd, newCmd) {
+
+	if isOspfConfigEqual(oldCmd, newCmd) {
 		return
 	}
 
