@@ -585,7 +585,7 @@ func getRouteEntryForIp(ip string) (*ZStackRouteEntry, error) {
 	} else if strings.Contains(items[1], "via") {
 		nicName := strings.Replace(items[1], "via", "", 1)
 		nicName = strings.TrimSpace(nicName)
-		nexthop := strings.Replace(items[1], "*", "", 1)
+		nexthop := strings.Replace(items[0], "*", "", 1)
 		nexthop = strings.TrimSpace(nexthop)
 		return &ZStackRouteEntry{
 			DestinationCidr: ip,
