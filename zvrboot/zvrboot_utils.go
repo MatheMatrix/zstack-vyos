@@ -240,15 +240,20 @@ func configureNicInfo(nic *utils.NicInfo) {
 		}
 	}
 	if nic.IsDefault {
-		if nic.Gateway != "" {
-			routeEntry := utils.NewIpRoute().SetGW(nic.Gateway).SetDev(nic.Name).SetTable(utils.RT_TABLES_MAIN).SetProto(utils.RT_PROTOS_STATIC)
-			err := utils.IpRouteAdd(routeEntry)
-			utils.Assertf(err == nil, "IpRouteAdd[%+v] error: %+v", routeEntry, err)
-		}
-		if nic.Gateway6 != "" {
-			route6Entry := utils.NewIpRoute().SetGW(nic.Gateway).SetDev(nic.Name).SetTable(utils.RT_TABLES_MAIN).SetProto(utils.RT_PROTOS_STATIC)
-			err := utils.IpRouteAdd(route6Entry)
-			utils.Assertf(err == nil, "IpRouteAdd[%+v] error: %+v", route6Entry, err)
+		if utils.IsEuler2203() {
+			err = utils.AddDefaultRouteEuler2203(nic.Gateway, nic.Gateway6, nic.Name)
+			utils.PanicOnError(err)
+		} else {
+			if nic.Gateway != "" {
+				routeEntry := utils.NewIpRoute().SetGW(nic.Gateway).SetDev(nic.Name).SetTable(utils.RT_TABLES_MAIN).SetProto(utils.RT_PROTOS_STATIC)
+				err := utils.IpRouteAdd(routeEntry)
+				utils.Assertf(err == nil, "IpRouteAdd[%+v] error: %+v", routeEntry, err)
+			}
+			if nic.Gateway6 != "" {
+				route6Entry := utils.NewIpRoute().SetGW(nic.Gateway6).SetDev(nic.Name).SetTable(utils.RT_TABLES_MAIN).SetProto(utils.RT_PROTOS_STATIC)
+				err := utils.IpRouteAdd(route6Entry)
+				utils.Assertf(err == nil, "IpRouteAdd[%+v] error: %+v", route6Entry, err)
+			}
 		}
 	}
 	if nic.L2Type != "" {
@@ -263,13 +268,17 @@ func configureNicInfo(nic *utils.NicInfo) {
 		mgmtNodeCidr := utils.BootstrapInfo["managementNodeCidr"]
 		if mgmtNodeCidr != nil {
 			mgmtNodeCidrStr := mgmtNodeCidr.(string)
-			nexthop, _ := utils.IpRouteGet(mgmtNodeCidrStr)
-			if nexthop != nic.Gateway {
-				defaultRoute := utils.NewIpRoute().SetDst(mgmtNodeCidrStr).SetGW(nic.Gateway)
-				if err = utils.IpRouteAdd(defaultRoute); err != nil {
-					log.Debugf("IpRouteAdd route entry[Dst:%s gateway:%s] error: %+v", mgmtNodeCidrStr, nic.Gateway, err)
+			if utils.IsEuler2203() {
+				_ = utils.AddRouteForMgmtEuler2203(mgmtNodeCidrStr, nic.Name, nic.Gateway)
+			} else {
+				nexthop, _ := utils.IpRouteGet(mgmtNodeCidrStr)
+				if nexthop != nic.Gateway {
+					defaultRoute := utils.NewIpRoute().SetDst(mgmtNodeCidrStr).SetGW(nic.Gateway)
+					if err = utils.IpRouteAdd(defaultRoute); err != nil {
+						log.Debugf("IpRouteAdd route entry[Dst:%s gateway:%s] error: %+v", mgmtNodeCidrStr, nic.Gateway, err)
+					}
+					utils.AddRoute(mgmtNodeCidrStr, nic.Gateway)
 				}
-				utils.AddRoute(mgmtNodeCidrStr, nic.Gateway)
 			}
 		}
 	}
