@@ -24,7 +24,7 @@ type SnatInfo struct {
 	PrivateNicIp     string `json:"privateNicIp"`
 	PrivateGatewayIp string `json:"privateGatewayIp"`
 	SnatNetmask      string `json:"snatNetmask"`
-	WhileList        string `json:"whileList"`
+	WhiteList        string `json:"whiteList"`
 	State            bool   `json:"state"`
 }
 
@@ -205,7 +205,7 @@ func RemoveSnat(cmd *RemoveSnatCmd) interface{} {
 			address, err := utils.GetNetworkNumber(s.PrivateNicIp, s.SnatNetmask)
 			utils.PanicOnError(err)
 
-			whiteLists := splitWhiteList(s.WhileList)
+			whiteLists := splitWhiteList(s.WhiteList)
 			if len(whiteLists) == 0 || whiteLists[0] == "null" {
 				whiteLists = append(whiteLists, address)
 			}
@@ -218,10 +218,10 @@ func RemoveSnat(cmd *RemoveSnatCmd) interface{} {
 				if strings.Contains(ip, "-") {
 					ipRange := strings.Split(ip, "-")
 					if len(ipRange) != 2 {
-						log.Errorf("whileList ip format error: %s", ip)
+						log.Errorf("whiteList ip format error: %s", ip)
 						continue
 					}
-					rule.SetDstIp("! 224.0.0.0/8").SetSrcIpRange(fmt.Sprintf("! %s-%s", ipRange[0], ipRange[1])).
+					rule.SetDstIp("! 224.0.0.0/8").SetSrcIpRange(fmt.Sprintf("%s-%s", ipRange[0], ipRange[1])).
 						SetOutNic(publicNic).SetSnatTargetIp(s.PublicIp)
 				} else {
 					rule.SetDstIp("! 224.0.0.0/8").SetSrcIp(ip).SetOutNic(publicNic).SetSnatTargetIp(s.PublicIp)
@@ -282,11 +282,11 @@ func setSnatStateByIptables(Snats []SnatInfo, state bool) {
 		address, err := utils.GetNetworkNumber(s.PrivateNicIp, s.SnatNetmask)
 		utils.PanicOnError(err)
 
-		whileLists := splitWhiteList(s.WhileList)
-		if len(whileLists) == 0 || whileLists[0] == "null" {
-			whileLists = append(whileLists, address)
+		whiteLists := splitWhiteList(s.WhiteList)
+		if len(whiteLists) == 0 || whiteLists[0] == "null" {
+			whiteLists = append(whiteLists, address)
 		}
-		for _, ip := range whileLists {
+		for _, ip := range whiteLists {
 			if len(ip) == 0 {
 				continue
 			}
@@ -295,10 +295,10 @@ func setSnatStateByIptables(Snats []SnatInfo, state bool) {
 			if strings.Contains(ip, "-") {
 				ipRange := strings.Split(ip, "-")
 				if len(ipRange) != 2 {
-					log.Errorf("whileList ip format error: %s", ip)
+					log.Errorf("whiteList ip format error: %s", ip)
 					continue
 				}
-				rule.SetDstIp("! 224.0.0.0/8").SetSrcIpRange(fmt.Sprintf("! %s-%s", ipRange[0], ipRange[1])).
+				rule.SetDstIp("! 224.0.0.0/8").SetSrcIpRange(fmt.Sprintf("%s-%s", ipRange[0], ipRange[1])).
 					SetOutNic(outNic).SetSnatTargetIp(s.PublicIp)
 			} else {
 				rule.SetDstIp("! 224.0.0.0/8").SetSrcIp(ip).SetOutNic(outNic).SetSnatTargetIp(s.PublicIp)
@@ -354,11 +354,11 @@ func syncSnatByIptables(Snats []SnatInfo, state bool) {
 		address, err := utils.GetNetworkNumber(s.PrivateNicIp, s.SnatNetmask)
 		utils.PanicOnError(err)
 
-		whileLists := splitWhiteList(s.WhileList)
-		if len(whileLists) == 0 || whileLists[0] == "null" {
-			whileLists = append(whileLists, address)
+		whiteLists := splitWhiteList(s.WhiteList)
+		if len(whiteLists) == 0 || whiteLists[0] == "null" {
+			whiteLists = append(whiteLists, address)
 		}
-		for _, ip := range whileLists {
+		for _, ip := range whiteLists {
 			if len(ip) == 0 {
 				continue
 			}
