@@ -609,7 +609,7 @@ func refreshIpvsFirewallRuleByIptables(services map[string]*IpvsFrontendService)
 			for _, priNic := range priNics {
 				newRule := rule.Copy()
 				newRule.SetChainName(utils.GetRuleSetName(priNic, utils.RULESET_LOCAL))
-				rules = append(rules, rule)
+				rules = append(rules, newRule)
 			}
 		}
 
