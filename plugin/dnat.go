@@ -73,27 +73,54 @@ func syncPortForwardingRules() error {
 		}
 
 		if r.AllowedCidr != "" && r.AllowedCidr != "0.0.0.0/0" {
-			rule := utils.NewIpTableRule(utils.GetRuleSetName(pubNicName, utils.RULESET_IN))
-			rule.SetAction(utils.IPTABLES_ACTION_REJECT).SetRejectType(utils.REJECT_TYPE_ICMP_UNREACHABLE)
+			for _, ip := range strings.Split(r.AllowedCidr, ",") {
+				ip = strings.ReplaceAll(ip, " ", "")
+				if len(ip) == 0 {
+					continue
+				}
+
+				rule := utils.NewIpTableRule(utils.RULESET_DNAT.String())
+				rule.SetAction(utils.IPTABLES_ACTION_DNAT)
+				rule.SetComment(utils.PortFordingRuleComment)
+				rule.SetDstIp(fmt.Sprintf("%s/32", r.VipIp))
+				rule.SetProto(protocol).SetDstPort(natPortRange)
+				rule.SetDnatTargetIp(r.PrivateIp).SetDnatTargetPort(strings.Replace(portRange, ":", "-", -1))
+
+				if strings.Contains(ip, "-") {
+					ipRange := strings.Split(ip, "-")
+					if len(ipRange) != 2 {
+						log.Errorf("whiteList ip format error: %s", ip)
+						continue
+					}
+					rule.SetSrcIpRange(fmt.Sprintf("%s-%s", ipRange[0], ipRange[1]))
+				} else {
+					rule.SetSrcIp(ip)
+				}
+				dnatRules = append(dnatRules, rule)
+			}
+		} else {
+			rule := utils.NewIpTableRule(utils.RULESET_DNAT.String())
+			rule.SetAction(utils.IPTABLES_ACTION_DNAT)
 			rule.SetComment(utils.PortFordingRuleComment)
-			rule.SetSrcIp(fmt.Sprintf("! %s", r.AllowedCidr)).SetDstIp(fmt.Sprintf("%s/32", r.PrivateIp))
-			rule.SetProto(protocol).SetDstPort(portRange).SetState([]string{utils.IPTABLES_STATE_NEW})
-			filterRules = append(filterRules, rule)
+			rule.SetDstIp(fmt.Sprintf("%s/32", r.VipIp))
+			rule.SetProto(protocol).SetDstPort(natPortRange)
+			rule.SetDnatTargetIp(r.PrivateIp).SetDnatTargetPort(strings.Replace(portRange, ":", "-", -1))
+			dnatRules = append(dnatRules, rule)
 		}
+
 		rule := utils.NewIpTableRule(utils.GetRuleSetName(pubNicName, utils.RULESET_IN))
+		rule.SetAction(utils.IPTABLES_ACTION_REJECT).SetRejectType(utils.REJECT_TYPE_ICMP_UNREACHABLE)
+		rule.SetComment(utils.PortFordingRuleComment)
+		rule.SetDstIp(fmt.Sprintf("%s/32", r.VipIp))
+		rule.SetProto(protocol).SetDstPort(portRange).SetState([]string{utils.IPTABLES_STATE_NEW})
+		filterRules = append(filterRules, rule)
+
+		rule = utils.NewIpTableRule(utils.GetRuleSetName(pubNicName, utils.RULESET_IN))
 		rule.SetAction(utils.IPTABLES_ACTION_RETURN)
 		rule.SetComment(utils.PortFordingRuleComment)
 		rule.SetDstIp(fmt.Sprintf("%s/32", r.PrivateIp))
 		rule.SetProto(protocol).SetDstPort(portRange).SetState([]string{utils.IPTABLES_STATE_NEW})
 		filterRules = append(filterRules, rule)
-
-		rule = utils.NewIpTableRule(utils.RULESET_DNAT.String())
-		rule.SetAction(utils.IPTABLES_ACTION_DNAT)
-		rule.SetComment(utils.PortFordingRuleComment)
-		rule.SetDstIp(fmt.Sprintf("%s/32", r.VipIp))
-		rule.SetProto(protocol).SetDstPort(natPortRange)
-		rule.SetDnatTargetIp(r.PrivateIp).SetDnatTargetPort(strings.Replace(portRange, ":", "-", -1))
-		dnatRules = append(dnatRules, rule)
 	}
 
 	table.AddIpTableRules(filterRules)
