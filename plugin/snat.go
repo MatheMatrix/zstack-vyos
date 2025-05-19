@@ -221,10 +221,10 @@ func RemoveSnat(cmd *RemoveSnatCmd) interface{} {
 						log.Errorf("whiteList ip format error: %s", ip)
 						continue
 					}
-					rule.SetDstIp("! 224.0.0.0/8").SetSrcIpRange(fmt.Sprintf("%s-%s", ipRange[0], ipRange[1])).
+					rule.SetDstIp("! 224.0.0.0/8").SetSrcIpRange(fmt.Sprintf("%s-%s", ipRange[0], ipRange[1])).SetInNic(priNic).
 						SetOutNic(publicNic).SetSnatTargetIp(s.PublicIp)
 				} else {
-					rule.SetDstIp("! 224.0.0.0/8").SetSrcIp(ip).SetOutNic(publicNic).SetSnatTargetIp(s.PublicIp)
+					rule.SetDstIp("! 224.0.0.0/8").SetSrcIp(ip).SetInNic(priNic).SetOutNic(publicNic).SetSnatTargetIp(s.PublicIp)
 				}
 				table.RemoveIpTableRule([]*utils.IpTableRule{rule})
 			}
@@ -298,10 +298,10 @@ func setSnatStateByIptables(Snats []SnatInfo, state bool) {
 					log.Errorf("whiteList ip format error: %s", ip)
 					continue
 				}
-				rule.SetDstIp("! 224.0.0.0/8").SetSrcIpRange(fmt.Sprintf("%s-%s", ipRange[0], ipRange[1])).
+				rule.SetDstIp("! 224.0.0.0/8").SetSrcIpRange(fmt.Sprintf("%s-%s", ipRange[0], ipRange[1])).SetInNic(inNic).
 					SetOutNic(outNic).SetSnatTargetIp(s.PublicIp)
 			} else {
-				rule.SetDstIp("! 224.0.0.0/8").SetSrcIp(ip).SetOutNic(outNic).SetSnatTargetIp(s.PublicIp)
+				rule.SetDstIp("! 224.0.0.0/8").SetSrcIp(ip).SetInNic(inNic).SetOutNic(outNic).SetSnatTargetIp(s.PublicIp)
 			}
 			rules = append(rules, rule)
 		}
@@ -351,6 +351,8 @@ func syncSnatByIptables(Snats []SnatInfo, state bool) {
 		}
 		outNic, err := utils.GetNicNameByMac(s.PublicNicMac)
 		utils.PanicOnError(err)
+		priNic, err := utils.GetNicNameByMac(s.PrivateNicMac)
+		utils.PanicOnError(err)
 		address, err := utils.GetNetworkNumber(s.PrivateNicIp, s.SnatNetmask)
 		utils.PanicOnError(err)
 
@@ -370,10 +372,10 @@ func syncSnatByIptables(Snats []SnatInfo, state bool) {
 					log.Errorf("whiteList ip format error: %s", ip)
 					continue
 				}
-				rule.SetDstIp("! 224.0.0.0/8").SetSrcIpRange(fmt.Sprintf("%s-%s", ipRange[0], ipRange[1])).
+				rule.SetDstIp("! 224.0.0.0/8").SetSrcIpRange(fmt.Sprintf("%s-%s", ipRange[0], ipRange[1])).SetInNic(priNic).
 					SetOutNic(outNic).SetSnatTargetIp(s.PublicIp)
 			} else {
-				rule.SetDstIp("! 224.0.0.0/8").SetSrcIp(ip).SetOutNic(outNic).SetSnatTargetIp(s.PublicIp)
+				rule.SetDstIp("! 224.0.0.0/8").SetSrcIp(ip).SetInNic(priNic).SetOutNic(outNic).SetSnatTargetIp(s.PublicIp)
 			}
 			rules = append(rules, rule)
 		}
