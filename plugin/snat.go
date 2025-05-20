@@ -288,6 +288,8 @@ func setSnatStateByIptables(Snats []SnatInfo, state bool) {
 	table := utils.NewIpTables(utils.NatTable)
 	mangleTable := utils.NewIpTables(utils.MangleTable)
 
+	checkRestoreMarkRule(mangleTable)
+
 	var rules []*utils.IpTableRule
 	var setMarkRules []*utils.IpTableRule
 	for _, s := range Snats {
@@ -348,6 +350,8 @@ func setSnatStateByIptables(Snats []SnatInfo, state bool) {
 
 	err := table.Apply()
 	utils.PanicOnError(err)
+
+	checkSaveMarkRule(mangleTable)
 	err = mangleTable.Apply()
 	utils.PanicOnError(err)
 
@@ -367,8 +371,6 @@ func checkSaveMarkRule(mangleTable *utils.IpTables) {
 	if !mangleTable.Check(saveMarkRule) {
 		mangleTable.AddIpTableRules([]*utils.IpTableRule{saveMarkRule})
 	}
-	err := mangleTable.Apply()
-	utils.PanicOnError(err)
 }
 
 func checkRestoreMarkRule(mangleTable *utils.IpTables) {
@@ -379,8 +381,6 @@ func checkRestoreMarkRule(mangleTable *utils.IpTables) {
 	if !mangleTable.Check(restoreMarkRule) {
 		mangleTable.AddIpTableRules([]*utils.IpTableRule{restoreMarkRule})
 	}
-	err := mangleTable.Apply()
-	utils.PanicOnError(err)
 }
 
 func genSetMarkRule(nicName string, nicNumber int) *utils.IpTableRule {
