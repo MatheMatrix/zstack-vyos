@@ -586,6 +586,23 @@ func AddSnatRuleForPrivateNic(nicName, ip, netmask string) {
 	table.Apply()
 }
 
+func genSetMarkRule(nicName string, nicNumber int) *IpTableRule {
+	//get number from eth[Nth]
+	setMarkRule := NewIpTableRule(PREROUTING.String())
+	setMarkRule.SetAction(IPTABLES_ACTION_MARK).SetComment(SNATComment)
+	setMarkRule.SetMarkType(IptablesMarkUnset).SetTargetMark(nicNumber).SetInNic(nicName)
+	return setMarkRule
+}
+
+func RemoveSnatSetMarkRulesForPrivateNic(nicName string) {
+	nicNumber, err := GetNicNumber(nicName)
+	PanicOnError(err)
+	mangleTable := NewIpTables(MangleTable)
+	setMarkRule := genSetMarkRule(nicName, nicNumber)
+	mangleTable.RemoveIpTableRule([]*IpTableRule{setMarkRule})
+	mangleTable.Apply()
+}
+
 func RemoveSnatRuleForPrivateNic(nicName, ip, netmask string) {
 	if ip == "" || strings.Contains(ip, ":") {
 		/* TODO: add ipv6 support */

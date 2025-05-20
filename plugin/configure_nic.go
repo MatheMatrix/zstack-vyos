@@ -527,6 +527,7 @@ func RemoveNic(cmd *ConfigureNicCmd) interface{} {
 			utils.PanicOnError(err)
 
 			utils.RemoveSnatRuleForPrivateNic(nicname, nic.Ip, nic.Netmask)
+			utils.RemoveSnatSetMarkRulesForPrivateNic(nicname)
 		}
 	}
 
