@@ -460,6 +460,7 @@ func syncSnatByIptables(Snats []SnatInfo, state bool) {
 	err := table.Apply()
 	utils.PanicOnError(err)
 
+	mangleTable.AddIpTableRules(setMarkRules)
 	checkSaveMarkRule(mangleTable)
 	err = mangleTable.Apply()
 	utils.PanicOnError(err)
