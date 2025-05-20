@@ -288,7 +288,7 @@ func setSnatStateByIptables(Snats []SnatInfo, state bool) {
 	table := utils.NewIpTables(utils.NatTable)
 	mangleTable := utils.NewIpTables(utils.MangleTable)
 
-	checkRestoreMarkRule(mangleTable)
+	checkRestoreMarkRule(table)
 
 	var rules []*utils.IpTableRule
 	var setMarkRules []*utils.IpTableRule
@@ -368,18 +368,17 @@ func checkSaveMarkRule(mangleTable *utils.IpTables) {
 	saveMarkRule := utils.NewIpTableRule(utils.PREROUTING.String())
 	saveMarkRule.SetAction(utils.IPTABLES_ACTION_CONNMARK_SAVE)
 	saveMarkRule.SetMarkType(utils.IptablesMarkUnset)
-	if !mangleTable.Check(saveMarkRule) {
-		mangleTable.AddIpTableRules([]*utils.IpTableRule{saveMarkRule})
-	}
+	mangleTable.RemoveIpTableRule([]*utils.IpTableRule{saveMarkRule})
+	mangleTable.AddIpTableRules([]*utils.IpTableRule{saveMarkRule})
 }
 
-func checkRestoreMarkRule(mangleTable *utils.IpTables) {
+func checkRestoreMarkRule(natTable *utils.IpTables) {
 	/* check save mark rule */
 	restoreMarkRule := utils.NewIpTableRule(utils.POSTROUTING.String())
 	restoreMarkRule.SetAction(utils.IPTABLES_ACTION_CONNMARK_RESTORE)
 	restoreMarkRule.SetMarkType(utils.IptablesMarkUnset)
-	if !mangleTable.Check(restoreMarkRule) {
-		mangleTable.AddIpTableRules([]*utils.IpTableRule{restoreMarkRule})
+	if !natTable.Check(restoreMarkRule) {
+		natTable.AddIpTableRules([]*utils.IpTableRule{restoreMarkRule})
 	}
 }
 
@@ -407,7 +406,7 @@ func syncSnatByIptables(Snats []SnatInfo, state bool) {
 		return
 	}
 
-	checkRestoreMarkRule(mangleTable)
+	checkRestoreMarkRule(table)
 
 	var rules []*utils.IpTableRule
 	var setMarkRules []*utils.IpTableRule
