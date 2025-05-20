@@ -17,6 +17,7 @@ const (
 	IPTABLES_ACTION_MARK             = "MARK"
 	IPTABLES_ACTION_CONNMARK         = "CONNMARK"
 	IPTABLES_ACTION_CONNMARK_RESTORE = "CONNMARK_RESTORE"
+	IPTABLES_ACTION_CONNMARK_SAVE    = "CONNMARK_SAVE"
 	IPTABLES_ACTION_LOG              = "LOG"
 
 	REJECT_TYPE_ICMP_UNREACHABLE = "icmp-port-unreachable"
@@ -149,6 +150,8 @@ func (r *IpTableRule) targetString() string {
 		rules = append(rules, fmt.Sprintf("-j CONNMARK --set-mark %d", r.targetMark))
 	case IPTABLES_ACTION_CONNMARK_RESTORE:
 		rules = append(rules, fmt.Sprintf("-j CONNMARK --restore-mark"))
+	case IPTABLES_ACTION_CONNMARK_SAVE:
+		rules = append(rules, fmt.Sprintf("-j CONNMARK --save-mark"))
 	case IPTABLES_ACTION_LOG:
 		rules = append(rules, fmt.Sprintf("-j LOG --log-prefix %s", r.logPrefix))
 	default:
@@ -203,6 +206,11 @@ func (r *IpTableRule) parseIptablesTarget(line string) (*IpTableRule, error) {
 		case "--restore-mark": /*--restore-mark --nfmask 0xffffffff --ctmask 0xffffffff*/
 			i++
 			r.action = IPTABLES_ACTION_CONNMARK_RESTORE
+			break
+
+		case "--save-mark": /*--save-mark */
+			i++
+			r.action = IPTABLES_ACTION_CONNMARK_SAVE
 			break
 
 		default:
