@@ -208,8 +208,9 @@ func RemoveSnat(cmd *RemoveSnatCmd) interface{} {
 
 			nicNumber, err := utils.GetNicNumber(priNic)
 			utils.PanicOnError(err)
-			setMarkRule := genSetMarkRule(priNic, nicNumber)
-			mangleTable.RemoveIpTableRule([]*utils.IpTableRule{setMarkRule})
+			// remove set mark rules when remove private nic
+			//setMarkRule := genSetMarkRule(priNic, nicNumber)
+			//mangleTable.RemoveIpTableRule([]*utils.IpTableRule{setMarkRule})
 
 			whiteLists := splitWhiteList(s.WhiteList)
 			if len(whiteLists) == 1 && whiteLists[0] == "null" {
@@ -324,9 +325,10 @@ func setSnatStateByIptables(Snats []SnatInfo, state bool) {
 					continue
 				}
 				rule.SetDstIp("! 224.0.0.0/8").SetSrcIpRange(fmt.Sprintf("%s-%s", ipRange[0], ipRange[1])).
-					SetOutNic(outNic).SetSnatTargetIp(s.PublicIp)
+					SetOutNic(outNic).SetMarkType(utils.IptablesMarkMatch).SetMark(nicNumber).SetSnatTargetIp(s.PublicIp)
 			} else {
-				rule.SetDstIp("! 224.0.0.0/8").SetSrcIp(ip).SetOutNic(outNic).SetSnatTargetIp(s.PublicIp)
+				rule.SetDstIp("! 224.0.0.0/8").SetSrcIp(ip).
+					SetOutNic(outNic).SetMarkType(utils.IptablesMarkMatch).SetMark(nicNumber).SetSnatTargetIp(s.PublicIp)
 			}
 			rules = append(rules, rule)
 		}
@@ -342,7 +344,8 @@ func setSnatStateByIptables(Snats []SnatInfo, state bool) {
 
 	if state == false {
 		table.RemoveIpTableRule(rules)
-		mangleTable.RemoveIpTableRule(setMarkRules)
+		// remove set mark rules when remove private nic
+		//mangleTable.RemoveIpTableRule(setMarkRules)
 	} else {
 		table.AddIpTableRules(rules)
 		mangleTable.AddIpTableRules(setMarkRules)
