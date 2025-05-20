@@ -231,10 +231,10 @@ func RemoveSnat(cmd *RemoveSnatCmd) interface{} {
 						log.Errorf("whiteList ip format error: %s", ip)
 						continue
 					}
-					rule.SetDstIp("! 224.0.0.0/8").SetSrcIpRange(fmt.Sprintf("%s-%s", ipRange[0], ipRange[1])).SetInNic(priNic).
+					rule.SetDstIp("! 224.0.0.0/8").SetSrcIpRange(fmt.Sprintf("%s-%s", ipRange[0], ipRange[1])).
 						SetOutNic(publicNic).SetMarkType(utils.IptablesMarkMatch).SetMark(nicNumber).SetSnatTargetIp(s.PublicIp)
 				} else {
-					rule.SetDstIp("! 224.0.0.0/8").SetSrcIp(ip).SetInNic(priNic).SetOutNic(publicNic).
+					rule.SetDstIp("! 224.0.0.0/8").SetSrcIp(ip).SetOutNic(publicNic).
 						SetMarkType(utils.IptablesMarkMatch).SetMark(nicNumber).SetSnatTargetIp(s.PublicIp)
 				}
 				table.RemoveIpTableRule([]*utils.IpTableRule{rule})
@@ -323,10 +323,10 @@ func setSnatStateByIptables(Snats []SnatInfo, state bool) {
 					log.Errorf("whiteList ip format error: %s", ip)
 					continue
 				}
-				rule.SetDstIp("! 224.0.0.0/8").SetSrcIpRange(fmt.Sprintf("%s-%s", ipRange[0], ipRange[1])).SetInNic(inNic).
+				rule.SetDstIp("! 224.0.0.0/8").SetSrcIpRange(fmt.Sprintf("%s-%s", ipRange[0], ipRange[1])).
 					SetOutNic(outNic).SetSnatTargetIp(s.PublicIp)
 			} else {
-				rule.SetDstIp("! 224.0.0.0/8").SetSrcIp(ip).SetInNic(inNic).SetOutNic(outNic).SetSnatTargetIp(s.PublicIp)
+				rule.SetDstIp("! 224.0.0.0/8").SetSrcIp(ip).SetOutNic(outNic).SetSnatTargetIp(s.PublicIp)
 			}
 			rules = append(rules, rule)
 		}
@@ -446,10 +446,10 @@ func syncSnatByIptables(Snats []SnatInfo, state bool) {
 					log.Errorf("whiteList ip format error: %s", ip)
 					continue
 				}
-				rule.SetDstIp("! 224.0.0.0/8").SetSrcIpRange(fmt.Sprintf("%s-%s", ipRange[0], ipRange[1])).SetInNic(priNic).
+				rule.SetDstIp("! 224.0.0.0/8").SetSrcIpRange(fmt.Sprintf("%s-%s", ipRange[0], ipRange[1])).
 					SetOutNic(outNic).SetMarkType(utils.IptablesMarkMatch).SetMark(nicNumber).SetSnatTargetIp(s.PublicIp)
 			} else {
-				rule.SetDstIp("! 224.0.0.0/8").SetSrcIp(ip).SetInNic(priNic).
+				rule.SetDstIp("! 224.0.0.0/8").SetSrcIp(ip).
 					SetOutNic(outNic).SetMarkType(utils.IptablesMarkMatch).SetMark(nicNumber).SetSnatTargetIp(s.PublicIp)
 			}
 			rules = append(rules, rule)
