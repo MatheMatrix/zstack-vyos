@@ -29,7 +29,9 @@ func renameNic() {
 
 		for _, nic := range nicsMap {
 			nicname, err := utils.GetNicNameByMac(nic.Mac)
-			utils.PanicOnError(err)
+			if err != nil {
+				return err
+			}
 			if nicname != nic.Name {
 				devNames = append(devNames, &deviceName{
 					expected: nic.Name,
@@ -69,7 +71,7 @@ func renameNic() {
 			}
 		}
 		return nil
-	}, 3, 1)
+	}, 60, 3)
 
 	utils.PanicOnError(err)
 
