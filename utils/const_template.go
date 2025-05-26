@@ -112,7 +112,6 @@ UsePAM yes
 HostKey /etc/ssh/ssh_host_key
 UseDNS yes`
 
-
 const sshdTemplateEuler = `# Auto Create by Zstack, Do Not Modify It
 
 Include /etc/ssh/sshd_config.d/*.conf
@@ -166,7 +165,7 @@ AuthorizedKeysFile      .ssh/authorized_keys
 #IgnoreRhosts yes
 
 # To disable tunneled clear text passwords, change to no here!
-PasswordAuthentication no  ###changed by zstack
+PasswordAuthentication no
 #PermitEmptyPasswords no
 
 # Change to no to disable s/key passwords
