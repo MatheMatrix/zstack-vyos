@@ -15,6 +15,11 @@ NEED_REPORT_MN="false"
 sizeFilesMap=""
 retJson=""
 
+OS="vyos 1.1.7"
+if [ -f /etc/system-release ]; then
+  OS=`cat /etc/system-release | awk '{print $1,$2,$3}'`
+fi
+
 managementNodeIp=$(grep "managementNodeIp" $BOOTSTRAPINFO | awk '{print $2}')
 if [ x$managementNodeIp = x"" ]; then
     echo "$(date '+%Y-%m-%d %H:%M:%S') get managementNodeIp failed " >> $LOGFILE
@@ -58,7 +63,11 @@ reportToManagementNode() {
 }
 
 getDiskInfo() {
-    diskInfo=$(df -h | grep -e '^/dev/.da'|awk '{print $2,$3,$5}')
+    if [ "${OS}" == "openEuler release 22.03" ]; then
+        diskInfo=$(df -h | grep -e '/dev/mapper/openeuler-root'|awk '{print $2,$3,$5}')
+    else
+        diskInfo=$(df -h | grep -e '^/dev/.da'|awk '{print $2,$3,$5}')
+    fi
     echo "${diskInfo}"
 }
 
