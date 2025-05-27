@@ -25,6 +25,7 @@ type SnatInfo struct {
 	PrivateGatewayIp string `json:"privateGatewayIp"`
 	SnatNetmask      string `json:"snatNetmask"`
 	WhiteList        string `json:"whiteList"`
+	DestWhiteList    string `json:"destWhiteList"`
 	State            bool   `json:"state"`
 }
 
@@ -117,6 +118,85 @@ func splitWhiteList(whiteList string) []string {
 	return ret
 }
 
+func genSnatRule(s SnatInfo, needGenLocalSnatRule bool) []*utils.IpTableRule {
+	publicNic, err := utils.GetNicNameByMac(s.PublicNicMac)
+	utils.PanicOnError(err)
+	priNic, err := utils.GetNicNameByMac(s.PrivateNicMac)
+	utils.PanicOnError(err)
+	address, err := utils.GetNetworkNumber(s.PrivateNicIp, s.SnatNetmask)
+	utils.PanicOnError(err)
+	nicNumber, err := utils.GetNicNumber(priNic)
+	utils.PanicOnError(err)
+
+	whiteLists := splitWhiteList(s.WhiteList)
+	if len(whiteLists) == 1 && whiteLists[0] == "null" {
+		whiteLists = []string{}
+	}
+	if len(whiteLists) == 0 {
+		whiteLists = append(whiteLists, address)
+	}
+	destWhitelist := splitWhiteList(s.DestWhiteList)
+	if len(destWhitelist) == 1 && destWhitelist[0] == "null" {
+		destWhitelist = []string{}
+	}
+
+	rules := make([]*utils.IpTableRule, 0)
+
+	for _, ip := range whiteLists {
+		if len(ip) == 0 {
+			continue
+		}
+
+		if strings.Contains(ip, "-") {
+			ipRange := strings.Split(ip, "-")
+			if len(ipRange) != 2 {
+				log.Errorf("whiteList ip format error: %s", ip)
+				continue
+			}
+			if len(destWhitelist) == 0 {
+				rule := utils.NewIpTableRule(utils.RULESET_SNAT.String())
+				rule.SetAction(utils.IPTABLES_ACTION_SNAT).SetComment(utils.SNATComment)
+				rule.SetDstIp("! 224.0.0.0/8").SetSrcIpRange(fmt.Sprintf("%s-%s", ipRange[0], ipRange[1])).
+					SetOutNic(publicNic).SetMarkType(utils.IptablesMarkMatch).SetMark(nicNumber).SetSnatTargetIp(s.PublicIp)
+				rules = append(rules, rule)
+			} else {
+				for _, destIp := range destWhitelist {
+					rule := utils.NewIpTableRule(utils.RULESET_SNAT.String())
+					rule.SetAction(utils.IPTABLES_ACTION_SNAT).SetComment(utils.SNATComment)
+					rule.SetDstIp(destIp).SetSrcIpRange(fmt.Sprintf("%s-%s", ipRange[0], ipRange[1])).
+						SetOutNic(publicNic).SetMarkType(utils.IptablesMarkMatch).SetMark(nicNumber).SetSnatTargetIp(s.PublicIp)
+					rules = append(rules, rule)
+				}
+			}
+		} else {
+			if len(destWhitelist) == 0 {
+				rule := utils.NewIpTableRule(utils.RULESET_SNAT.String())
+				rule.SetAction(utils.IPTABLES_ACTION_SNAT).SetComment(utils.SNATComment)
+				rule.SetDstIp("! 224.0.0.0/8").SetSrcIp(ip).SetOutNic(publicNic).
+					SetMarkType(utils.IptablesMarkMatch).SetMark(nicNumber).SetSnatTargetIp(s.PublicIp)
+				rules = append(rules, rule)
+			} else {
+				for _, destIp := range destWhitelist {
+					rule := utils.NewIpTableRule(utils.RULESET_SNAT.String())
+					rule.SetAction(utils.IPTABLES_ACTION_SNAT).SetComment(utils.SNATComment)
+					rule.SetDstIp(destIp).SetSrcIp(ip).SetOutNic(publicNic).
+						SetMarkType(utils.IptablesMarkMatch).SetMark(nicNumber).SetSnatTargetIp(s.PublicIp)
+					rules = append(rules, rule)
+				}
+			}
+		}
+	}
+	if needGenLocalSnatRule {
+		rule := utils.NewIpTableRule(utils.RULESET_SNAT.String())
+		rule.SetAction(utils.IPTABLES_ACTION_SNAT).SetComment(utils.SNATComment)
+		rule.SetDstIp("! 224.0.0.0/8").SetSrcIp(address).SetSrcIpRange(fmt.Sprintf("! %s-%s", s.PrivateGatewayIp, s.PrivateGatewayIp)).
+			SetOutNic(priNic).SetSnatTargetIp(s.PublicIp)
+		rules = append(rules, rule)
+	}
+
+	return rules
+}
+
 // Deprecated
 func setSnatHandler(ctx *server.CommandContext) interface{} {
 	cmd := &SetSnatCmd{}
@@ -197,60 +277,13 @@ func RemoveSnat(cmd *RemoveSnatCmd) interface{} {
 	if utils.IsSkipVyosIptables() {
 
 		table := utils.NewIpTables(utils.NatTable)
-		mangleTable := utils.NewIpTables(utils.MangleTable)
 		for _, s := range cmd.NatInfo {
-			publicNic, err := utils.GetNicNameByMac(s.PublicNicMac)
-			utils.PanicOnError(err)
-			priNic, err := utils.GetNicNameByMac(s.PrivateNicMac)
-			utils.PanicOnError(err)
-			address, err := utils.GetNetworkNumber(s.PrivateNicIp, s.SnatNetmask)
-			utils.PanicOnError(err)
-
-			nicNumber, err := utils.GetNicNumber(priNic)
-			utils.PanicOnError(err)
-			// remove set mark rules when remove private nic
-			//setMarkRule := genSetMarkRule(priNic, nicNumber)
-			//mangleTable.RemoveIpTableRule([]*utils.IpTableRule{setMarkRule})
-
-			whiteLists := splitWhiteList(s.WhiteList)
-			if len(whiteLists) == 1 && whiteLists[0] == "null" {
-				whiteLists = []string{}
-			}
-			if len(whiteLists) == 0 {
-				whiteLists = append(whiteLists, address)
-			}
-			for _, ip := range whiteLists {
-				if len(ip) == 0 {
-					continue
-				}
-
-				rule := utils.NewIpTableRule(utils.RULESET_SNAT.String())
-				rule.SetAction(utils.IPTABLES_ACTION_SNAT).SetComment(utils.SNATComment)
-				if strings.Contains(ip, "-") {
-					ipRange := strings.Split(ip, "-")
-					if len(ipRange) != 2 {
-						log.Errorf("whiteList ip format error: %s", ip)
-						continue
-					}
-					rule.SetDstIp("! 224.0.0.0/8").SetSrcIpRange(fmt.Sprintf("%s-%s", ipRange[0], ipRange[1])).
-						SetOutNic(publicNic).SetMarkType(utils.IptablesMarkMatch).SetMark(nicNumber).SetSnatTargetIp(s.PublicIp)
-				} else {
-					rule.SetDstIp("! 224.0.0.0/8").SetSrcIp(ip).SetOutNic(publicNic).
-						SetMarkType(utils.IptablesMarkMatch).SetMark(nicNumber).SetSnatTargetIp(s.PublicIp)
-				}
-				table.RemoveIpTableRule([]*utils.IpTableRule{rule})
-			}
-			rule := utils.NewIpTableRule(utils.RULESET_SNAT.String())
-			rule.SetAction(utils.IPTABLES_ACTION_SNAT).SetComment(utils.SNATComment)
-			rule.SetDstIp("! 224.0.0.0/8").SetSrcIp(address).SetSrcIpRange(fmt.Sprintf("! %s-%s", s.PrivateGatewayIp, s.PrivateGatewayIp)).
-				SetOutNic(priNic).SetSnatTargetIp(s.PublicIp)
-
-			table.RemoveIpTableRule([]*utils.IpTableRule{rule})
+			rules := genSnatRule(s, true)
+			table.RemoveIpTableRule(rules)
 		}
 
 		err := table.Apply()
 		utils.PanicOnError(err)
-		err = mangleTable.Apply()
 		utils.PanicOnError(err)
 
 	} else {
@@ -294,52 +327,13 @@ func setSnatStateByIptables(Snats []SnatInfo, state bool) {
 	var rules []*utils.IpTableRule
 	var setMarkRules []*utils.IpTableRule
 	for _, s := range Snats {
-		outNic, err := utils.GetNicNameByMac(s.PublicNicMac)
-		utils.PanicOnError(err)
 		inNic, err := utils.GetNicNameByMac(s.PrivateNicMac)
-		utils.PanicOnError(err)
-		address, err := utils.GetNetworkNumber(s.PrivateNicIp, s.SnatNetmask)
 		utils.PanicOnError(err)
 		nicNumber, err := utils.GetNicNumber(inNic)
 		utils.PanicOnError(err)
 		setMarkRule := genSetMarkRule(inNic, nicNumber)
 		setMarkRules = append(setMarkRules, setMarkRule)
-
-		whiteLists := splitWhiteList(s.WhiteList)
-		if len(whiteLists) == 1 && whiteLists[0] == "null" {
-			whiteLists = []string{}
-		}
-		if len(whiteLists) == 0 {
-			whiteLists = append(whiteLists, address)
-		}
-		for _, ip := range whiteLists {
-			if len(ip) == 0 {
-				continue
-			}
-			rule := utils.NewIpTableRule(utils.RULESET_SNAT.String())
-			rule.SetAction(utils.IPTABLES_ACTION_SNAT).SetComment(utils.SNATComment)
-			if strings.Contains(ip, "-") {
-				ipRange := strings.Split(ip, "-")
-				if len(ipRange) != 2 {
-					log.Errorf("whiteList ip format error: %s", ip)
-					continue
-				}
-				rule.SetDstIp("! 224.0.0.0/8").SetSrcIpRange(fmt.Sprintf("%s-%s", ipRange[0], ipRange[1])).
-					SetOutNic(outNic).SetMarkType(utils.IptablesMarkMatch).SetMark(nicNumber).SetSnatTargetIp(s.PublicIp)
-			} else {
-				rule.SetDstIp("! 224.0.0.0/8").SetSrcIp(ip).
-					SetOutNic(outNic).SetMarkType(utils.IptablesMarkMatch).SetMark(nicNumber).SetSnatTargetIp(s.PublicIp)
-			}
-			rules = append(rules, rule)
-		}
-
-		if state == false {
-			rule := utils.NewIpTableRule(utils.RULESET_SNAT.String())
-			rule.SetAction(utils.IPTABLES_ACTION_SNAT).SetComment(utils.SNATComment)
-			rule.SetDstIp("! 224.0.0.0/8").SetSrcIp(address).SetSrcIpRange(fmt.Sprintf("! %s-%s", s.PrivateGatewayIp, s.PrivateGatewayIp)).
-				SetOutNic(inNic).SetSnatTargetIp(s.PublicIp)
-			rules = append(rules, rule)
-		}
+		rules = append(rules, genSnatRule(s, !state)...)
 	}
 
 	if state == false {
@@ -417,46 +411,15 @@ func syncSnatByIptables(Snats []SnatInfo, state bool) {
 		if !s.State {
 			continue
 		}
-		outNic, err := utils.GetNicNameByMac(s.PublicNicMac)
-		utils.PanicOnError(err)
 		priNic, err := utils.GetNicNameByMac(s.PrivateNicMac)
 		utils.PanicOnError(err)
-		address, err := utils.GetNetworkNumber(s.PrivateNicIp, s.SnatNetmask)
-		utils.PanicOnError(err)
-
-		//get number from eth[Nth]
 		nicNumber, err := utils.GetNicNumber(priNic)
 		utils.PanicOnError(err)
+
 		setMarkRule := genSetMarkRule(priNic, nicNumber)
 		setMarkRules = append(setMarkRules, setMarkRule)
 
-		whiteLists := splitWhiteList(s.WhiteList)
-		if len(whiteLists) == 1 && whiteLists[0] == "null" {
-			whiteLists = []string{}
-		}
-		if len(whiteLists) == 0 {
-			whiteLists = append(whiteLists, address)
-		}
-		for _, ip := range whiteLists {
-			if len(ip) == 0 {
-				continue
-			}
-			rule := utils.NewIpTableRule(utils.RULESET_SNAT.String())
-			rule.SetAction(utils.IPTABLES_ACTION_SNAT).SetComment(utils.SNATComment)
-			if strings.Contains(ip, "-") {
-				ipRange := strings.Split(ip, "-")
-				if len(ipRange) != 2 {
-					log.Errorf("whiteList ip format error: %s", ip)
-					continue
-				}
-				rule.SetDstIp("! 224.0.0.0/8").SetSrcIpRange(fmt.Sprintf("%s-%s", ipRange[0], ipRange[1])).
-					SetOutNic(outNic).SetMarkType(utils.IptablesMarkMatch).SetMark(nicNumber).SetSnatTargetIp(s.PublicIp)
-			} else {
-				rule.SetDstIp("! 224.0.0.0/8").SetSrcIp(ip).
-					SetOutNic(outNic).SetMarkType(utils.IptablesMarkMatch).SetMark(nicNumber).SetSnatTargetIp(s.PublicIp)
-			}
-			rules = append(rules, rule)
-		}
+		rules = append(rules, genSnatRule(s, false)...)
 	}
 
 	table.AddIpTableRules(rules)
