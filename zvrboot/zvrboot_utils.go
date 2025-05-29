@@ -131,8 +131,13 @@ func configureSshServer() {
 	sshport := utils.BootstrapInfo["sshPort"].(float64)
 	address := mgmtNic.Ip
 	utils.Assert(address != "", "cannot find eth0 ip address in bootstrap info")
+	passwordAuthentication := "no"
+	if _, ok := utils.BootstrapInfo["publicKey"].(string); ok {
+		passwordAuthentication = utils.BootstrapInfo["publicKey"].(string)
+	}
 
 	sshInfo := utils.NewSshServer().SetListen(address).SetPorts(int(sshport)).SetKeys(sshkey)
+	sshInfo.SetPasswordAuthentication(passwordAuthentication)
 	err := sshInfo.ConfigService()
 	utils.Assertf(err == nil, "configure SSH Server error: %s", err)
 }

@@ -42,7 +42,7 @@ LogLevel INFO
 PermitRootLogin no
 
 # Specifies whether password authentication is allowed
-PasswordAuthentication no`
+PasswordAuthentication {{.PasswordAuthentication}}`
 
 const sshdTemplate = `# Auto Create by Zstack, Do Not Modify It
 #
@@ -90,7 +90,7 @@ PermitEmptyPasswords no
 ChallengeResponseAuthentication no
 
 # Change to no to disable tunnelled clear text passwords
-PasswordAuthentication no
+PasswordAuthentication {{.PasswordAuthentication}}
 
 X11Forwarding yes
 X11DisplayOffset 10
@@ -165,7 +165,7 @@ AuthorizedKeysFile      .ssh/authorized_keys
 #IgnoreRhosts yes
 
 # To disable tunneled clear text passwords, change to no here!
-PasswordAuthentication no
+PasswordAuthentication {{.PasswordAuthentication}}
 #PermitEmptyPasswords no
 
 # Change to no to disable s/key passwords

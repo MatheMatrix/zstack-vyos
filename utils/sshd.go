@@ -15,14 +15,15 @@ import (
 )
 
 const (
-	SSHD_CONFIG_FILE      = "/etc/ssh/sshd_config"
-	SSHD_TEMPLATE_FILE    = "template/sshd_tmpl"
+	SSHD_CONFIG_FILE   = "/etc/ssh/sshd_config"
+	SSHD_TEMPLATE_FILE = "template/sshd_tmpl"
 )
 
 type SshdInfo struct {
-	Port          int
-	ListenAddress string
-	Keys          []string
+	Port                   int
+	ListenAddress          string
+	Keys                   []string
+	PasswordAuthentication string
 }
 
 func getSshConfigFileTemp() string {
@@ -35,8 +36,9 @@ func getSshKeysPath() string {
 
 func NewSshServer() *SshdInfo {
 	sshAttr := SshdInfo{
-		Port:          22,
-		ListenAddress: "0.0.0.0",
+		Port:                   22,
+		ListenAddress:          "0.0.0.0",
+		PasswordAuthentication: "no",
 	}
 	return &sshAttr
 }
@@ -60,6 +62,14 @@ func (s *SshdInfo) SetListen(address string) *SshdInfo {
 func (s *SshdInfo) SetKeys(pub_key string) *SshdInfo {
 	if pub_key != "" {
 		s.Keys = append(s.Keys, pub_key)
+	}
+
+	return s
+}
+
+func (s *SshdInfo) SetPasswordAuthentication(passwordAuthentication string) *SshdInfo {
+	if passwordAuthentication != "" {
+		s.PasswordAuthentication = passwordAuthentication
 	}
 
 	return s
@@ -105,7 +115,7 @@ func (s *SshdInfo) ConfigService() error {
 	// }
 	// bash.Run()
 
-	if err = CopyFile(getSshConfigFileTemp(), SSHD_CONFIG_FILE);err != nil {
+	if err = CopyFile(getSshConfigFileTemp(), SSHD_CONFIG_FILE); err != nil {
 		return err
 	}
 
@@ -117,7 +127,7 @@ func (s *SshdInfo) ConfigService() error {
 		}
 
 		SetFileOwner(getSshKeysPath(), GetZvrUser(), "users")
-		
+
 		defer file.Close()
 
 		if _, err := file.WriteString(keys_str); err != nil {
