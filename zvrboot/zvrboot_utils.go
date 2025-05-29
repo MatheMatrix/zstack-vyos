@@ -134,8 +134,8 @@ func configureSshServer() {
 	address := mgmtNic.Ip
 	utils.Assert(address != "", "cannot find eth0 ip address in bootstrap info")
 	passwordAuthentication := "no"
-	if _, ok := utils.BootstrapInfo["publicKey"].(string); ok {
-		passwordAuthentication = utils.BootstrapInfo["publicKey"].(string)
+	if _, ok := utils.BootstrapInfo["allowPasswordAuth"].(string); ok {
+		passwordAuthentication = utils.BootstrapInfo["allowPasswordAuth"].(string)
 	}
 
 	sshInfo := utils.NewSshServer().SetListen(address).SetPorts(int(sshport)).SetKeys(sshkey)
