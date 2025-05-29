@@ -161,11 +161,25 @@ func genSnatRule(s SnatInfo, needGenLocalSnatRule bool) []*utils.IpTableRule {
 				rules = append(rules, rule)
 			} else {
 				for _, destIp := range destWhitelist {
-					rule := utils.NewIpTableRule(utils.RULESET_SNAT.String())
-					rule.SetAction(utils.IPTABLES_ACTION_SNAT).SetComment(utils.SNATComment)
-					rule.SetDstIp(destIp).SetSrcIpRange(fmt.Sprintf("%s-%s", ipRange[0], ipRange[1])).
-						SetOutNic(publicNic).SetMarkType(utils.IptablesMarkMatch).SetMark(nicNumber).SetSnatTargetIp(s.PublicIp)
-					rules = append(rules, rule)
+					if strings.Contains(destIp, "-") {
+						destIpRange := strings.Split(destIp, "-")
+						if len(destIpRange) != 2 {
+							log.Errorf("destWhiteList ip format error: %s", destIp)
+							continue
+						}
+						rule := utils.NewIpTableRule(utils.RULESET_SNAT.String())
+						rule.SetAction(utils.IPTABLES_ACTION_SNAT).SetComment(utils.SNATComment)
+						rule.SetDstIpRange(fmt.Sprintf("%s-%s", destIpRange[0], destIpRange[1])).
+							SetSrcIpRange(fmt.Sprintf("%s-%s", ipRange[0], ipRange[1])).
+							SetOutNic(publicNic).SetMarkType(utils.IptablesMarkMatch).SetMark(nicNumber).SetSnatTargetIp(s.PublicIp)
+						rules = append(rules, rule)
+					} else {
+						rule := utils.NewIpTableRule(utils.RULESET_SNAT.String())
+						rule.SetAction(utils.IPTABLES_ACTION_SNAT).SetComment(utils.SNATComment)
+						rule.SetDstIp(destIp).SetSrcIpRange(fmt.Sprintf("%s-%s", ipRange[0], ipRange[1])).
+							SetOutNic(publicNic).SetMarkType(utils.IptablesMarkMatch).SetMark(nicNumber).SetSnatTargetIp(s.PublicIp)
+						rules = append(rules, rule)
+					}
 				}
 			}
 		} else {
@@ -177,14 +191,29 @@ func genSnatRule(s SnatInfo, needGenLocalSnatRule bool) []*utils.IpTableRule {
 				rules = append(rules, rule)
 			} else {
 				for _, destIp := range destWhitelist {
-					rule := utils.NewIpTableRule(utils.RULESET_SNAT.String())
-					rule.SetAction(utils.IPTABLES_ACTION_SNAT).SetComment(utils.SNATComment)
-					rule.SetDstIp(destIp).SetSrcIp(ip).SetOutNic(publicNic).
-						SetMarkType(utils.IptablesMarkMatch).SetMark(nicNumber).SetSnatTargetIp(s.PublicIp)
-					rules = append(rules, rule)
+					if strings.Contains(destIp, "-") {
+						destIpRange := strings.Split(destIp, "-")
+						if len(destIpRange) != 2 {
+							log.Errorf("destWhiteList ip format error: %s", destIp)
+							continue
+						}
+						rule := utils.NewIpTableRule(utils.RULESET_SNAT.String())
+						rule.SetAction(utils.IPTABLES_ACTION_SNAT).SetComment(utils.SNATComment)
+						rule.SetDstIpRange(fmt.Sprintf("%s-%s", destIpRange[0], destIpRange[1])).
+							SetSrcIp(ip).SetOutNic(publicNic).
+							SetMarkType(utils.IptablesMarkMatch).SetMark(nicNumber).SetSnatTargetIp(s.PublicIp)
+						rules = append(rules, rule)
+					} else {
+						rule := utils.NewIpTableRule(utils.RULESET_SNAT.String())
+						rule.SetAction(utils.IPTABLES_ACTION_SNAT).SetComment(utils.SNATComment)
+						rule.SetDstIp(destIp).SetSrcIp(ip).SetOutNic(publicNic).
+							SetMarkType(utils.IptablesMarkMatch).SetMark(nicNumber).SetSnatTargetIp(s.PublicIp)
+						rules = append(rules, rule)
+					}
 				}
 			}
 		}
+
 	}
 	if needGenLocalSnatRule {
 		rule := utils.NewIpTableRule(utils.RULESET_SNAT.String())
@@ -193,7 +222,6 @@ func genSnatRule(s SnatInfo, needGenLocalSnatRule bool) []*utils.IpTableRule {
 			SetOutNic(priNic).SetSnatTargetIp(s.PublicIp)
 		rules = append(rules, rule)
 	}
-
 	return rules
 }
 
