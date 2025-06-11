@@ -17,6 +17,8 @@ const (
 	ROUTETABLE_ID_MIN  = 1
 	ROUTETABLE_ID_MAX  = 250
 	ROUTETABLE_ID_MAIN = 254
+
+	ROUTE_TAG_MGT = "1"
 )
 
 func getPolicyRouterTableFileTemp() string {
@@ -123,6 +125,7 @@ type ZStackRouteEntry struct {
 	NextHopIp       string
 	NicName         string
 	Distance        int
+	Tag             string
 }
 
 func (e ZStackRouteEntry) Equal(b ZStackRouteEntry) error {
@@ -146,6 +149,10 @@ func (e ZStackRouteEntry) Equal(b ZStackRouteEntry) error {
 		return fmt.Errorf("nicName is different, %s:%s", e.NicName, b.NicName)
 	}
 
+	if e.Tag != "" && e.Tag != b.Tag {
+		return fmt.Errorf("tag is different, %s:%s", e.Tag, b.Tag)
+	}
+
 	return nil
 }
 
@@ -166,102 +173,58 @@ func (e ZStackRouteEntry) prefixEqual(b ZStackRouteEntry) error {
 }
 
 func (e ZStackRouteEntry) addCommand() string {
-	prefix := "ip"
-	if e.Ipv6 {
-		prefix = "ipv6"
-	}
-	if e.TableId == ROUTETABLE_ID_MAIN {
-		if e.NextHopIp != "" {
-			if e.Distance != 0 {
-				return fmt.Sprintf("%s route %s %s %d", prefix, e.DestinationCidr, e.NextHopIp, e.Distance)
-			} else {
-				return fmt.Sprintf("%s route %s %s", prefix, e.DestinationCidr, e.NextHopIp)
-			}
-		} else if e.NicName != "" {
-			if e.Distance != 0 {
-				return fmt.Sprintf("%s route %s %s %d",
-					prefix, e.DestinationCidr, e.NicName, e.Distance)
-			} else {
-				return fmt.Sprintf("%s route %s %s",
-					prefix, e.DestinationCidr, e.NicName)
-			}
-		} else {
-			log.Debugf("can not add route entry,because nexthopIp and nicName is null")
-			return ""
-		}
-	}
-
-	if e.NextHopIp != "" {
-		if e.Distance != 0 {
-			return fmt.Sprintf("%s route %s %s table %d %d",
-				prefix, e.DestinationCidr, e.NextHopIp, e.TableId, e.Distance)
-		} else {
-			return fmt.Sprintf("%s route %s %s table %d",
-				prefix, e.DestinationCidr, e.NextHopIp, e.TableId)
-		}
-	} else if e.NicName != "" {
-		if e.Distance != 0 {
-			return fmt.Sprintf("%s route %s %s table %d %d",
-				prefix, e.DestinationCidr, e.NicName, e.TableId, e.Distance)
-		} else {
-			return fmt.Sprintf("%s route %s %s table %d",
-				prefix, e.DestinationCidr, e.NicName, e.TableId)
-		}
-	} else {
+	cmd := e.String()
+	if cmd == "" {
 		log.Debugf("can not add route entry,because nexthopIp and nicName is null")
 		return ""
 	}
+
+	return cmd
 }
 
 func (e ZStackRouteEntry) deleteCommand() string {
-	prefix := "ip"
-	if e.Ipv6 {
-		prefix = "ipv6"
-	}
-
-	if e.TableId == ROUTETABLE_ID_MAIN {
-		if e.NextHopIp != "" {
-			if e.Distance != 0 {
-				return fmt.Sprintf("no %s route %s %s %d",
-					prefix, e.DestinationCidr, e.NextHopIp, e.Distance)
-			} else {
-				return fmt.Sprintf("no %s route %s %s",
-					prefix, e.DestinationCidr, e.NextHopIp)
-			}
-		} else if e.NicName != "" {
-			if e.Distance != 0 {
-				return fmt.Sprintf("no %s route %s %s %d",
-					prefix, e.DestinationCidr, e.NicName, e.Distance)
-			} else {
-				return fmt.Sprintf("no %s route %s %s",
-					prefix, e.DestinationCidr, e.NicName)
-			}
-		} else {
-			log.Debugf("can not del route entry: %+v,because nexthopIp and nicName is null", e)
-			return ""
-		}
-	}
-
-	if e.NextHopIp != "" {
-		if e.Distance != 0 {
-			return fmt.Sprintf("no %s route %s %s table %d %d",
-				prefix, e.DestinationCidr, e.NextHopIp, e.TableId, e.Distance)
-		} else {
-			return fmt.Sprintf("no %s route %s %s table %d",
-				prefix, e.DestinationCidr, e.NextHopIp, e.TableId)
-		}
-	} else if e.NicName != "" {
-		if e.Distance != 0 {
-			return fmt.Sprintf("no %s route %s %s table %d %d",
-				prefix, e.DestinationCidr, e.NicName, e.TableId, e.Distance)
-		} else {
-			return fmt.Sprintf("no %s route %s %s table %d",
-				prefix, e.DestinationCidr, e.NicName, e.TableId)
-		}
-	} else {
-		log.Debugf("can not del route entry: %+v,because nexthopIp and nicName is null", e)
+	cmd := e.String()
+	if cmd == "" {
+		log.Debugf("can not delete route entry,because nexthopIp and nicName is null")
 		return ""
 	}
+
+	return "no " + cmd
+}
+
+func (e ZStackRouteEntry) String() string {
+	var parts []string
+
+	if e.Ipv6 {
+		parts = append(parts, "ipv6")
+	} else {
+		parts = append(parts, "ip")
+	}
+
+	parts = append(parts, "route")
+	parts = append(parts, e.DestinationCidr)
+
+	if e.NextHopIp != "" {
+		parts = append(parts, fmt.Sprintf("%s", e.NextHopIp))
+	} else if e.NicName != "" {
+		parts = append(parts, fmt.Sprintf("%s", e.NicName))
+	} else {
+		return ""
+	}
+
+	if e.TableId != ROUTETABLE_ID_MAIN {
+		parts = append(parts, fmt.Sprintf("table: %d", e.TableId))
+	}
+
+	if e.Distance != 0 {
+		parts = append(parts, fmt.Sprintf("distance: %d", e.Distance))
+	}
+
+	if e.Tag != "" {
+		parts = append(parts, fmt.Sprintf("tag: %s", e.Tag))
+	}
+
+	return strings.Join(parts, " ")
 }
 
 func GetCurrentRouteEntriesEuler2203(tableId int) []ZStackRouteEntry {
@@ -287,7 +250,7 @@ func GetCurrentRouteEntriesEuler2203(tableId int) []ZStackRouteEntry {
 			# vtysh -c 'show run' | grep  'ip route' | grep -v 'table'
 			ip route 1.1.1.0/24 192.168.100.2 128
 			ip route 1.1.2.0/24 192.168.100.3 128
-			ip route 2.2.2.0/24 1.1.1.100 128
+			ip route 2.2.2.0/24 1.1.1.100 128 tag 1
 			ip route 3.3.3.0/24 Null0 128
 		    ipv6 route ::/0 2025:5:14:1::1
 	*/
@@ -302,7 +265,7 @@ func GetCurrentRouteEntriesEuler2203(tableId int) []ZStackRouteEntry {
 
 			items := strings.Fields(line)
 			dst := items[2]
-			var nh, dev string
+			var nh, dev, tag string
 			var metric int
 			if addr, err := netip.ParseAddr(items[3]); err == nil {
 				nh = addr.String()
@@ -310,8 +273,12 @@ func GetCurrentRouteEntriesEuler2203(tableId int) []ZStackRouteEntry {
 				dev = items[3]
 			}
 
-			if len(items) == 5 {
-				metric, _ = strconv.Atoi(items[4])
+			if len(items) >= 5 {
+				if items[4] == "tag" {
+					tag = items[5]
+				} else {
+					metric, _ = strconv.Atoi(items[4])
+				}
 			}
 
 			e := ZStackRouteEntry{
@@ -320,6 +287,7 @@ func GetCurrentRouteEntriesEuler2203(tableId int) []ZStackRouteEntry {
 				NextHopIp:       nh,
 				NicName:         dev,
 				Distance:        metric,
+				Tag:             tag,
 			}
 			entries = append(entries, e)
 		}
@@ -443,13 +411,22 @@ func GetCurrentRouteEntries(tableId int) []ZStackRouteEntry {
 }
 
 func deleteRouteEntries(entries []ZStackRouteEntry) error {
-	cmds := []string{"vtysh -c 'configure terminal'"}
+	var cmds []string
 	for _, r := range entries {
-		cmds = append(cmds, fmt.Sprintf("-c '%s'", r.deleteCommand()))
+		cmd := r.deleteCommand()
+		if cmd != "" {
+			cmds = append(cmds, fmt.Sprintf("-c '%s'", cmd))
+		}
 	}
 
+	if len(cmds) == 1 {
+		return nil
+	}
+
+	cmdss := []string{"vtysh -c 'configure terminal'"}
+	cmdss = append(cmdss, cmds...)
 	bash := Bash{
-		Command: fmt.Sprintf("%s", strings.Join(cmds, " ")),
+		Command: fmt.Sprintf("%s", strings.Join(cmdss, " ")),
 	}
 
 	ret, _, e, err := bash.RunWithReturn()
@@ -463,11 +440,20 @@ func deleteRouteEntries(entries []ZStackRouteEntry) error {
 func addRouteEntries(entries []ZStackRouteEntry) error {
 	cmds := []string{"vtysh -c 'configure terminal'"}
 	for _, r := range entries {
-		cmds = append(cmds, fmt.Sprintf("-c '%s'", r.addCommand()))
+		cmd := r.addCommand()
+		if cmd == "" {
+			cmds = append(cmds, fmt.Sprintf("-c '%s'", r.addCommand()))
+		}
 	}
 
+	if len(cmds) == 1 {
+		return nil
+	}
+
+	cmdss := []string{"vtysh -c 'configure terminal'"}
+	cmdss = append(cmdss, cmds...)
 	bash := Bash{
-		Command: fmt.Sprintf("%s", strings.Join(cmds, " ")),
+		Command: fmt.Sprintf("%s", strings.Join(cmdss, " ")),
 	}
 
 	ret, _, e, err := bash.RunWithReturn()
@@ -609,11 +595,23 @@ func AddRouteForMgmtEuler2203(mgtIp, mgtNic, gw string) error {
 		return nil
 	}
 
+	var delEntries []ZStackRouteEntry
+	curRts := GetCurrentRouteEntriesEuler2203(RT_TABLES_MAIN)
+	for _, r := range curRts {
+		if r.Tag == ROUTE_TAG_MGT {
+			delEntries = append(delEntries, r)
+		}
+	}
+	if len(delEntries) > 0 {
+		_ = deleteRouteEntries(delEntries)
+	}
+
 	mgtEntry := ZStackRouteEntry{
 		DestinationCidr: mgtIp,
 		NicName:         mgtNic,
 		NextHopIp:       gw,
 		TableId:         ROUTETABLE_ID_MAIN,
+		Tag:             ROUTE_TAG_MGT,
 	}
 	return addRouteEntries([]ZStackRouteEntry{mgtEntry})
 }
