@@ -315,6 +315,23 @@ func SetZebraRoutes(infos []RouteInfo) {
 
 	// 3. apply new entry by vtysh
 	for _, r := range infos {
+		isDuplicate := false
+		for _, old := range oldRoutes {
+			if old.Dst == r.Destination &&
+				((r.Target == "" && (old.NextHop == "" || old.NextHop == "Null0")) ||
+					(r.Target == old.NextHop)) &&
+				old.Distance == r.Distance {
+				isDuplicate = true
+				newRoutes = append(newRoutes, old)
+				break
+			}
+		}
+
+		if isDuplicate {
+			log.Debugf("skip duplicate route: %+v", r)
+			continue
+		}
+
 		if r.Target == "" {
 			newEntry = utils.NewZebraRoute().SetDst(r.Destination).SetDistance(r.Distance).SetNextHop(utils.BLACKHOLE_ROUTE)
 		} else {
@@ -373,11 +390,6 @@ func configureOspfByVtysh(cmd *setOspfCmd) {
 	// 2. get new ospf cmd
 	newCmd, err = parseOspfToVtyshCmd(cmd)
 	utils.PanicOnError(err)
-  
-  if isOspfConfigEqual(oldCmd, newCmd) {
-		return
-	}
-
 	if isOspfConfigEqual(oldCmd, newCmd) {
 		log.Debugf("ospf config is equal")
 		return
@@ -440,6 +452,8 @@ func parseRunningOspfConfig(output []byte) (*utils.VtyshOspfCmd, error) {
 		if matches := areaStubRegex.FindStringSubmatch(line); len(matches) > 1 {
 			stubAreas[matches[1]] = true
 			v.SetArea(matches[1], "Stub", string(None))
+		} else if netmatches := networkRegex.FindStringSubmatch(line); len(netmatches) > 1 {
+			v.SetArea(netmatches[2], "Standard", string(None))
 		}
 	}
 
@@ -530,8 +544,24 @@ func isOspfConfigEqual(old, new *utils.VtyshOspfCmd) bool {
 	if len(old.NetworkCmd) != len(new.NetworkCmd) {
 		return false
 	}
-	for k, oldNetwork := range old.NetworkCmd {
-		if oldNetwork != new.NetworkCmd[k] {
+	newNetworkMatched := make([]bool, len(new.NetworkCmd))
+
+	for _, oldNetwork := range old.NetworkCmd {
+		found := false
+		for j, newNetwork := range new.NetworkCmd {
+			if !newNetworkMatched[j] && oldNetwork == newNetwork {
+				newNetworkMatched[j] = true
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+
+	for _, matched := range newNetworkMatched {
+		if !matched {
 			return false
 		}
 	}
