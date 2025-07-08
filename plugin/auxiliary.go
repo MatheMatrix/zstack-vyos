@@ -315,6 +315,23 @@ func SetZebraRoutes(infos []RouteInfo) {
 
 	// 3. apply new entry by vtysh
 	for _, r := range infos {
+		isDuplicate := false
+		for _, old := range oldRoutes {
+			if old.Dst == r.Destination &&
+				((r.Target == "" && (old.NextHop == "" || old.NextHop == "Null0")) ||
+					(r.Target == old.NextHop)) &&
+				old.Distance == r.Distance {
+				isDuplicate = true
+				newRoutes = append(newRoutes, old)
+				break
+			}
+		}
+
+		if isDuplicate {
+			log.Debugf("skip duplicate route: %+v", r)
+			continue
+		}
+
 		if r.Target == "" {
 			newEntry = utils.NewZebraRoute().SetDst(r.Destination).SetDistance(r.Distance).SetNextHop(utils.BLACKHOLE_ROUTE)
 		} else {
@@ -373,8 +390,8 @@ func configureOspfByVtysh(cmd *setOspfCmd) {
 	// 2. get new ospf cmd
 	newCmd, err = parseOspfToVtyshCmd(cmd)
 	utils.PanicOnError(err)
-  
-  if isOspfConfigEqual(oldCmd, newCmd) {
+
+	if isOspfConfigEqual(oldCmd, newCmd) {
 		return
 	}
 
