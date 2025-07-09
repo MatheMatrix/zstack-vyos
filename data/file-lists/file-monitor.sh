@@ -14,6 +14,7 @@ ret=""
 NEED_REPORT_MN="false"
 sizeFilesMap=""
 retJson=""
+ZVRBIN_PATHS=$(find /home/ -xdev -name "zvr.bin" 2>/dev/null)
 
 OS="vyos 1.1.7"
 if [ -f /etc/system-release ]; then
@@ -50,8 +51,22 @@ checkFileSize() {
     fileNum=`(echo $sizeFileM|awk '{print NF}')`
     for (( i = 1; i < $fileNum; i=$i+2 )); do
         size=$(echo $sizeFileM|cut -d " " -f$i)
+        filePath=$(echo $sizeFileM|cut -d " " -f$((i+1)))
+
+        isZvrBin=false
+        for zvrPath in $ZVRBIN_PATHS; do
+            if [ "$filePath" = "$zvrPath" ]; then
+                isZvrBin=true
+                echo "$(date '+%Y-%m-%d %H:%M:%S') Skipping zvr.bin file: $filePath ($size MB)" >> $LOGFILE
+                break
+            fi
+        done
+
+        if [ "$isZvrBin" = true ]; then
+            continue
+        fi
+
         if [ $size -gt $abnormalFileMaxSize ]; then
-            filePath=$(echo $sizeFileM|cut -d " " -f$((i+1)))
             info="$filePath $size"
             ret="$ret|$info"
         fi
@@ -101,8 +116,10 @@ fi
 sizeFilesMap=$(find $DEFAULT_MONIOTOR_DIR -type f -print0 | xargs -0 du -hm | sort -rh | head -n $MAX_NUM_OF_MONITOR_DIR)
 maxSize=$(echo $sizeFilesMap|cut -d " " -f1)
 if [ $maxSize -gt $abnormalFileMaxSize ]; then
-    NEED_REPORT_MN="true"
     checkFileSize
+        if [ -n "$ret" ]; then
+            NEED_REPORT_MN="true"
+        fi
 fi
 
 
