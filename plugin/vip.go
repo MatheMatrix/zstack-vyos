@@ -614,25 +614,23 @@ func (rules *interfaceQosRules) InterfaceQosRuleAddRule(rule *qosRule) interface
 	}
 
 	if rule.sharedQosUuid != "" {
+		// Only handle port related to the current rule
 		if oldVipRules, vipOk := rules.rules[rule.ip]; vipOk {
-			log.Debugf("Deleting old rules for IP %s due to new sharedQosUuid", rule.ip)
-			for _, oldRule := range oldVipRules.portRules {
-				if oldRule.ip == rule.ip {
-					rules.InterfaceQosRuleDelRule(*oldRule)
-				}
+			if oldRule, exists := oldVipRules.portRules[rule.port]; exists {
+				log.Debugf("Deleting old rule for IP %s port %d due to new sharedQosUuid", rule.ip, rule.port)
+				rules.InterfaceQosRuleDelRule(*oldRule)
 			}
-			if _, exists := rules.sharedClassIdMap[rule.sharedQosUuid]; !exists {
-				rules.InterfaceQosRuleInit(rules.direct)
+		}
+
+		// If it is a new sharedQosUuid, assign a classId to it
+		if _, exists := rules.sharedClassIdMap[rule.sharedQosUuid]; !exists {
+			classId := rules.classBitmap.FindFirstAvailable()
+			if classId == MAX_UINT32 {
+				utils.PanicOnError(fmt.Errorf("Qos class is full for interface %s ifbname %s", rules.name, rules.ifbName))
 			}
-			log.Debugf("AddRuleToInterface create map for ip %s", rule.ip)
-			if len(rules.rules) >= TC_MAX_FILTER {
-				utils.PanicOnError(fmt.Errorf("VipQos Reach the max number %d of interface %s ifbname %s",
-					TC_MAX_FILTER, rules.name, rules.ifbName))
-			}
-			prioId := rules.prioBitMap.FindFirstAvailable()
-			rules.prioBitMap.AddNumber(prioId)
-			rules.rules[rule.ip] = newVipQosRules(make(map[uint16]*qosRule), rule.ip, prioId, rule.vipUuid)
-			rules.rules[rule.ip].VipQosRulesInit(name)
+			rules.classBitmap.AddNumber(classId)
+			rules.sharedClassIdMap[rule.sharedQosUuid] = classId
+			log.Debugf("Allocated new classId %x for sharedQosUuid %s", classId, rule.sharedQosUuid)
 		}
 	}
 
