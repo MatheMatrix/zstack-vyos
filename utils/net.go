@@ -220,6 +220,11 @@ func DeleteRouteIfExists(ip string) error {
 		bash := Bash{
 			Command: fmt.Sprintf("sudo ip route del %s/32", ip),
 		}
+		if IsEuler2203() {
+			bash = Bash{
+				Command: fmt.Sprintf("sudo vtysh -c 'configure terminal' -c 'no ip route %s/32'", ip),
+			}
+		}
 		_, _, _, err := bash.RunWithReturn()
 		if err != nil {
 			return err
@@ -509,6 +514,11 @@ func GetNexthop(dst string) (string, error) {
 func AddRoute(dst, nexthop string) error {
 	bash := Bash{
 		Command: fmt.Sprintf("sudo ip route add %s via %s", dst, nexthop),
+	}
+	if IsEuler2203() {
+		bash = Bash{
+			Command: fmt.Sprintf("sudo vtysh -c 'configure terminal' -c 'ip route %s %s'", dst, nexthop),
+		}
 	}
 	ret, _, e, err := bash.RunWithReturn()
 	if err != nil {

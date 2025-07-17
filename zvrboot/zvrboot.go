@@ -660,8 +660,15 @@ func configureVyos() {
 			tree.Deletef("protocols static route 0.0.0.0/0 next-hop %v", defaultNic.Gateway)
 			tree.Apply(true)
 
-			b := utils.Bash{
-				Command: fmt.Sprintf("ip route add default via %s dev %s", defaultNic.Gateway, defaultNic.Name),
+			b := utils.Bash{Command: fmt.Sprintf("ip route add default via %s dev %s", defaultNic.Gateway, defaultNic.Name)}
+			if utils.IsEuler2203() {
+				b = utils.Bash{
+					Command: fmt.Sprintf(
+						"sudo vtysh -c 'configure terminal' -c 'ip route 0.0.0.0/0 %s %s'",
+						defaultNic.Gateway,
+						defaultNic.Name,
+					),
+				}
 			}
 			b.Run()
 		}
