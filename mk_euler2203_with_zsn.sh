@@ -92,10 +92,11 @@ upload $tmpdir/zstack-network-agent  /usr/local/bin/zstack-network-agent
 chmod 777  /usr/local/bin/zstack-network-agent
 upload $BOOTSCRIPT   /usr/local/bin/zstack-vrouter-bootup
 chmod 777  /usr/local/bin/zstack-vrouter-bootup
-rm-f /usr/local/zstack/.zstack_runner
 
 mkdir-p /home/zstack/zvr/data/
 tar-in $DATA /home/zstack/zvr/data/ compress:gzip
+
+rm /usr/local/zstack/.zstack_runner
 _EOF_
 
 #/bin/rm -rf $tmpdir
