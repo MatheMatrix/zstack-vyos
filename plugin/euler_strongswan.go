@@ -24,8 +24,8 @@ connections {
         {{- end}}
 
         local {
-            auth = {{.Authby}}
-            id = {{.Leftid}}
+           auth = {{.Authby}}
+           id = {{.Leftid}}
         }
 
         remote {
@@ -76,12 +76,12 @@ connections {
 }
 
 secrets {
-   ike-1 {
+   ike1-{{ slice .ConnName 0 8 }} {
       id-1 = {{.Leftid}}
       secret = {{.Secret}}
    }
 
-   ike-2 {
+   ike2-{{ slice .ConnName 0 8 }} {
       id-2 = {{.Rightid}}
       secret = {{.Secret}}
    }
