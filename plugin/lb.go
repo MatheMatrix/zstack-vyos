@@ -2149,6 +2149,7 @@ const (
 	LB_UUID                = "LbUuid"
 	LB_LISTENER_UUID       = "ListenerUuid"
 	LB_LISTENER_BACKEND_IP = "NicIpAddress"
+	LB_ServerGroup_UUID    = "ServerGroupUuid"
 )
 
 func NewLbPrometheusCollector() MetricCollector {
@@ -2156,7 +2157,7 @@ func NewLbPrometheusCollector() MetricCollector {
 		statusEntry: prom.NewDesc(
 			"zstack_lb_status",
 			"Backend server health status",
-			[]string{LB_LISTENER_UUID, LB_LISTENER_BACKEND_IP, LB_UUID}, nil,
+			[]string{LB_LISTENER_UUID, LB_LISTENER_BACKEND_IP, LB_UUID, LB_ServerGroup_UUID}, nil,
 		),
 		curSessionNumEntry: prom.NewDesc(
 			"zstack_lb_cur_session_num",
@@ -2166,12 +2167,12 @@ func NewLbPrometheusCollector() MetricCollector {
 		inByteEntry: prom.NewDesc(
 			"zstack_lb_in_bytes",
 			"Backend server traffic in bytes",
-			[]string{LB_LISTENER_UUID, LB_LISTENER_BACKEND_IP, LB_UUID}, nil,
+			[]string{LB_LISTENER_UUID, LB_LISTENER_BACKEND_IP, LB_UUID, LB_ServerGroup_UUID}, nil,
 		),
 		outByteEntry: prom.NewDesc(
 			"zstack_lb_out_bytes",
 			"Backend server traffic in bytes",
-			[]string{LB_LISTENER_UUID, LB_LISTENER_BACKEND_IP, LB_UUID}, nil,
+			[]string{LB_LISTENER_UUID, LB_LISTENER_BACKEND_IP, LB_UUID, LB_ServerGroup_UUID}, nil,
 		),
 		curSessionUsageEntry: prom.NewDesc(
 			"zstack_lb_cur_session_usage",
@@ -2265,9 +2266,9 @@ func TransformToMetric(c *loadBalancerCollector, listenerUuid string, listener L
 
 	for i := 0; i < num; i++ {
 		cnt := counters[i]
-		ch <- prom.MustNewConstMetric(c.statusEntry, prom.GaugeValue, float64(cnt.Status), cnt.listenerUuid, cnt.ip, lbUuid)
-		ch <- prom.MustNewConstMetric(c.inByteEntry, prom.GaugeValue, float64(cnt.bytesIn), cnt.listenerUuid, cnt.ip, lbUuid)
-		ch <- prom.MustNewConstMetric(c.outByteEntry, prom.GaugeValue, float64(cnt.bytesOut), cnt.listenerUuid, cnt.ip, lbUuid)
+		ch <- prom.MustNewConstMetric(c.statusEntry, prom.GaugeValue, float64(cnt.Status), cnt.listenerUuid, cnt.ip, lbUuid, cnt.serverGroupUuid)
+		ch <- prom.MustNewConstMetric(c.inByteEntry, prom.GaugeValue, float64(cnt.bytesIn), cnt.listenerUuid, cnt.ip, lbUuid, cnt.serverGroupUuid)
+		ch <- prom.MustNewConstMetric(c.outByteEntry, prom.GaugeValue, float64(cnt.bytesOut), cnt.listenerUuid, cnt.ip, lbUuid, cnt.serverGroupUuid)
 		ch <- prom.MustNewConstMetric(c.curSessionNumEntry, prom.GaugeValue, float64(cnt.sessionNumber), cnt.listenerUuid, cnt.ip, lbUuid)
 		ch <- prom.MustNewConstMetric(c.refusedSessionNumEntry, prom.GaugeValue, float64(cnt.refusedSessionNumber), cnt.listenerUuid, cnt.ip, lbUuid)
 		ch <- prom.MustNewConstMetric(c.totalSessionNumEntry, prom.GaugeValue, float64(cnt.totalSessionNumber), cnt.listenerUuid, cnt.ip, lbUuid)
@@ -2367,6 +2368,7 @@ func (c *loadBalancerCollector) Update(metricCh chan<- prom.Metric) error {
 type LbCounter struct {
 	lbUuid                  string
 	listenerUuid            string
+	serverGroupUuid         string
 	ip                      string
 	Status                  uint64
 	bytesIn                 uint64
@@ -2442,6 +2444,7 @@ func (this *HaproxyListener) getLbCounters(listenerUuid string, listener Listene
 			counter.hrsp5xx = stat.Hrsp5xx
 			counter.hrspOther = stat.HrspOther
 			counters = append(counters, &counter)
+			counter.serverGroupUuid = getServerGroupUuidByBackend(counter.ip, listener.getLbInfo())
 			num++
 		}
 
@@ -2551,6 +2554,7 @@ func (this *GBListener) getLbCounters(listenerUuid string, listener Listener) <-
 			counter.totalSessionNumber = stat.Stats.Total_connections
 			counter.concurrentSessionNumber = stat.Stats.Active_connections
 			counters = append(counters, &counter)
+			counter.serverGroupUuid = getServerGroupUuidByBackend(counter.ip, listener.getLbInfo())
 			num++
 		}
 		if len(counters) > 0 {
@@ -2560,6 +2564,17 @@ func (this *GBListener) getLbCounters(listenerUuid string, listener Listener) <-
 		}
 	}()
 	return ch
+}
+func getServerGroupUuidByBackend(ip string, lbInfo LbInfo) string {
+	for _, serverGroup := range lbInfo.ServerGroups {
+		for _, server := range serverGroup.BackendServers {
+			if server.Ip == ip {
+				return serverGroup.ServerGroupUuid
+			}
+		}
+	}
+
+	return "default-" + lbInfo.ListenerUuid
 }
 
 func InitLb() {
