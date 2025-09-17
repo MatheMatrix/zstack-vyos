@@ -619,6 +619,10 @@ func (rules *interfaceQosRules) InterfaceQosRuleAddRule(rule *qosRule) interface
 			if oldRule, exists := oldVipRules.portRules[rule.port]; exists {
 				log.Debugf("Deleting old rule for IP %s port %d due to new sharedQosUuid", rule.ip, rule.port)
 				rules.InterfaceQosRuleDelRule(*oldRule)
+				if len(rules.rules) == 0 {
+					log.Debugf("Reinitializing interface %s after sharedQosUuid cleanup", name)
+					rules.InterfaceQosRuleInit(rules.direct)
+				}
 			}
 		}
 
