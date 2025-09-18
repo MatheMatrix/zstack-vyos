@@ -96,6 +96,8 @@ rm /usr/local/zstack/.zstack_runner
 
 mkdir-p /home/zstack/zvr/data/
 tar-in $DATA /home/zstack/zvr/data/ compress:gzip
+
+rm /usr/local/zstack/.zstack_runner
 _EOF_
 
 #/bin/rm -rf $tmpdir
