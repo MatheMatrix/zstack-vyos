@@ -235,8 +235,6 @@ func configureNicFirewall(nics []utils.NicInfo) {
 			if nic.Category == "Private" {
 				err := utils.InitNicFirewall(nicname, nic.Ip, false, utils.IPTABLES_ACTION_REJECT)
 				utils.PanicOnError(err)
-
-				utils.AddSnatRuleForPrivateNic(nicname, nic.Ip, nic.Netmask)
 			} else {
 				err := utils.InitNicFirewall(nicname, nic.Ip, true, utils.IPTABLES_ACTION_REJECT)
 				utils.PanicOnError(err)
@@ -244,7 +242,11 @@ func configureNicFirewall(nics []utils.NicInfo) {
 
 			if nic.Category == "Private" {
 				log.Debug("start configure LB firewall rule for new added nic")
-				configureLBFirewallRuleByIpTables(nicname)
+				err := configureLBFirewallRuleByIpTables(nicname)
+				utils.PanicOnError(err)
+
+				err = utils.AddSnatRuleForPrivateNic(nicname, nic.Ip, nic.Netmask)
+				utils.PanicOnError(err)
 			}
 		}
 	} else {
@@ -310,6 +312,17 @@ func configureNicFirewall(nics []utils.NicInfo) {
 			if nic.Category == "Private" {
 				log.Debug("start configure LB firewall rule")
 				configureLBFirewallRuleByVyos(tree, nicname)
+
+				// add private SNAT rule
+				nicNo, _ := utils.GetNicNumber(nicname)
+				ruleNo := GetPrivateNicSNATRuleNumber(nicNo)
+				address, _ := utils.GetNetworkNumber(nic.Ip, nic.Netmask)
+				tree.SetSnatWithRuleNumber(ruleNo,
+					fmt.Sprintf("outbound-interface %s", nicname),
+					fmt.Sprintf("source address %s", address),
+					"destination address !224.0.0.0/8",
+					fmt.Sprintf("translation address %s", nic.Ip),
+				)
 			}
 		}
 
@@ -498,9 +511,17 @@ func RemoveNic(cmd *ConfigureNicCmd) interface{} {
 				}
 			}, 5, 1)
 			utils.PanicOnError(err)
+			// delete private SNAT rule (VyOS config) added during configureNicFirewall
+			nicNo, _ := utils.GetNicNumber(nicname)
+			ruleNo := GetPrivateNicSNATRuleNumber(nicNo)
+			tree.Deletef("nat source rule %d", ruleNo)
+
 			tree.Deletef("interfaces ethernet %s", nicname)
 			if utils.IsSkipVyosIptables() {
 				err := utils.DestroyNicFirewall(nicname)
+				utils.PanicOnError(err)
+
+				err = utils.RemoveSnatRuleForPrivateNic(nicname, nic.Ip, nic.Netmask)
 				utils.PanicOnError(err)
 			} else {
 				tree.Deletef("firewall name %s.in", nicname)
@@ -521,12 +542,14 @@ func RemoveNic(cmd *ConfigureNicCmd) interface{} {
 				}
 			}, 5, 1)
 			utils.PanicOnError(err)
+
 			err = utils.DestroyNicFirewall(nicname)
 			utils.PanicOnError(err)
 			err = utils.IpAddrFlush(nicname)
 			utils.PanicOnError(err)
 
-			utils.RemoveSnatRuleForPrivateNic(nicname, nic.Ip, nic.Netmask)
+			err = utils.RemoveSnatRuleForPrivateNic(nicname, nic.Ip, nic.Netmask)
+			utils.PanicOnError(err)
 		}
 	}
 
