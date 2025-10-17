@@ -179,7 +179,7 @@ func checkSnatRuleSet(pub, pri utils.NicInfo) {
 	tree := server.NewParserFromShowConfiguration().Tree
 
 	priNicNum, _ := utils.GetNicNumber(pri.Name)
-	pubNicRuleNo, priNicRuleNo := getNicSNATRuleNumber(priNicNum)
+	pubNicRuleNo, priNicRuleNo := GetNicSNATRuleNumber(priNicNum)
 	cidr, _ := utils.GetNetworkNumber(pri.Ip, pri.Netmask)
 
 	cmd := fmt.Sprintf("nat source rule %d outbound-interface %s", pubNicRuleNo, pub.Name)
@@ -210,7 +210,7 @@ func checkSnatRuleSet(pub, pri utils.NicInfo) {
 func checkSnatRuleDel(pri utils.NicInfo) {
 	tree := server.NewParserFromShowConfiguration().Tree
 	priNicNum, _ := utils.GetNicNumber(pri.Name)
-	pubNicRuleNo, priNicRuleNo := getNicSNATRuleNumber(priNicNum)
+	pubNicRuleNo, priNicRuleNo := GetNicSNATRuleNumber(priNicNum)
 
 	rule := tree.Get(fmt.Sprintf("nat source rule %d", pubNicRuleNo))
 	gomega.Expect(rule).To(gomega.BeNil(), "snat rule [%d] delete failed", pubNicRuleNo)
@@ -221,7 +221,7 @@ func checkSnatRuleDel(pri utils.NicInfo) {
 
 func checkSnatVyosIpTables(pub, pri utils.NicInfo, add bool) {
 	priNicNum, _ := utils.GetNicNumber(pri.Name)
-	pubNicRuleNo, priNicRuleNo := getNicSNATRuleNumber(priNicNum)
+	pubNicRuleNo, priNicRuleNo := GetNicSNATRuleNumber(priNicNum)
 	cidr, _ := utils.GetNetworkNumber(pri.Ip, pri.Netmask)
 
 	cmd := fmt.Sprintf("iptables -t nat -C POSTROUTING -s %s ! -d 224.0.0.0/8 -o %s -m comment --comment SRC-NAT-%d -j SNAT --to-source %s",

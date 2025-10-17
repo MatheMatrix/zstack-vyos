@@ -492,6 +492,8 @@ func configureVyos() {
 			}
 			if nic.category == "Private" {
 				err = utils.InitNicFirewall(nic.name, nic.ip, false, utils.IPTABLES_ACTION_REJECT)
+				// add private SNAT rule in iptables
+				err = utils.AddSnatRuleForPrivateNic(nic.name, nic.ip, nic.netmask)
 			} else {
 				err = utils.InitNicFirewall(nic.name, nic.ip, true, utils.IPTABLES_ACTION_REJECT)
 			}
@@ -552,6 +554,19 @@ func configureVyos() {
 
 			setNicTree.AttachFirewallToInterface(nic.name, "local")
 			setNicTree.AttachFirewallToInterface(nic.name, "in")
+
+			if nic.category == "Private" {
+				// add private SNAT rule in VyOS config tree: rule number = 9699 - nic number
+				nicNo, _ := utils.GetNicNumber(nic.name)
+				ruleNo := utils.GetPrivateNicSNATRuleNumber(nicNo)
+				address, _ := utils.GetNetworkNumber(nic.ip, nic.netmask)
+				setNicTree.SetSnatWithRuleNumber(ruleNo,
+					fmt.Sprintf("outbound-interface %s", nic.name),
+					fmt.Sprintf("source address %s", address),
+					"destination address !224.0.0.0/8",
+					fmt.Sprintf("translation address %s", nic.ip),
+				)
+			}
 		}
 	}
 
