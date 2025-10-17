@@ -35,7 +35,7 @@ const (
 	RT_TABLES_LOCAL   = 255
 	RT_TABLES_MAIN    = 254
 	RT_TABLES_DEFAULT = 253
-	RT_TABLES_MGMT = 250
+	RT_TABLES_MGMT    = 250
 	RT_TABLES_UNSPEC  = 0
 )
 
@@ -63,3 +63,18 @@ const (
 	IF_OPER_DORMANT        = 0x5
 	IF_OPER_UP             = 0x6
 )
+
+const (
+	PRIVATE_SNAT_RULE_NUMBER = 9799
+	SNAT_RULE_NUMBER         = 9999
+)
+
+func GetPublicNicSNATRuleNumber(nicNo int) (pubNicRuleNo int, priNicRuleNo int) {
+	pubNicRuleNo = SNAT_RULE_NUMBER - nicNo*2
+	priNicRuleNo = pubNicRuleNo - 1
+	return
+}
+
+func GetPrivateNicSNATRuleNumber(nicNo int) (priNicRuleNo int) {
+	return PRIVATE_SNAT_RULE_NUMBER - nicNo
+}
