@@ -569,10 +569,10 @@ func InitIptablesFlags() {
 	}
 }
 
-func AddSnatRuleForPrivateNic(nicName, ip, netmask string) {
+func AddSnatRuleForPrivateNic(nicName, ip, netmask string) (err error) {
 	if ip == "" || strings.Contains(ip, ":") {
 		/* TODO: add ipv6 support */
-		return
+		return fmt.Errorf("ipv6 is not supported")
 	}
 	table := NewIpTables(NatTable)
 	address, err := GetNetworkNumber(ip, netmask)
@@ -583,13 +583,13 @@ func AddSnatRuleForPrivateNic(nicName, ip, netmask string) {
 	rule.SetDstIp("! 224.0.0.0/8").SetSrcIp(address).SetSrcIpRange(fmt.Sprintf("! %s-%s", ip, ip)).
 		SetOutNic(nicName).SetSnatTargetIp(ip)
 	table.AddIpTableRules([]*IpTableRule{rule})
-	table.Apply()
+	return table.Apply()
 }
 
-func RemoveSnatRuleForPrivateNic(nicName, ip, netmask string) {
+func RemoveSnatRuleForPrivateNic(nicName, ip, netmask string) error {
 	if ip == "" || strings.Contains(ip, ":") {
 		/* TODO: add ipv6 support */
-		return
+		return nil
 	}
 
 	table := NewIpTables(NatTable)
@@ -601,5 +601,5 @@ func RemoveSnatRuleForPrivateNic(nicName, ip, netmask string) {
 	rule.SetDstIp("! 224.0.0.0/8").SetSrcIp(address).SetSrcIpRange(fmt.Sprintf("! %s-%s", ip, ip)).
 		SetOutNic(nicName).SetSnatTargetIp(ip)
 	table.RemoveIpTableRule([]*IpTableRule{rule})
-	table.Apply()
+	return table.Apply()
 }
