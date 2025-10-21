@@ -274,6 +274,8 @@ func syncSnatByIptables(Snats []SnatInfo, state bool) {
 func applySnatRules(Snats []SnatInfo, state bool) bool {
 	tree := server.NewParserFromShowConfiguration().Tree
 
+	// snat rule number = num_pub_nic * num_pri_nic
+	// this api maybe is called when sync snat or enable public snat
 	update := false
 	for _, s := range Snats {
 		outNic, err := utils.GetNicNameByMac(s.PublicNicMac)
@@ -288,6 +290,13 @@ func applySnatRules(Snats []SnatInfo, state bool) bool {
 		pubNicRuleNo, _ := getNicSNATRuleNumberByConfig(tree, s, false)
 		if s.State == true {
 			newPubNicRuleNo, _ := utils.GetPublicNicSNATRuleNumber(nicNumber)
+			for j := 1; ; j++ {
+				if tree.Getf("nat source rule %v", newPubNicRuleNo) == nil {
+					break
+				} else {
+					newPubNicRuleNo, _ = utils.GetPublicNicSNATRuleNumber(nicNumber + j)
+				}
+			}
 
 			if pubNicRuleNo == 0 {
 				pubNicRuleNo = newPubNicRuleNo
@@ -304,14 +313,18 @@ func applySnatRules(Snats []SnatInfo, state bool) bool {
 			}
 
 		} else {
-			pubNicRuleNo, _ = getNicSNATRuleNumberByConfig(tree, s, false)
 			if rs := tree.Getf("nat source rule %v", pubNicRuleNo); rs != nil {
 				update = true
 				rs.Delete()
 			}
-
 		}
 
+		/* TO remove old rule before 5.3.0 */
+		_, priNicRuleNo := getNicSNATRuleNumberByConfig(tree, s, true)
+		if rs := tree.Getf("nat source rule %v", priNicRuleNo); rs != nil {
+			update = true
+			rs.Delete()
+		}
 	}
 
 	tree.Apply(false)
