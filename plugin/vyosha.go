@@ -149,7 +149,7 @@ func SetVyosHa(cmd *SetVyosHaCmd) interface{} {
 		pairs = append(pairs, nicVipPair{NicName: nicname, Vip: p.NicVip, Prefix: prefix})
 
 		/* if vip is same to nic Ip, there is no need to add firewall again */
-		if nicIp := getNicIp(nicname); nicIp == p.NicVip {
+		if nicIp, err := utils.GetIpByNicName(nicname); err == nil && nicIp == p.NicVip {
 			continue
 		}
 		addSecondaryIpFirewall(nicname, p.NicVip)
