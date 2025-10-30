@@ -572,7 +572,7 @@ func InitIptablesFlags() {
 func AddSnatRuleForPrivateNic(nicName, ip, netmask string) (err error) {
 	if ip == "" || strings.Contains(ip, ":") {
 		/* TODO: add ipv6 support */
-		return fmt.Errorf("ipv6 is not supported")
+		return nil
 	}
 	table := NewIpTables(NatTable)
 	address, err := GetNetworkNumber(ip, netmask)
