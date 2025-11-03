@@ -89,7 +89,8 @@ var snatRulesPriority = map[string]int{
 	IpsecRuleComment:      1000,
 	EipRuleComment:        2000,
 	PrivateNicSNATComment: 6000,
-	SNATComment:           IPTABLES_RULENUMBER_MAX,
+	SNATComment:           7000,
+	SystemLastLastRule:    IPTABLES_RULENUMBER_9999,
 }
 
 var dnatRulesPriority = map[string]int{

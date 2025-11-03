@@ -863,7 +863,7 @@ func getIpvsBackend(proto, frontIp, frontPort, backendIp, backendPort string) *I
 		}
 	}
 
-	log.Debugf("backend not found for :%s-%s-%s-%s-%s-%s", proto, frontIp, frontPort, backendIp, backendPort)
+	log.Debugf("backend not found for :%s-%s-%s-%s-%s", proto, frontIp, frontPort, backendIp, backendPort)
 	return nil
 }
 
@@ -1125,12 +1125,12 @@ func InitIpvs() {
 
 	rule := utils.NewIpTableRule(utils.RULESET_SNAT.String())
 	rule.SetIpvs(true)
-	rule.SetAction(IPVS_LOG_CHAIN_NAME).SetCompareTarget(true)
+	rule.SetAction(IPVS_LOG_CHAIN_NAME).SetCompareTarget(true).SetComment(utils.SystemTopRule)
 	table.AddIpTableRules([]*utils.IpTableRule{rule})
 
 	rule = utils.NewIpTableRule(utils.RULESET_SNAT.String())
 	rule.SetIpvs(true)
-	rule.SetAction(IPVS_FULL_NAT_CHAIN_NAME).SetCompareTarget(true)
+	rule.SetAction(IPVS_FULL_NAT_CHAIN_NAME).SetCompareTarget(true).SetComment(utils.SystemTopRule)
 	table.AddIpTableRules([]*utils.IpTableRule{rule})
 
 	err := table.Apply()

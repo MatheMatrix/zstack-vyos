@@ -296,7 +296,7 @@ var _ = Describe("ipvs test", func() {
 			env.lb.RedirectRules = nil
 
 			plugin.DelIpvsService(map[string]plugin.LbInfo{env.lb.ListenerUuid: env.lb, env.lb1.ListenerUuid: env.lb1})
-			
+
 			wait := 6
 			time.Sleep(time.Duration(wait) * time.Second)
 
