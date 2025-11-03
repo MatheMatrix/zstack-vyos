@@ -1,11 +1,15 @@
 package plugin
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
+	"net"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode"
 
 	"zstack-vyos/server"
@@ -21,6 +25,7 @@ const (
 	VR_SET_VIP_QOS       = "/setvipqos"
 	VR_DELETE_VIP_QOS    = "/deletevipqos"
 	VR_SYNC_VIP_QOS      = "/syncvipqos"
+	VR_FLUSH_VIP_QOS     = "/flushvipqos"
 	VR_IFB               = "ifb"
 	TC_MAX_CLASSID       = 0xFFFF
 	TC_MAX_FILTER        = 0xFFF
@@ -522,11 +527,12 @@ func (rules *interfaceQosRules) InterfaceQosRuleInit(direct direction) interface
 	bash := utils.Bash{
 		Command: fmt.Sprintf("sudo tc qdisc del dev %s root;", name),
 	}
-	_, _, e, err := bash.RunWithReturn()
-	if err != nil {
-		ignore := strings.Contains(e, "with handle of zero") || strings.Contains(e, "No such file")
-		utils.Assertf(ignore, "Failed to del rules from dev %s", name)
-	}
+	bash.RunWithReturn()
+	/*
+		if err != nil {
+			ignore := strings.Contains(e, "with handle of zero") || strings.Contains(e, "No such file")
+			utils.Assertf(ignore, "Failed to del rules from dev %s", name)
+		}*/
 
 	checkQdisc(name)
 
@@ -907,6 +913,10 @@ type syncVipQosCmd struct {
 	Settings []vipQosSettings `json:"vipQosSettings"`
 }
 
+type flushVipQosCmd struct {
+	VipUuids []string `json:"vipUuids"`
+}
+
 type vipQosSettingsArray []vipQosSettings
 
 func (a vipQosSettingsArray) Len() int           { return len(a) }
@@ -954,6 +964,11 @@ func addVipFirewalRuleByIptables(cmd *setVipCmd) error {
 	var rules []*utils.IpTableRule
 
 	for _, vip := range cmd.Vips {
+		// Skip IPv6 VIPs - no IPv6 iptables management yet
+		if vip.Ip == "" || !utils.IsIpv4Address(vip.Ip) {
+			continue
+		}
+
 		nicname, err := utils.GetNicNameByMac(vip.OwnerEthernetMac)
 		utils.PanicOnError(err)
 
@@ -964,8 +979,12 @@ func addVipFirewalRuleByIptables(cmd *setVipCmd) error {
 		rules = append(rules, rule)
 	}
 
-	table.AddIpTableRules(rules)
-	return table.Apply()
+	if len(rules) > 0 {
+		table.AddIpTableRules(rules)
+		return table.Apply()
+	}
+
+	return nil
 }
 
 func addVipFirewalRuleByVyos(cmd *setVipCmd) error {
@@ -989,9 +1008,40 @@ func addVipFirewalRuleByVyos(cmd *setVipCmd) error {
 	return nil
 }
 
+func initVipCounterChains() error {
+	bash := utils.Bash{
+		Command: "sysctl -w net.netfilter.nf_conntrack_acct=1",
+		Sudo:    true,
+	}
+
+	bash.Run()
+	return nil
+}
+
 func setVipHandler(ctx *server.CommandContext) interface{} {
 	cmd := &setVipCmd{}
 	ctx.GetCommand(cmd)
+
+	return SetVip(cmd)
+}
+
+func SetVip(cmd *setVipCmd) interface{} {
+	for _, vip := range cmd.Vips {
+		if vipPromCollector != nil {
+			vipPromCollector.mu.Lock()
+			if vip.Ip != "" {
+				if _, ok := vipPromCollector.counters[vip.Ip]; !ok {
+					vipPromCollector.counters[vip.Ip] = &VipCounter{VipUuid: vip.VipUuid}
+				}
+			}
+			if vip.Ip6 != "" {
+				if _, ok := vipPromCollector.counters[vip.Ip6]; !ok {
+					vipPromCollector.counters[vip.Ip6] = &VipCounter{VipUuid: vip.VipUuid}
+				}
+			}
+			vipPromCollector.mu.Unlock()
+		}
+	}
 
 	if cmd.ResetQosRules {
 		clearedNics := make(map[string]bool)
@@ -1103,28 +1153,51 @@ func setVip(cmd *setVipCmd) interface{} {
 		for _, vip := range cmd.Vips {
 			nicname, err := utils.GetNicNameByMac(vip.OwnerEthernetMac)
 			utils.PanicOnError(err)
-			addr, _ := vip.GetIpWithCidr()
-			if n := tree.Getf("interfaces ethernet %s address %v", nicname, addr); n == nil {
-				tree.SetfWithoutCheckExisting("interfaces ethernet %s address %v", nicname, addr)
+
+			// IPv4 VIP
+			if vip.Ip != "" {
+				addr := fmt.Sprintf("%v/%v", vip.Ip, vip.GetPrefix())
+				if n := tree.Getf("interfaces ethernet %s address %v", nicname, addr); n == nil {
+					tree.SetfWithoutCheckExisting("interfaces ethernet %s address %v", nicname, addr)
+				}
+			}
+
+			// IPv6 VIP
+			if vip.Ip6 != "" {
+				addr := fmt.Sprintf("%s/%d", vip.Ip6, vip.PrefixLength)
+				if n := tree.Getf("interfaces ethernet %s address %v", nicname, addr); n == nil {
+					tree.SetfWithoutCheckExisting("interfaces ethernet %s address %v", nicname, addr)
+				}
 			}
 		}
 	} else {
 		for _, vip := range cmd.Vips {
 			nicname, err := utils.GetNicNameByMac(vip.OwnerEthernetMac)
 			utils.PanicOnError(err)
-			addr, _ := vip.GetIpWithCidr()
 
-			/* vip on mgt nic will not configure in vyos config */
-			if vip.Ip != "" && utils.IsInManagementCidr(vip.Ip) {
-				if n := tree.Getf("interfaces ethernet %s address %v", nicname, addr); n != nil {
-					/* delete old config if existed */
-					n.Delete()
+			// IPv4 VIP
+			if vip.Ip != "" {
+				addr := fmt.Sprintf("%v/%v", vip.Ip, vip.GetPrefix())
+				/* vip on mgt nic will not configure in vyos config */
+				if utils.IsInManagementCidr(vip.Ip) {
+					if n := tree.Getf("interfaces ethernet %s address %v", nicname, addr); n != nil {
+						/* delete old config if existed */
+						n.Delete()
+					}
+					if IsMaster() {
+						cmd := fmt.Sprintf("sudo ip address add %s dev %s", addr, nicname)
+						cmds = append(cmds, cmd)
+					}
+				} else {
+					if n := tree.Getf("interfaces ethernet %s address %v", nicname, addr); n == nil {
+						tree.SetfWithoutCheckExisting("interfaces ethernet %s address %v", nicname, addr)
+					}
 				}
-				if IsMaster() {
-					cmd := fmt.Sprintf("sudo ip address add %s dev %s", addr, nicname)
-					cmds = append(cmds, cmd)
-				}
-			} else {
+			}
+
+			// IPv6 VIP
+			if vip.Ip6 != "" {
+				addr := fmt.Sprintf("%s/%d", vip.Ip6, vip.PrefixLength)
 				if n := tree.Getf("interfaces ethernet %s address %v", nicname, addr); n == nil {
 					tree.SetfWithoutCheckExisting("interfaces ethernet %s address %v", nicname, addr)
 				}
@@ -1141,7 +1214,7 @@ func setVip(cmd *setVipCmd) interface{} {
 	}
 
 	/* add default qos for vip traffic counter */
-	if utils.IsConfigTcForVipQos() {
+	if utils.IsConfigTcForVipQos() && utils.IsVYOS() {
 		for _, vip := range cmd.Vips {
 			publicInterface, err := utils.GetNicNameByMac(vip.OwnerEthernetMac)
 			utils.PanicOnError(err)
@@ -1170,14 +1243,16 @@ func setVip(cmd *setVipCmd) interface{} {
 	for _, vip := range cmd.Vips {
 		nicname, err := utils.GetNicNameByMac(vip.OwnerEthernetMac)
 		utils.PanicOnError(err)
-		addr := vip.GetIpWithOutCidr()
-		prefix := vip.GetPrefix()
 
-		if utils.IsIpv4Address(addr) {
-			vyosVips = append(vyosVips, nicVipPair{NicName: nicname, Vip: addr, Prefix: prefix})
-		} else {
-			vyosVips = append(vyosVips, nicVipPair{NicName: nicname, Vip6: addr, Prefix: prefix})
+		// IPv4 VIP
+		if vip.Ip != "" {
+			vyosVips = append(vyosVips, nicVipPair{NicName: nicname, Vip: vip.Ip, Prefix: vip.GetPrefix()})
 		}
+
+		//  vyosVips is used by vyosha, ipv6 vip is not used
+		// if vip.Ip6 != "" {
+		//	vyosVips = append(vyosVips, nicVipPair{NicName: nicname, Vip6: vip.Ip6, Prefix: vip.PrefixLength})
+		// }
 	}
 
 	if utils.IsHaEnabled() {
@@ -1206,7 +1281,12 @@ func sendGARP(cmd *setVipCmd) {
 	for _, vip := range cmd.Vips {
 		nicName, _ := utils.GetNicNameByMac(vip.OwnerEthernetMac)
 		if nicName != "" {
-			command.WriteString(fmt.Sprintf("sudo arping -U -I %s %s -c 5;", nicName, vip.Ip))
+			// IPv4 gratuitous ARP
+			if vip.Ip != "" {
+				command.WriteString(fmt.Sprintf("sudo arping -U -I %s %s -c 5;", nicName, vip.Ip))
+			}
+			// IPv6 unsolicited neighbor advertisement (using ndisc6 or similar tool if available)
+			// Note: IPv6 ND is handled differently, typically by kernel automatically
 		}
 	}
 	//send the gratuitious ARP out
@@ -1224,10 +1304,23 @@ func sendGARP(cmd *setVipCmd) {
 func getDeleteFailVip(info []vipInfo) []vipInfo {
 	toDeletelVip := []vipInfo{}
 	for _, vip := range info {
-		nic, err := utils.GetNicNameByIp(vip.Ip)
-		if err == nil {
-			vip.Nic = nic
-			toDeletelVip = append(toDeletelVip, vip)
+		// Try to find NIC by IPv4
+		if vip.Ip != "" {
+			nic, err := utils.GetNicNameByIp(vip.Ip)
+			if err == nil {
+				vip.Nic = nic
+				toDeletelVip = append(toDeletelVip, vip)
+				continue
+			}
+		}
+
+		// Try to find NIC by IPv6
+		if vip.Ip6 != "" {
+			nic, err := utils.GetNicNameByIp(vip.Ip6)
+			if err == nil {
+				vip.Nic = nic
+				toDeletelVip = append(toDeletelVip, vip)
+			}
 		}
 	}
 
@@ -1243,6 +1336,11 @@ func delVipFirewalRuleByIptables(cmd *removeVipCmd) error {
 	var rules []*utils.IpTableRule
 
 	for _, vip := range cmd.Vips {
+		// Skip IPv6 VIPs - no IPv6 iptables management yet
+		if vip.Ip == "" || !utils.IsIpv4Address(vip.Ip) {
+			continue
+		}
+
 		nicname, err := utils.GetNicNameByMac(vip.OwnerEthernetMac)
 		utils.PanicOnError(err)
 
@@ -1253,7 +1351,10 @@ func delVipFirewalRuleByIptables(cmd *removeVipCmd) error {
 		rules = append(rules, rule)
 	}
 
-	table.RemoveIpTableRule(rules)
+	if len(rules) > 0 {
+		table.RemoveIpTableRule(rules)
+		table.Apply()
+	}
 
 	return nil
 }
@@ -1279,6 +1380,23 @@ func removeVipHandler(ctx *server.CommandContext) interface{} {
 	cmd := &removeVipCmd{}
 	ctx.GetCommand(cmd)
 
+	return RemoveVip(cmd)
+}
+
+func RemoveVip(cmd *removeVipCmd) interface{} {
+	for _, vip := range cmd.Vips {
+		if vipPromCollector != nil {
+			vipPromCollector.mu.Lock()
+			if vip.Ip != "" {
+				delete(vipPromCollector.counters, vip.Ip)
+			}
+			if vip.Ip6 != "" {
+				delete(vipPromCollector.counters, vip.Ip6)
+			}
+			vipPromCollector.mu.Unlock()
+		}
+	}
+
 	if utils.IsSkipVyosIptables() {
 		delVipFirewalRuleByIptables(cmd)
 	} else {
@@ -1297,28 +1415,44 @@ func removeVip(cmd *removeVipCmd) interface{} {
 	for _, vip := range cmd.Vips {
 		nicname, err := utils.GetNicNameByMac(vip.OwnerEthernetMac)
 		utils.PanicOnError(err)
-		addr, _ := vip.GetIpWithCidr()
-		tree.Deletef("interfaces ethernet %s address %v", nicname, addr)
-		deleteQosRulesOfVip(nicname, vip.Ip)
+
+		// Remove IPv4 VIP
+		if vip.Ip != "" {
+			cidr, err := utils.NetmaskToCIDR(vip.Netmask)
+			utils.PanicOnError(err)
+			addr := fmt.Sprintf("%v/%v", vip.Ip, cidr)
+			tree.Deletef("interfaces ethernet %s address %v", nicname, addr)
+			deleteQosRulesOfVip(nicname, vip.Ip)
+		}
+
+		// Remove IPv6 VIP
+		if vip.Ip6 != "" {
+			addr := fmt.Sprintf("%s/%d", vip.Ip6, vip.PrefixLength)
+			tree.Deletef("interfaces ethernet %s address %v", nicname, addr)
+			deleteQosRulesOfVip(nicname, vip.Ip6)
+		}
 	}
 	tree.Apply(false)
 
 	toDeletelVip := getDeleteFailVip(cmd.Vips)
 	err := utils.Retry(func() error {
 		for _, vip := range toDeletelVip {
-			cidr, err := utils.NetmaskToCIDR(vip.Netmask)
-			utils.PanicOnError(err)
 			var cmds []string
 			if vip.Ip != "" {
+				cidr, err := utils.NetmaskToCIDR(vip.Netmask)
+				utils.PanicOnError(err)
 				cmds = append(cmds, fmt.Sprintf("sudo ip add del %s/%d dev %s ", vip.Ip, cidr, vip.Nic))
-			} else if vip.Ip6 != "" {
-				cmds = append(cmds, fmt.Sprintf("sudo ip -6 add del %s/%d dev %s ", vip.Ip, cidr, vip.Nic))
+			}
+			if vip.Ip6 != "" {
+				cmds = append(cmds, fmt.Sprintf("sudo ip -6 add del %s/%d dev %s ", vip.Ip6, vip.PrefixLength, vip.Nic))
 			}
 
-			bash := utils.Bash{
-				Command: strings.Join(cmds, ";"),
+			if len(cmds) > 0 {
+				bash := utils.Bash{
+					Command: strings.Join(cmds, ";"),
+				}
+				bash.Run()
 			}
-			bash.Run()
 		}
 
 		toDeletelVip := getDeleteFailVip(toDeletelVip)
@@ -1334,9 +1468,17 @@ func removeVip(cmd *removeVipCmd) interface{} {
 	for _, vip := range cmd.Vips {
 		nicname, err := utils.GetNicNameByMac(vip.OwnerEthernetMac)
 		utils.PanicOnError(err)
-		_, cidr := vip.GetIpWithCidr()
 
-		vyosVips = append(vyosVips, nicVipPair{NicName: nicname, Vip: vip.Ip, Prefix: cidr})
+		// IPv4 VIP
+		if vip.Ip != "" {
+			cidr, _ := utils.NetmaskToCIDR(vip.Netmask)
+			vyosVips = append(vyosVips, nicVipPair{NicName: nicname, Vip: vip.Ip, Prefix: cidr})
+		}
+
+		// vyosVips is used by vyosha, ipv6 vip is not used
+		// if vip.Ip6 != "" {
+		//	vyosVips = append(vyosVips, nicVipPair{NicName: nicname, Vip6: vip.Ip6, Prefix: vip.PrefixLength})
+		// }
 	}
 	removeHaNicVipPair(vyosVips)
 
@@ -1449,6 +1591,14 @@ func syncVipQos(ctx *server.CommandContext) interface{} {
 	return nil
 }
 
+func flushVipQos(ctx *server.CommandContext) interface{} {
+	cmd := &flushVipQosCmd{}
+	ctx.GetCommand(cmd)
+
+	clearUnusedTcRule()
+	return nil
+}
+
 type vipQosRemoveNic struct{}
 
 func (vipQos *vipQosRemoveNic) RemoveNic(nicName string) error {
@@ -1476,15 +1626,20 @@ type vipCollector struct {
 	outByteEntry *prom.Desc
 	outPktEntry  *prom.Desc
 
-	vipUUIds map[string]string
+	// Fields for conntrack-based monitoring
+	mu            sync.Mutex
+	previousStats map[string]*SessionStat
+	counters      map[string]*VipCounter
 }
+
+var vipPromCollector *vipCollector
 
 const (
 	LABEL_VIP_UUID = "VipUUID"
 )
 
 func NewVipPrometheusCollector() MetricCollector {
-	return &vipCollector{
+	vipPromCollector = &vipCollector{
 		inByteEntry: prom.NewDesc(
 			"zstack_vip_in_bytes",
 			"VIP inbound traffic in bytes",
@@ -1506,8 +1661,10 @@ func NewVipPrometheusCollector() MetricCollector {
 			[]string{LABEL_VIP_UUID}, nil,
 		),
 
-		vipUUIds: make(map[string]string),
+		previousStats: make(map[string]*SessionStat),
+		counters:      make(map[string]*VipCounter),
 	}
+	return vipPromCollector
 }
 
 func (c *vipCollector) Describe(ch chan<- *prom.Desc) error {
@@ -1518,12 +1675,201 @@ func (c *vipCollector) Describe(ch chan<- *prom.Desc) error {
 	return nil
 }
 
-type monitoringRule struct {
-	pkts        uint64
-	bytes       uint64
-	source      string
-	destination string
-	vipUuid     string
+type VipCounter struct {
+	VipUuid    string
+	InPackets  uint64
+	InBytes    uint64
+	OutPackets uint64
+	OutBytes   uint64
+}
+
+// SessionStat holds the parsed statistics for a single connection track entry.
+type SessionStat struct {
+	Protocol      string
+	SrcIp         string
+	DstIp         string
+	SrcPort       string
+	DstPort       string
+	IcmpType      string
+	IcmpCode      string
+	ReplySrcIp    string
+	ReplyDstIp    string
+	ReplySrcPort  string
+	ReplyDstPort  string
+	ReplyIcmpType string
+	ReplyIcmpCode string
+	Packets       uint64
+	Bytes         uint64
+	ReplyPackets  uint64
+	ReplyBytes    uint64
+}
+
+func (s *SessionStat) Key() string {
+	if s.Protocol == "icmp" {
+		return fmt.Sprintf("%s-%s-%s-%s-%s", s.Protocol, s.SrcIp, s.DstIp, s.IcmpType, s.IcmpCode)
+	} else {
+		return fmt.Sprintf("%s-%s-%s-%s-%s", s.Protocol, s.SrcIp, s.SrcPort, s.DstIp, s.DstPort)
+	}
+}
+
+// parseConntrackLine parses a single line from /proc/net/nf_conntrack.
+// example: ipv4     2 icmp     1 8 src=10.1.2.197 dst=192.168.100.1 type=8 code=0 id=63489 packets=88 bytes=7392 src=192.168.100.1 dst=192.168.100.147 type=0 code=0 id=63489 packets=20 bytes=1680 mark=0 zone=0 use=2
+func parseConntrackLine(line string) (*SessionStat, bool) {
+	fields := strings.Fields(line)
+	if len(fields) < 10 {
+		return nil, false
+	}
+
+	stat := &SessionStat{
+		Protocol: fields[2],
+	}
+
+	var packets, bytes, replyPackets, replyBytes uint64
+	var src, dst, rsrc, rdst string
+	var sport, dport, rsport, rdport string
+	var icmpType, replyIcmpType, icmpCode, replyIcmpCode string
+
+	unreplied := strings.Contains(line, "[UNREPLIED]")
+
+	for _, field := range fields {
+		parts := strings.Split(field, "=")
+		if len(parts) != 2 {
+			continue
+		}
+		key, value := parts[0], parts[1]
+
+		switch key {
+		case "src":
+			if src == "" {
+				src = value
+			} else {
+				rsrc = value
+			}
+		case "dst":
+			if dst == "" {
+				dst = value
+			} else {
+				rdst = value
+			}
+		case "sport":
+			if sport == "" {
+				sport = value
+			} else {
+				rsport = value
+			}
+		case "dport":
+			if dport == "" {
+				dport = value
+			} else {
+				rdport = value
+			}
+		case "type":
+			if icmpType == "" {
+				icmpType = value
+			} else {
+				replyIcmpType = value
+			}
+		case "code":
+			if icmpCode == "" {
+				icmpCode = value
+			} else {
+				replyIcmpCode = value
+			}
+		case "packets":
+			if packets == 0 {
+				packets, _ = strconv.ParseUint(value, 10, 64)
+			} else {
+				replyPackets, _ = strconv.ParseUint(value, 10, 64)
+			}
+		case "bytes":
+			if bytes == 0 {
+				bytes, _ = strconv.ParseUint(value, 10, 64)
+			} else {
+				replyBytes, _ = strconv.ParseUint(value, 10, 64)
+			}
+		}
+	}
+
+	stat.SrcIp = src
+	stat.DstIp = dst
+	stat.IcmpType = icmpType
+	stat.IcmpCode = icmpCode
+	stat.SrcPort = sport
+	stat.DstPort = dport
+	stat.Packets = packets
+	stat.Bytes = bytes
+
+	if !unreplied {
+		stat.ReplySrcIp = rsrc
+		stat.ReplyDstIp = rdst
+		stat.ReplySrcPort = rsport
+		stat.ReplyDstPort = rdport
+		stat.ReplyIcmpType = replyIcmpType
+		stat.ReplyIcmpCode = replyIcmpCode
+		stat.ReplyPackets = replyPackets
+		stat.ReplyBytes = replyBytes
+	}
+
+	return stat, true
+}
+
+func (c *vipCollector) updateCountersByConntrack() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	file, err := os.Open("/proc/net/nf_conntrack")
+	if err != nil {
+		log.Warnf("Failed to open /proc/net/nf_conntrack: %v", err)
+		return
+	}
+	defer file.Close()
+
+	currentStats := make(map[string]*SessionStat)
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		stat, ok := parseConntrackLine(line)
+		if !ok {
+			continue
+		}
+		currentStats[stat.Key()] = stat
+	}
+
+	if err := scanner.Err(); err != nil {
+		log.Warnf("Error reading /proc/net/nf_conntrack: %v", err)
+	}
+
+	for key, current := range currentStats {
+		previous, exists := c.previousStats[key]
+
+		var pktIn, bytesIn, pktOut, bytesOut uint64
+
+		if exists {
+			pktIn = current.Packets - previous.Packets
+			bytesIn = current.Bytes - previous.Bytes
+			pktOut = current.ReplyPackets - previous.ReplyPackets
+			bytesOut = current.ReplyBytes - previous.ReplyBytes
+		} else {
+			pktIn = current.Packets
+			bytesIn = current.Bytes
+			pktOut = current.ReplyPackets
+			bytesOut = current.ReplyBytes
+		}
+
+		if counter, ok := c.counters[current.DstIp]; ok {
+			counter.InPackets += pktIn
+			counter.InBytes += bytesIn
+			counter.OutPackets += pktOut
+			counter.OutBytes += bytesOut
+		} else if counter, ok := c.counters[current.ReplyDstIp]; ok {
+			counter.OutPackets += pktIn
+			counter.OutBytes += bytesIn
+			counter.InPackets += pktOut
+			counter.InBytes += bytesOut
+		}
+	}
+
+	c.previousStats = currentStats
 }
 
 func (c *vipCollector) Update(ch chan<- prom.Metric) error {
@@ -1531,128 +1877,19 @@ func (c *vipCollector) Update(ch chan<- prom.Metric) error {
 		return nil
 	}
 
-	rules := getMonitoringRules(EGRESS)
-	for _, rule := range rules {
-		vipUuid := rule.vipUuid
-		ch <- prom.MustNewConstMetric(c.outByteEntry, prom.GaugeValue, float64(rule.bytes), vipUuid)
-		ch <- prom.MustNewConstMetric(c.outPktEntry, prom.GaugeValue, float64(rule.pkts), vipUuid)
-	}
+	c.updateCountersByConntrack()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	rules = getMonitoringRules(INGRESS)
-	for _, rule := range rules {
-		vipUuid := rule.vipUuid
-		ch <- prom.MustNewConstMetric(c.inByteEntry, prom.GaugeValue, float64(rule.bytes), vipUuid)
-		ch <- prom.MustNewConstMetric(c.inPktEntry, prom.GaugeValue, float64(rule.pkts), vipUuid)
+	for _, rule := range c.counters {
+		vipUuid := rule.VipUuid
+		ch <- prom.MustNewConstMetric(c.inByteEntry, prom.CounterValue, float64(rule.InBytes), vipUuid)
+		ch <- prom.MustNewConstMetric(c.inPktEntry, prom.CounterValue, float64(rule.InPackets), vipUuid)
+		ch <- prom.MustNewConstMetric(c.outByteEntry, prom.CounterValue, float64(rule.OutBytes), vipUuid)
+		ch <- prom.MustNewConstMetric(c.outPktEntry, prom.CounterValue, float64(rule.OutPackets), vipUuid)
 	}
 
 	return nil
-}
-
-/*
-output example
-# tc -s class show dev eth0 | grep -A 1 'class htb'
-class htb 1:1 root leaf 8003: prio 0 rate 10000Mbit ceil 10000Mbit burst 0b cburst 0b
-
-	Sent 353013 bytes 2725 pkt (dropped 0, overlimits 0 requeues 0)
-
---
-class htb 1:2 root leaf 8004: prio 0 rate 100000Kbit ceil 100000Kbit burst 15337b cburst 15337b
-
-	Sent 29400 bytes 300 pkt (dropped 0, overlimits 0 requeues 0)
-
---
-*/
-func getInterfaceMonitorRules(direct direction, qosRules *interfaceQosRules) map[string]*monitoringRule {
-	name := qosRules.name
-	if direct == INGRESS {
-		name = qosRules.ifbName
-	}
-
-	bash := &utils.Bash{
-		Command: fmt.Sprintf("sudo tc -s class show dev %s | grep -A 1 'class htb'", name),
-		NoLog:   true,
-	}
-	ret, stdout, _, _ := bash.RunWithReturn()
-	if ret != 0 {
-		return nil
-	}
-
-	lines := strings.Split(stdout, "\n")
-	var cnt, classId uint32
-	var byteCnt, pktCnt uint64
-	var vipIps []string
-	var vipOk bool
-	monitorRules := make(map[string]*monitoringRule)
-
-	for _, line := range lines {
-		switch cnt {
-		case 0:
-			strs := strings.Split(line, " ")
-			classStr := strings.Split(strs[2], ":")
-			id, _ := strconv.ParseUint(strings.Trim(classStr[1], " "), 16, 64)
-			classId = (uint32)(id)
-			/* in case class delete fail, just skip lines for this classid */
-			vipIps, vipOk = qosRules.classIdMap[classId]
-			cnt++
-			break
-		case 1:
-			if vipOk {
-				strs := strings.Split(strings.Trim(line, " "), " ")
-				byteCnt, _ = strconv.ParseUint(strings.Trim(strs[1], " "), 10, 64)
-				pktCnt, _ = strconv.ParseUint(strings.Trim(strs[3], " "), 10, 64)
-			}
-			cnt++
-			break
-		case 2:
-			if vipOk {
-				for _, vipIp := range vipIps {
-					if qosRule, ok := qosRules.rules[vipIp]; ok {
-						vipUuid := qosRule.vipUuid
-						if _, ok := monitorRules[vipUuid]; !ok {
-							monitorRules[vipUuid] = &monitoringRule{}
-						}
-						monitorRule := monitorRules[vipUuid]
-						monitorRule.pkts += pktCnt
-						monitorRule.bytes += byteCnt
-						monitorRule.vipUuid = vipUuid
-
-						if direct == INGRESS {
-							monitorRule.destination = qosRules.rules[vipIp].vip
-						} else {
-							monitorRule.source = qosRules.rules[vipIp].vip
-						}
-					}
-				}
-			}
-			cnt = 0
-			classId = 0
-			vipOk = false
-			byteCnt = 0
-			pktCnt = 0
-			break
-		default:
-			cnt = 0
-			classId = 0
-			vipOk = false
-			byteCnt = 0
-			pktCnt = 0
-			break
-		}
-	}
-
-	return monitorRules
-}
-
-func getMonitoringRules(direct direction) map[string]*monitoringRule {
-	monitoringRules := make(map[string]*monitoringRule)
-	for _, biRules := range totalQosRules {
-		rules := getInterfaceMonitorRules(direct, biRules[direct])
-		for k, v := range rules {
-			monitoringRules[k] = v
-		}
-	}
-
-	return monitoringRules
 }
 
 func checkQdisc(nic string) {
@@ -1674,9 +1911,33 @@ func init() {
 }
 
 func VipEntryPoint() {
+	initVipCounterChains()
+
 	server.RegisterAsyncCommandHandler(VR_CREATE_VIP, server.VyosLock(setVipHandler))
 	server.RegisterAsyncCommandHandler(VR_REMOVE_VIP, server.VyosLock(removeVipHandler))
 	server.RegisterAsyncCommandHandler(VR_SET_VIP_QOS, server.VyosLock(setVipQos))
 	server.RegisterAsyncCommandHandler(VR_DELETE_VIP_QOS, server.VyosLock(deleteVipQos))
 	server.RegisterAsyncCommandHandler(VR_SYNC_VIP_QOS, server.VyosLock(syncVipQos))
+	server.RegisterAsyncCommandHandler(VR_FLUSH_VIP_QOS, server.VyosLock(flushVipQos))
+}
+
+func clearUnusedTcRule() {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return
+	}
+
+	for _, iface := range interfaces {
+		if !strings.HasPrefix(iface.Name, "ifb") {
+			continue
+		}
+
+		srcNicName := strings.Replace(iface.Name, "ifb", "eth", -1)
+		b := utils.Bash{
+			Command: fmt.Sprintf("tc qdisc del dev %s ingress; ip link del %s", srcNicName, iface.Name),
+			Sudo:    true,
+		}
+
+		b.Run()
+	}
 }
