@@ -989,6 +989,83 @@ func addVipFirewalRuleByVyos(cmd *setVipCmd) error {
 	return nil
 }
 
+const (
+	vipInCounterChain  = "vip.in.counter"
+	vipOutCounterChain = "vip.out.counter"
+)
+
+func ensureVipCounterChains() error {
+	t := utils.NewIpTables(utils.NatTable)
+	if !t.CheckChain(vipInCounterChain) {
+		t.AddChain(vipInCounterChain)
+	}
+	if !t.CheckChain(vipOutCounterChain) {
+		t.AddChain(vipOutCounterChain)
+	}
+	var rules []*utils.IpTableRule
+	inHook := utils.NewIpTableRule(utils.PREROUTING.String()).SetAction(vipInCounterChain)
+	if !t.Check(inHook) {
+		rules = append(rules, inHook)
+	}
+	outHook := utils.NewIpTableRule(utils.POSTROUTING.String()).SetAction(vipOutCounterChain)
+	if !t.Check(outHook) {
+		rules = append(rules, outHook)
+	}
+	if len(rules) > 0 {
+		t.AddIpTableRules(rules)
+		return t.Apply()
+	}
+	return nil
+}
+
+func addVipCounterRulesByIptables(cmd *setVipCmd) {
+	// best-effort create chains and hooks
+	_ = ensureVipCounterChains()
+
+	t := utils.NewIpTables(utils.NatTable)
+	var rules []*utils.IpTableRule
+	for _, vip := range cmd.Vips {
+		if vip.Ip == "" || !utils.IsIpv4Address(vip.Ip) {
+			continue
+		}
+		nicName, err := utils.GetNicNameByMac(vip.OwnerEthernetMac)
+		if err != nil {
+			continue
+		}
+		inRule := utils.NewIpTableRule(vipInCounterChain).
+			SetInNic(nicName).
+			SetDstIp(vip.Ip + "/32").
+			SetComment(vip.VipUuid).
+			SetAction(utils.IPTABLES_ACTION_RETURN)
+		if !t.Check(inRule) {
+			rules = append(rules, inRule)
+		}
+		outRule := utils.NewIpTableRule(vipOutCounterChain).
+			SetOutNic(nicName).
+			SetSrcIp(vip.Ip + "/32").
+			SetComment(vip.VipUuid).
+			SetAction(utils.IPTABLES_ACTION_RETURN)
+		if !t.Check(outRule) {
+			rules = append(rules, outRule)
+		}
+	}
+	if len(rules) > 0 {
+		t.AddIpTableRules(rules)
+		_ = t.Apply()
+	}
+}
+
+func delVipCounterRulesByIptables(cmd *removeVipCmd) {
+	t := utils.NewIpTables(utils.NatTable)
+	for _, vip := range cmd.Vips {
+		if vip.VipUuid == "" {
+			continue
+		}
+		t.RemoveIpTableRuleByComments(vip.VipUuid)
+	}
+	_ = t.Apply()
+}
+
 func setVipHandler(ctx *server.CommandContext) interface{} {
 	cmd := &setVipCmd{}
 	ctx.GetCommand(cmd)
@@ -1012,6 +1089,7 @@ func setVipHandler(ctx *server.CommandContext) interface{} {
 
 	if utils.IsSkipVyosIptables() {
 		addVipFirewalRuleByIptables(cmd)
+		addVipCounterRulesByIptables(cmd)
 	} else {
 		addVipFirewalRuleByVyos(cmd)
 	}
@@ -1139,33 +1217,6 @@ func setVip(cmd *setVipCmd) interface{} {
 		}
 		bash.Run()
 	}
-
-	/* add default qos for vip traffic counter */
-	if utils.IsConfigTcForVipQos() {
-		for _, vip := range cmd.Vips {
-			publicInterface, err := utils.GetNicNameByMac(vip.OwnerEthernetMac)
-			utils.PanicOnError(err)
-			addr := vip.GetIpWithOutCidr()
-			ingressrule := newQosRule(addr, 0, MAX_BINDWIDTH, vip.VipUuid)
-			if biRule, ok := totalQosRules[publicInterface]; ok {
-				if biRule[INGRESS].InterfaceQosRuleFind(ingressrule) == nil {
-					addQosRule(publicInterface, INGRESS, ingressrule)
-				}
-			} else {
-				addQosRule(publicInterface, INGRESS, ingressrule)
-			}
-
-			egressrule := newQosRule(addr, 0, MAX_BINDWIDTH, vip.VipUuid)
-			if biRule, ok := totalQosRules[publicInterface]; ok {
-				if biRule[EGRESS].InterfaceQosRuleFind(egressrule) == nil {
-					addQosRule(publicInterface, EGRESS, egressrule)
-				}
-			} else {
-				addQosRule(publicInterface, EGRESS, egressrule)
-			}
-		}
-	}
-
 	vyosVips := []nicVipPair{}
 	for _, vip := range cmd.Vips {
 		nicname, err := utils.GetNicNameByMac(vip.OwnerEthernetMac)
@@ -1281,6 +1332,7 @@ func removeVipHandler(ctx *server.CommandContext) interface{} {
 
 	if utils.IsSkipVyosIptables() {
 		delVipFirewalRuleByIptables(cmd)
+		delVipCounterRulesByIptables(cmd)
 	} else {
 		delVipFirewalRuleByVyos(cmd)
 	}
@@ -1526,133 +1578,101 @@ type monitoringRule struct {
 	vipUuid     string
 }
 
+func parseVipCounterFromIptables(chain string, isOut bool) map[string]*monitoringRule {
+	ret := make(map[string]*monitoringRule)
+	bash := utils.Bash{Command: "iptables-save -c", NoLog: true}
+	rc, out, _, _ := bash.RunWithReturn()
+	if rc != 0 || out == "" {
+		return ret
+	}
+	lines := strings.Split(out, "\n")
+	// We only care about lines like: [pkts:bytes] -A chain -s/-d 1.2.3.4/32 -m comment --comment UUID -j RETURN
+	// Skip chain header line ":chain - [0:0]"
+	prefix := "-A " + chain + " "
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if !strings.Contains(line, prefix) {
+			continue
+		}
+		if !strings.Contains(line, "-m comment --comment ") || !strings.Contains(line, " -j RETURN") {
+			continue
+		}
+		// extract counters [pkts:bytes]
+		var pkts, bytes uint64
+		if strings.HasPrefix(line, "[") {
+			end := strings.Index(line, "]")
+			if end > 1 {
+				cnt := line[1:end]
+				parts := strings.Split(cnt, ":")
+				if len(parts) == 2 {
+					fmt.Sscanf(parts[0], "%d", &pkts)
+					fmt.Sscanf(parts[1], "%d", &bytes)
+				}
+			}
+		}
+		// extract ip and uuid
+		uuid := ""
+		if idx := strings.Index(line, "-m comment --comment "); idx >= 0 {
+			uuid = strings.TrimSpace(line[idx+len("-m comment --comment "):])
+			// strip tail after space (before -j)
+			if sp := strings.Index(uuid, " "); sp >= 0 {
+				uuid = uuid[:sp]
+			}
+		}
+		ip := ""
+		if isOut {
+			// -s ip/32
+			if idx := strings.Index(line, " -s "); idx >= 0 {
+				rem := line[idx+4:]
+				sp := strings.Index(rem, " ")
+				if sp > 0 {
+					ip = strings.Split(rem[:sp], "/")[0]
+				}
+			}
+		} else {
+			// -d ip/32
+			if idx := strings.Index(line, " -d "); idx >= 0 {
+				rem := line[idx+4:]
+				sp := strings.Index(rem, " ")
+				if sp > 0 {
+					ip = strings.Split(rem[:sp], "/")[0]
+				}
+			}
+		}
+		if uuid == "" {
+			continue
+		}
+		ret[uuid] = &monitoringRule{pkts: pkts, bytes: bytes, vipUuid: uuid}
+		if isOut {
+			ret[uuid].source = ip
+		} else {
+			ret[uuid].destination = ip
+		}
+	}
+	return ret
+}
+
 func (c *vipCollector) Update(ch chan<- prom.Metric) error {
 	if !IsMaster() {
 		return nil
 	}
 
-	rules := getMonitoringRules(EGRESS)
-	for _, rule := range rules {
-		vipUuid := rule.vipUuid
-		ch <- prom.MustNewConstMetric(c.outByteEntry, prom.GaugeValue, float64(rule.bytes), vipUuid)
-		ch <- prom.MustNewConstMetric(c.outPktEntry, prom.GaugeValue, float64(rule.pkts), vipUuid)
-	}
-
-	rules = getMonitoringRules(INGRESS)
-	for _, rule := range rules {
+	// parse iptables-save -c for vip.in.counter and vip.out.counter
+	inRules := parseVipCounterFromIptables(vipInCounterChain, false)
+	for _, rule := range inRules {
 		vipUuid := rule.vipUuid
 		ch <- prom.MustNewConstMetric(c.inByteEntry, prom.GaugeValue, float64(rule.bytes), vipUuid)
 		ch <- prom.MustNewConstMetric(c.inPktEntry, prom.GaugeValue, float64(rule.pkts), vipUuid)
 	}
 
+	outRules := parseVipCounterFromIptables(vipOutCounterChain, true)
+	for _, rule := range outRules {
+		vipUuid := rule.vipUuid
+		ch <- prom.MustNewConstMetric(c.outByteEntry, prom.GaugeValue, float64(rule.bytes), vipUuid)
+		ch <- prom.MustNewConstMetric(c.outPktEntry, prom.GaugeValue, float64(rule.pkts), vipUuid)
+	}
+
 	return nil
-}
-
-/*
-output example
-# tc -s class show dev eth0 | grep -A 1 'class htb'
-class htb 1:1 root leaf 8003: prio 0 rate 10000Mbit ceil 10000Mbit burst 0b cburst 0b
-
-	Sent 353013 bytes 2725 pkt (dropped 0, overlimits 0 requeues 0)
-
---
-class htb 1:2 root leaf 8004: prio 0 rate 100000Kbit ceil 100000Kbit burst 15337b cburst 15337b
-
-	Sent 29400 bytes 300 pkt (dropped 0, overlimits 0 requeues 0)
-
---
-*/
-func getInterfaceMonitorRules(direct direction, qosRules *interfaceQosRules) map[string]*monitoringRule {
-	name := qosRules.name
-	if direct == INGRESS {
-		name = qosRules.ifbName
-	}
-
-	bash := &utils.Bash{
-		Command: fmt.Sprintf("sudo tc -s class show dev %s | grep -A 1 'class htb'", name),
-		NoLog:   true,
-	}
-	ret, stdout, _, _ := bash.RunWithReturn()
-	if ret != 0 {
-		return nil
-	}
-
-	lines := strings.Split(stdout, "\n")
-	var cnt, classId uint32
-	var byteCnt, pktCnt uint64
-	var vipIps []string
-	var vipOk bool
-	monitorRules := make(map[string]*monitoringRule)
-
-	for _, line := range lines {
-		switch cnt {
-		case 0:
-			strs := strings.Split(line, " ")
-			classStr := strings.Split(strs[2], ":")
-			id, _ := strconv.ParseUint(strings.Trim(classStr[1], " "), 16, 64)
-			classId = (uint32)(id)
-			/* in case class delete fail, just skip lines for this classid */
-			vipIps, vipOk = qosRules.classIdMap[classId]
-			cnt++
-			break
-		case 1:
-			if vipOk {
-				strs := strings.Split(strings.Trim(line, " "), " ")
-				byteCnt, _ = strconv.ParseUint(strings.Trim(strs[1], " "), 10, 64)
-				pktCnt, _ = strconv.ParseUint(strings.Trim(strs[3], " "), 10, 64)
-			}
-			cnt++
-			break
-		case 2:
-			if vipOk {
-				for _, vipIp := range vipIps {
-					if qosRule, ok := qosRules.rules[vipIp]; ok {
-						vipUuid := qosRule.vipUuid
-						if _, ok := monitorRules[vipUuid]; !ok {
-							monitorRules[vipUuid] = &monitoringRule{}
-						}
-						monitorRule := monitorRules[vipUuid]
-						monitorRule.pkts += pktCnt
-						monitorRule.bytes += byteCnt
-						monitorRule.vipUuid = vipUuid
-
-						if direct == INGRESS {
-							monitorRule.destination = qosRules.rules[vipIp].vip
-						} else {
-							monitorRule.source = qosRules.rules[vipIp].vip
-						}
-					}
-				}
-			}
-			cnt = 0
-			classId = 0
-			vipOk = false
-			byteCnt = 0
-			pktCnt = 0
-			break
-		default:
-			cnt = 0
-			classId = 0
-			vipOk = false
-			byteCnt = 0
-			pktCnt = 0
-			break
-		}
-	}
-
-	return monitorRules
-}
-
-func getMonitoringRules(direct direction) map[string]*monitoringRule {
-	monitoringRules := make(map[string]*monitoringRule)
-	for _, biRules := range totalQosRules {
-		rules := getInterfaceMonitorRules(direct, biRules[direct])
-		for k, v := range rules {
-			monitoringRules[k] = v
-		}
-	}
-
-	return monitoringRules
 }
 
 func checkQdisc(nic string) {
