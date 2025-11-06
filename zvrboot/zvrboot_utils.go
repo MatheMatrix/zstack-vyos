@@ -23,26 +23,58 @@ func renameNic() {
 		expected string
 		actual   string
 		swap     string
+		isSlave  bool // true if this is a slave interface in bond scenario
 	}
 	err := utils.Retry(func() error {
 		devNames := make([]*deviceName, 0)
 
 		for _, nic := range nicsMap {
-			nicname, err := utils.GetNicNameByMac(nic.Mac)
-			if err != nil {
-				return err
-			}
-			if nicname != nic.Name {
-				devNames = append(devNames, &deviceName{
-					expected: nic.Name,
-					actual:   nicname,
-				})
+			// For bond scenario, handle multiple NICs with same MAC
+			if nic.BondMode != "" && nic.BondMode != "none" {
+				nicnames, err := utils.GetAllNicNamesByMac(nic.Mac)
+				if err != nil {
+					return err
+				}
+
+				if len(nicnames) < 2 {
+					return fmt.Errorf("bond interface %s requires at least 2 NICs with MAC %s, but only found %d",
+						nic.Name, nic.Mac, len(nicnames))
+				}
+
+				// Bond scenario: rename physical NICs to ethX-phy0, ethX-phy1
+				// Later we will create bond interface with name ethX
+				for i, nicname := range nicnames {
+					expectedName := fmt.Sprintf("%s-phy%d", nic.Name, i)
+					isSlave := true // All physical NICs are slaves in bond scenario
+
+					if nicname != expectedName {
+						devNames = append(devNames, &deviceName{
+							expected: expectedName,
+							actual:   nicname,
+							isSlave:  isSlave,
+						})
+					}
+				}
+			} else {
+				// Normal scenario: single NIC with unique MAC
+				nicname, err := utils.GetNicNameByMac(nic.Mac)
+				if err != nil {
+					return err
+				}
+				if nicname != nic.Name {
+					devNames = append(devNames, &deviceName{
+						expected: nic.Name,
+						actual:   nicname,
+						isSlave:  false,
+					})
+				}
 			}
 		}
 		if len(devNames) == 0 {
 			return nil
 		}
 
+		// Step 1: Rename all to temporary names
 		for i, devname := range devNames {
 			devnum := 1000 + i
 			devname.swap = fmt.Sprintf("eth%v", devnum)
@@ -59,6 +91,7 @@ func renameNic() {
 			}
 		}
 
+		// Step 2: Rename from temporary names to expected names
 		for _, devname := range devNames {
 			err := utils.IpLinkSetName(devname.swap, devname.expected)
 			if err != nil {
@@ -68,6 +101,12 @@ func renameNic() {
 			err = utils.IpLinkSetUp(devname.expected)
 			if err != nil {
 				return fmt.Errorf("set expected link[%s] up: %v", devname.expected, err)
+			}
+
+			if devname.isSlave {
+				log.Debugf("renamed bond slave interface: %s -> %s", devname.actual, devname.expected)
+			} else {
+				log.Debugf("renamed interface: %s -> %s", devname.actual, devname.expected)
 			}
 		}
 		return nil
@@ -121,6 +160,13 @@ func parseNicInfo(targetNic map[string]interface{}) *utils.NicInfo {
 	}
 	if targetNic["physicalInterface"] != nil {
 		nicInfo.PhysicalInterface = targetNic["physicalInterface"].(string)
+	}
+
+	// Parse bond configuration
+	if targetNic["bondMode"] != nil {
+		nicInfo.BondMode, _ = targetNic["bondMode"].(string)
+	} else {
+		nicInfo.BondMode = "none" // default to non-bond
 	}
 
 	return nicInfo
@@ -198,10 +244,124 @@ func configureSshMonitor() {
 	utils.Assertf(err == nil, "configure ssh monitor error: %s", err)
 }
 
+func configureBondNic(nic *utils.NicInfo) {
+	var err error
+
+	// Get slave interface names (eth1-phy0 and eth1-phy1)
+	// Physical NICs have been renamed to ethX-phy0, ethX-phy1 in renameNic()
+	slave0 := fmt.Sprintf("%s-phy0", nic.Name)
+	slave1 := fmt.Sprintf("%s-phy1", nic.Name)
+	slaves := []string{slave0, slave1}
+
+	// Use nic.Name (ethX) as bond interface name
+	// This ensures all plugin code works without modification
+	bondName := nic.Name
+
+	log.Debugf("[configure: creating bond %s with slaves %v, mode %s]", bondName, slaves, nic.BondMode)
+
+	// 1. Create bond and attach slaves
+	//    - If IPv4 is present, reuse SetupBondWithSlaves (creates bond, adds slaves, configures IPv4, and brings link up)
+	//    - If no IPv4 (IPv6-only or L2-only), explicitly create bond and add slaves
+	if nic.Ip != "" {
+		err = utils.SetupBondWithSlaves(bondName, nic.BondMode, slaves, nic.Ip, nic.Netmask)
+		utils.Assertf(err == nil, "SetupBondWithSlaves[%s] error: %+v", bondName, err)
+	} else {
+		// IPv6-only or pure L2 bond scenario
+		err = utils.CreateBondInterface(bondName, nic.BondMode)
+		utils.Assertf(err == nil, "CreateBondInterface[%s] error: %+v", bondName, err)
+
+		for _, slave := range slaves {
+			err = utils.AddSlaveToBond(slave, bondName)
+			utils.Assertf(err == nil, "AddSlaveToBond[%s, %s] error: %+v", slave, bondName, err)
+		}
+	}
+
+	// 2. Configure IPv6 if present (support IPv4/IPv6 dual-stack)
+	if nic.Ip6 != "" {
+		// Flush old IPv6 addresses first to avoid stale entries when reconfiguring
+		err = utils.Ip6AddrFlush(bondName)
+		utils.Assertf(err == nil, "IpAddr6Flush[%s] error: %+v", bondName, err)
+
+		ip6String := fmt.Sprintf("%s/%d", nic.Ip6, nic.PrefixLength)
+		log.Debugf("bond [%s] add ipv6 address %s", bondName, ip6String)
+		err = utils.IpAddrAdd(bondName, ip6String)
+		utils.Assertf(err == nil, "IpAddrAdd[%s, %s] error: %+v", bondName, ip6String, err)
+	}
+
+	// 3. Ensure bond is up (calling "up" multiple times is harmless)
+	bash := utils.Bash{
+		Command: fmt.Sprintf("sudo ip link set %s up", bondName),
+	}
+	err = bash.Run()
+	utils.Assertf(err == nil, "bring up bond %s error: %+v", bondName, err)
+
+	// Set MTU if specified
+	if nic.Mtu != 0 {
+		if err := utils.IpLinkSetMTU(bondName, nic.Mtu); err != nil {
+			log.Debugf("IpLinkSetMTU[%s, %d] error: %+v", bondName, nic.Mtu, err)
+		}
+	}
+
+	// Configure default route if this is the default interface
+	if nic.IsDefault {
+		if utils.IsEuler2203() {
+			err = utils.AddDefaultRouteEuler2203(nic.Gateway, nic.Gateway6, bondName)
+			utils.PanicOnError(err)
+		} else {
+			if nic.Gateway != "" {
+				routeEntry := utils.NewIpRoute().SetGW(nic.Gateway).SetDev(bondName).SetTable(utils.RT_TABLES_MAIN).SetProto(utils.RT_PROTOS_STATIC)
+				err := utils.IpRouteAdd(routeEntry)
+				utils.Assertf(err == nil, "IpRouteAdd[%+v] error: %+v", routeEntry, err)
+			}
+			if nic.Gateway6 != "" {
+				route6Entry := utils.NewIpRoute().SetGW(nic.Gateway6).SetDev(bondName).SetTable(utils.RT_TABLES_MAIN).SetProto(utils.RT_PROTOS_STATIC)
+				err := utils.IpRouteAdd(route6Entry)
+				utils.Assertf(err == nil, "IpRouteAdd[%+v] error: %+v", route6Entry, err)
+			}
+		}
+	}
+
+	// Set alias for bond interface
+	if nic.L2Type != "" {
+		err := utils.IpLinkSetAlias(bondName, utils.MakeIfaceAlias(nic))
+		utils.Assertf(err == nil, "IpLinkSetAlias[%s] error: %+v", bondName, err)
+	}
+
+	// Handle HA scenario
+	if utils.GetHaStatus() != utils.NOHA && !utils.IsSLB() {
+		err := utils.IpLinkSetDown(bondName)
+		utils.Assertf(err == nil, "IpLinkSetDown[%s] error: %+v", bondName, err)
+	}
+
+	// Initialize firewall for bond interface
+	if nic.Category == "Private" {
+		err = utils.InitNicFirewall(bondName, nic.Ip, false, utils.IPTABLES_ACTION_REJECT)
+	} else {
+		err = utils.InitNicFirewall(bondName, nic.Ip, true, utils.IPTABLES_ACTION_REJECT)
+	}
+	if err != nil {
+		log.Debugf("InitNicFirewall for bond: %s failed", err.Error())
+	}
+
+	// Add SNAT rule for private bond interface
+	if nic.Category == "Private" {
+		utils.AddSnatRuleForPrivateNic(bondName, nic.Ip, nic.Netmask)
+	}
+
+	log.Debugf("[configure: bond %s configured successfully]", bondName)
+}
+
 func configureNicInfo(nic *utils.NicInfo) {
 	var err error
 	// TODO ....
 	//setNicTree.SetNicSmpAffinity(nic.name, "auto")
+
+	// Handle bond scenario
+	if nic.BondMode != "" && nic.BondMode != "none" {
+		log.Debugf("[configure: bond interface %s with mode %s]", nic.Name, nic.BondMode)
+		configureBondNic(nic)
+		return
+	}
 
 	//set kernel arguments for specific nic
 	err = os.WriteFile(fmt.Sprintf("/proc/sys/net/ipv6/conf/%s/keep_addr_on_down", nic.Name), []byte("1"), 0644)

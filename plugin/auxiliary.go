@@ -3,6 +3,7 @@ package plugin
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 
 	"zstack-vyos/utils"
@@ -11,64 +12,251 @@ import (
 )
 
 func configureNicByLinux(nicList []utils.NicInfo) interface{} {
-	var nicname string
-	for _, nic := range nicList {
-		err := utils.Retry(func() error {
-			var e error
-			nicname, e = utils.GetNicNameByMac(nic.Mac)
-			if e != nil {
-				return e
-			} else {
-				return nil
-			}
-		}, 5, 1)
-		utils.PanicOnError(err)
-		utils.SetNicOption(nicname)
-		/* avoid both master and backup interface up when add nic */
-		if !IsMaster() && !utils.IsSLB() { /* slb don't need set interface down */
-			log.Debugf("set interface %s down", nicname)
-			err := utils.IpLinkSetDown(nicname)
-			utils.Assertf(err == nil, "IpLinkSetDown[%s] error: %+v", nicname, err)
-		} else {
-			log.Debugf("set interface %s up", nicname)
-			err := utils.IpLinkSetUp(nicname)
-			utils.Assertf(err == nil, "IpLinkSetUp[%s] error: %+v", nicname, err)
-			checkNicIsUp(nicname, true)
+	for i := range nicList {
+		nic := nicList[i]
+		if nic.BondMode != "" && nic.BondMode != "none" {
+			log.Debugf("configure bond nic with MAC [%s] and mode [%s]", nic.Mac, nic.BondMode)
+			configureBondNicByLinux(&nic)
+			continue
 		}
-
-		if nic.Ip != "" {
-			err := utils.Ip4AddrFlush(nicname)
-			utils.Assertf(err == nil, "IpAddr4Flush[%s] error: %+v", nicname, err)
-			cidr, err := utils.NetmaskToCIDR(nic.Netmask)
-			utils.PanicOnError(err)
-			ipString := fmt.Sprintf("%v/%v", nic.Ip, cidr)
-			log.Debugf("nic [%s] add ipv4 address %s", nicname, ipString)
-			err = utils.IpAddrAdd(nicname, ipString)
-			utils.Assertf(err == nil, "IpAddrAdd[%s, %s] error: %+v", nicname, ipString, err)
-		}
-		if nic.Ip6 != "" {
-			err := utils.Ip6AddrFlush(nicname)
-			utils.Assertf(err == nil, "IpAddr6Flush[%s] error: %+v", nicname, err)
-			ip6String := fmt.Sprintf("%s/%d", nic.Ip6, nic.PrefixLength)
-			log.Debugf("nic [%s] add ipv6 address %s", nicname, ip6String)
-			err = utils.IpAddrAdd(nicname, ip6String)
-			utils.Assertf(err == nil, "IpAddrAdd[%s, %s] error: %+v", nicname, ip6String, err)
-		}
-		mtu := 1500
-		if nic.Mtu != 0 {
-			mtu = nic.Mtu
-		}
-		if err := utils.IpLinkSetMTU(nicname, mtu); err != nil {
-			log.Debugf("IpLinkSetMTU[%s, %d] error: %+v", nicname, mtu, err)
-		}
-
-		if nic.L2Type != "" {
-			err := utils.IpLinkSetAlias(nicname, utils.MakeIfaceAlias(&nic))
-			utils.Assertf(err == nil, "IpLinkSetAlias[%s] error: %+v", nicname, err)
-		}
+		configureStandardNicByLinux(&nic)
 	}
 
 	return nil
+}
+
+func configureStandardNicByLinux(nic *utils.NicInfo) {
+	var nicname string
+	err := utils.Retry(func() error {
+		var e error
+		nicname, e = utils.GetNicNameByMac(nic.Mac)
+		if e != nil {
+			return e
+		}
+		return nil
+	}, 5, 1)
+	utils.PanicOnError(err)
+	utils.SetNicOption(nicname)
+	/* avoid both master and backup interface up when add nic */
+	if !IsMaster() && !utils.IsSLB() { /* slb don't need set interface down */
+		log.Debugf("set interface %s down", nicname)
+		err := utils.IpLinkSetDown(nicname)
+		utils.Assertf(err == nil, "IpLinkSetDown[%s] error: %+v", nicname, err)
+	} else {
+		log.Debugf("set interface %s up", nicname)
+		err := utils.IpLinkSetUp(nicname)
+		utils.Assertf(err == nil, "IpLinkSetUp[%s] error: %+v", nicname, err)
+		checkNicIsUp(nicname, true)
+	}
+
+	if nic.Ip != "" {
+		err := utils.Ip4AddrFlush(nicname)
+		utils.Assertf(err == nil, "IpAddr4Flush[%s] error: %+v", nicname, err)
+		cidr, err := utils.NetmaskToCIDR(nic.Netmask)
+		utils.PanicOnError(err)
+		ipString := fmt.Sprintf("%v/%v", nic.Ip, cidr)
+		log.Debugf("nic [%s] add ipv4 address %s", nicname, ipString)
+		err = utils.IpAddrAdd(nicname, ipString)
+		utils.Assertf(err == nil, "IpAddrAdd[%s, %s] error: %+v", nicname, ipString, err)
+	}
+	if nic.Ip6 != "" {
+		err := utils.Ip6AddrFlush(nicname)
+		utils.Assertf(err == nil, "IpAddr6Flush[%s] error: %+v", nicname, err)
+		ip6String := fmt.Sprintf("%s/%d", nic.Ip6, nic.PrefixLength)
+		log.Debugf("nic [%s] add ipv6 address %s", nicname, ip6String)
+		err = utils.IpAddrAdd(nicname, ip6String)
+		utils.Assertf(err == nil, "IpAddrAdd[%s, %s] error: %+v", nicname, ip6String, err)
+	}
+	mtu := 1500
+	if nic.Mtu != 0 {
+		mtu = nic.Mtu
+	}
+	if err := utils.IpLinkSetMTU(nicname, mtu); err != nil {
+		log.Debugf("IpLinkSetMTU[%s, %d] error: %+v", nicname, mtu, err)
+	}
+
+	if nic.L2Type != "" {
+		err := utils.IpLinkSetAlias(nicname, utils.MakeIfaceAlias(nic))
+		utils.Assertf(err == nil, "IpLinkSetAlias[%s] error: %+v", nicname, err)
+	}
+}
+
+func configureBondNicByLinux(nic *utils.NicInfo) {
+	// Auto-select bond name from NICs with same MAC (with retry for hotplug scenarios)
+	var allNics []string
+	err := utils.Retry(func() error {
+		var e error
+		allNics, e = utils.GetAllNicNamesByMac(nic.Mac)
+		if e != nil {
+			return e
+		}
+		if len(allNics) < 2 {
+			return fmt.Errorf("bond interface requires at least 2 NICs with MAC %s, currently found %v", nic.Mac, allNics)
+		}
+		return nil
+	}, 5, 1)
+	utils.Assertf(err == nil, "failed to get bond NICs after retry: %+v", err)
+	sort.Strings(allNics)
+
+	// Use first NIC name as bond name (e.g., eth2 from [eth2, eth3])
+	bondName := allNics[0]
+	log.Debugf("auto-selected bond name [%s] from candidates %v", bondName, allNics)
+
+	sysfsPath := fmt.Sprintf("/sys/class/net/%s", bondName)
+	nameExists, err := utils.PathExists(sysfsPath)
+	utils.PanicOnError(err)
+	bondExists := false
+	if nameExists {
+		bondExists, err = utils.PathExists(fmt.Sprintf("%s/bonding", sysfsPath))
+		utils.PanicOnError(err)
+	}
+
+	var slaves []string
+	if !bondExists {
+		// First time creating bond (or stale physical NIC occupying the name):
+		// rename physical NICs (including the one that currently has bondName)
+		// and create the bond interface afterwards.
+		slaves = preparePhysicalNicsForBond(bondName, allNics)
+		err = utils.CreateBondInterface(bondName, nic.BondMode)
+		utils.Assertf(err == nil, "CreateBondInterface[%s] error: %+v", bondName, err)
+	} else {
+		// Bond already exists: get existing slave interfaces
+		slaves = getBondSlaveInterfaces(nic, bondName)
+		if err := utils.IpLinkSetDown(bondName); err != nil {
+			log.Debugf("IpLinkSetDown[%s] error: %+v", bondName, err)
+		}
+		if err := utils.IpAddrFlush(bondName); err != nil {
+			log.Debugf("IpAddrFlush[%s] error: %+v", bondName, err)
+		}
+	}
+
+	log.Debugf("bond [%s] slaves %v", bondName, slaves)
+
+	for _, slave := range slaves {
+		err = utils.AddSlaveToBond(slave, bondName)
+		utils.Assertf(err == nil, "AddSlaveToBond[%s,%s] error: %+v", slave, bondName, err)
+	}
+
+	utils.SetNicOption(bondName)
+
+	if nic.Ip != "" {
+		err := utils.Ip4AddrFlush(bondName)
+		utils.Assertf(err == nil, "IpAddr4Flush[%s] error: %+v", bondName, err)
+		err = utils.ConfigureBondInterface(bondName, nic.Ip, nic.Netmask)
+		utils.Assertf(err == nil, "ConfigureBondInterface[%s] error: %+v", bondName, err)
+	}
+
+	if nic.Ip6 != "" {
+		err := utils.Ip6AddrFlush(bondName)
+		utils.Assertf(err == nil, "IpAddr6Flush[%s] error: %+v", bondName, err)
+		ip6String := fmt.Sprintf("%s/%d", nic.Ip6, nic.PrefixLength)
+		log.Debugf("bond [%s] add ipv6 address %s", bondName, ip6String)
+		err = utils.IpAddrAdd(bondName, ip6String)
+		utils.Assertf(err == nil, "IpAddrAdd[%s, %s] error: %+v", bondName, ip6String, err)
+		/* bond IPv6 still needs interface up */
+		err = utils.IpLinkSetUp(bondName)
+		utils.Assertf(err == nil, "IpLinkSetUp[%s] error: %+v", bondName, err)
+	}
+
+	mtu := 1500
+	if nic.Mtu != 0 {
+		mtu = nic.Mtu
+	}
+	if err := utils.IpLinkSetMTU(bondName, mtu); err != nil {
+		log.Debugf("IpLinkSetMTU[%s, %d] error: %+v", bondName, mtu, err)
+	}
+
+	if nic.L2Type != "" {
+		err := utils.IpLinkSetAlias(bondName, utils.MakeIfaceAlias(nic))
+		utils.Assertf(err == nil, "IpLinkSetAlias[%s] error: %+v", bondName, err)
+	}
+
+	if !IsMaster() && !utils.IsSLB() {
+		err := utils.IpLinkSetDown(bondName)
+		utils.Assertf(err == nil, "IpLinkSetDown[%s] error: %+v", bondName, err)
+	} else {
+		err := utils.IpLinkSetUp(bondName)
+		utils.Assertf(err == nil, "IpLinkSetUp[%s] error: %+v", bondName, err)
+		checkNicIsUp(bondName, true)
+	}
+}
+
+func preparePhysicalNicsForBond(bondName string, allNics []string) []string {
+	// Rename physical NICs to bondName-phy1, bondName-phy2, etc.
+	slaves := make([]string, 0, 2)
+	phyIndex := 1
+
+	for _, nicName := range allNics {
+		newName := fmt.Sprintf("%s-phy%d", bondName, phyIndex)
+		actualName := nicName
+		if nicName != newName {
+			log.Debugf("renaming physical NIC %s -> %s for bond %s", nicName, newName, bondName)
+			if err := utils.IpLinkSetDown(nicName); err != nil {
+				log.Debugf("IpLinkSetDown[%s] error: %+v", nicName, err)
+			}
+			if err := utils.IpLinkSetName(nicName, newName); err != nil {
+				log.Warnf("IpLinkSetName[%s -> %s] error: %+v, using original name", nicName, newName, err)
+			} else {
+				actualName = newName
+			}
+		}
+
+		slaves = append(slaves, actualName)
+		phyIndex++
+
+		if len(slaves) >= 2 {
+			break
+		}
+	}
+
+	utils.Assertf(len(slaves) >= 2, "bond interface %s requires at least 2 physical NICs, got %v", bondName, slaves)
+	return slaves
+}
+
+func getBondSlaveInterfaces(nic *utils.NicInfo, bondName string) []string {
+	nicnames, err := utils.GetAllNicNamesByMac(nic.Mac)
+	utils.Assertf(err == nil, "GetAllNicNamesByMac[%s] error: %+v", nic.Mac, err)
+	sort.Strings(nicnames)
+
+	prefix := fmt.Sprintf("%s-phy", bondName)
+	slaves := make([]string, 0, len(nicnames))
+	seen := make(map[string]struct{})
+
+	for _, name := range nicnames {
+		if name == bondName {
+			continue
+		}
+		if strings.HasPrefix(name, prefix) {
+			if _, ok := seen[name]; ok {
+				continue
+			}
+			slaves = append(slaves, name)
+			seen[name] = struct{}{}
+		}
+	}
+
+	if len(slaves) < 2 {
+		for _, name := range nicnames {
+			if name == bondName {
+				continue
+			}
+			if _, ok := seen[name]; ok {
+				continue
+			}
+			slaves = append(slaves, name)
+			seen[name] = struct{}{}
+			if len(slaves) >= 2 {
+				break
+			}
+		}
+	}
+
+	utils.Assertf(len(slaves) >= 2, "bond interface %s requires at least 2 physical nics sharing mac %s, got %v", bondName, nic.Mac, slaves)
+	if len(slaves) > 2 {
+		slaves = slaves[:2]
+	}
+
+	return slaves
 }
 
 func configureNicDefaultActionByLinux(cmd *ConfigureNicCmd) interface{} {
