@@ -216,7 +216,7 @@ func (driver *EulerStrongSWan) SyncIpsecConns(cmd *SyncIPsecCmd) []string {
 			Sudo:    true,
 		}
 		err := b.Run()
-		log.Debugf("init ipsec connection[uuid:%s] failed %+v", conns, err)
+		log.Debugf("init ipsec connection[uuid:%+v] failed %+v", conns, err)
 	}
 
 	// wait ipsec up

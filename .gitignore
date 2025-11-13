@@ -28,6 +28,7 @@ _testmain.go
 zvr.log
 target/
 bin/
+vendor/
 
 .vscode/
 
