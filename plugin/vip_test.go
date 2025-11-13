@@ -3,229 +3,241 @@ package plugin
 import (
 	"fmt"
 	"strings"
+	"testing"
 
 	"zstack-vyos/server"
 	"zstack-vyos/utils"
 
-	. "github.com/onsi/ginkgo"
-	"github.com/onsi/gomega"
 	log "github.com/sirupsen/logrus"
+	"github.com/stretchr/testify/suite"
 )
 
-var _ = Describe("vip_test", func() {
-	It("vip_test prepare env", func() {
-		utils.InitLog(utils.GetVyosUtLogDir()+"vip_test.log", false)
-		utils.CleanTestEnvForUT()
-	})
+// VipTestSuite defines the test suite for VIP functionality
+type VipTestSuite struct {
+	suite.Suite
+}
 
-	It("test set vip for no ha", func() {
-		nicCmd := &configureNicCmd{}
-		nicCmd.Nics = append(nicCmd.Nics, utils.PubNicForUT)
-		configureNic(nicCmd)
+// SetupSuite runs once before all tests
+func (s *VipTestSuite) SetupSuite() {
+	utils.InitLog(utils.GetVyosUtLogDir()+"vip_test.log", false)
+}
 
-		var vips []vipInfo
-		vip1 := vipInfo{Ip: "100.64.1.200", Netmask: utils.PubNicForUT.Netmask, Gateway: utils.PubNicForUT.Gateway,
-			OwnerEthernetMac: utils.PubNicForUT.Mac}
-		vip2 := vipInfo{Ip: "100.64.1.201", Netmask: utils.PubNicForUT.Netmask, Gateway: utils.PubNicForUT.Gateway,
-			OwnerEthernetMac: utils.PubNicForUT.Mac}
-		vips = append(vips, vip1)
-		vips = append(vips, vip2)
-		ip1 := nicIpInfo{Ip: utils.PubNicForUT.Ip, Netmask: utils.PubNicForUT.Netmask, OwnerEthernetMac: utils.PubNicForUT.Mac}
+// TearDownSuite runs once after all tests
+func (s *VipTestSuite) TearDownSuite() {
+}
 
-		oldHaStatus := utils.GetHaStatus()
-		utils.SetHaStatus(utils.NOHA)
-		cmd := &setVipCmd{SyncVip: false, Vips: vips, NicIps: []nicIpInfo{ip1}}
-		log.Debugf("setvip %+v", cmd)
-		setVip(cmd)
-		checkVipConfig(vips, utils.PubNicForUT, utils.NOHA)
+// TestSetVipForNoHA tests setting VIP without HA
+func (s *VipTestSuite) TestSetVipForNoHA() {
+	nicCmd := &configureNicCmd{}
+	nicCmd.Nics = append(nicCmd.Nics, utils.PubNicForUT)
+	configureNic(nicCmd)
 
-		log.Debugf("setvip %+v", cmd)
-		setVip(cmd)
-		checkVipConfig(vips, utils.PubNicForUT, utils.NOHA)
+	var vips []vipInfo
+	vip1 := vipInfo{Ip: "100.64.1.200", Netmask: utils.PubNicForUT.Netmask, Gateway: utils.PubNicForUT.Gateway,
+		OwnerEthernetMac: utils.PubNicForUT.Mac}
+	vip2 := vipInfo{Ip: "100.64.1.201", Netmask: utils.PubNicForUT.Netmask, Gateway: utils.PubNicForUT.Gateway,
+		OwnerEthernetMac: utils.PubNicForUT.Mac}
+	vips = append(vips, vip1)
+	vips = append(vips, vip2)
+	ip1 := nicIpInfo{Ip: utils.PubNicForUT.Ip, Netmask: utils.PubNicForUT.Netmask, OwnerEthernetMac: utils.PubNicForUT.Mac}
 
-		rcmd := &removeVipCmd{Vips: vips}
-		removeVip(rcmd)
-		checkVipDelete(vips, utils.PubNicForUT)
+	oldHaStatus := utils.GetHaStatus()
+	utils.SetHaStatus(utils.NOHA)
+	cmd := &setVipCmd{SyncVip: false, Vips: vips, NicIps: []nicIpInfo{ip1}}
+	log.Debugf("setvip %+v", cmd)
+	setVip(cmd)
+	s.checkVipConfig(vips, utils.PubNicForUT, utils.NOHA)
 
-		removeVip(rcmd)
-		checkVipDelete(vips, utils.PubNicForUT)
+	log.Debugf("setvip %+v", cmd)
+	setVip(cmd)
+	s.checkVipConfig(vips, utils.PubNicForUT, utils.NOHA)
 
-		removeNic(nicCmd)
-		utils.SetHaStatus(oldHaStatus)
-	})
+	rcmd := &removeVipCmd{Vips: vips}
+	removeVip(rcmd)
+	s.checkVipDelete(vips, utils.PubNicForUT)
 
-	It("test set vip for backup", func() {
-		nicCmd := &configureNicCmd{}
-		nicCmd.Nics = append(nicCmd.Nics, utils.PubNicForUT)
-		configureNic(nicCmd)
+	removeVip(rcmd)
+	s.checkVipDelete(vips, utils.PubNicForUT)
 
-		var vips []vipInfo
-		vip1 := vipInfo{Ip: "100.64.1.200", Netmask: utils.PubNicForUT.Netmask, Gateway: utils.PubNicForUT.Gateway,
-			OwnerEthernetMac: utils.PubNicForUT.Mac}
-		vip2 := vipInfo{Ip: "100.64.1.201", Netmask: utils.PubNicForUT.Netmask, Gateway: utils.PubNicForUT.Gateway,
-			OwnerEthernetMac: utils.PubNicForUT.Mac}
-		vips = append(vips, vip1)
-		vips = append(vips, vip2)
-		ip1 := nicIpInfo{Ip: utils.PubNicForUT.Ip, Netmask: utils.PubNicForUT.Netmask, OwnerEthernetMac: utils.PubNicForUT.Mac}
+	removeNic(nicCmd)
+	utils.SetHaStatus(oldHaStatus)
+}
 
-		oldHaStatus := utils.GetHaStatus()
-		utils.SetHaStatus(utils.HABACKUP)
-		cmd := &setVipCmd{SyncVip: false, Vips: vips, NicIps: []nicIpInfo{ip1}}
-		setVip(cmd)
-		checkVipConfig(vips, utils.PubNicForUT, utils.HABACKUP)
+// TestSetVipForBackup tests setting VIP for backup node
+func (s *VipTestSuite) TestSetVipForBackup() {
+	nicCmd := &configureNicCmd{}
+	nicCmd.Nics = append(nicCmd.Nics, utils.PubNicForUT)
+	configureNic(nicCmd)
 
-		setVip(cmd)
-		checkVipConfig(vips, utils.PubNicForUT, utils.HABACKUP)
+	var vips []vipInfo
+	vip1 := vipInfo{Ip: "100.64.1.200", Netmask: utils.PubNicForUT.Netmask, Gateway: utils.PubNicForUT.Gateway,
+		OwnerEthernetMac: utils.PubNicForUT.Mac}
+	vip2 := vipInfo{Ip: "100.64.1.201", Netmask: utils.PubNicForUT.Netmask, Gateway: utils.PubNicForUT.Gateway,
+		OwnerEthernetMac: utils.PubNicForUT.Mac}
+	vips = append(vips, vip1)
+	vips = append(vips, vip2)
+	ip1 := nicIpInfo{Ip: utils.PubNicForUT.Ip, Netmask: utils.PubNicForUT.Netmask, OwnerEthernetMac: utils.PubNicForUT.Mac}
 
-		rcmd := &removeVipCmd{Vips: vips}
-		removeVip(rcmd)
-		checkVipDelete(vips, utils.PubNicForUT)
+	oldHaStatus := utils.GetHaStatus()
+	utils.SetHaStatus(utils.HABACKUP)
+	cmd := &setVipCmd{SyncVip: false, Vips: vips, NicIps: []nicIpInfo{ip1}}
+	setVip(cmd)
+	s.checkVipConfig(vips, utils.PubNicForUT, utils.HABACKUP)
 
-		removeVip(rcmd)
-		checkVipDelete(vips, utils.PubNicForUT)
+	setVip(cmd)
+	s.checkVipConfig(vips, utils.PubNicForUT, utils.HABACKUP)
 
-		removeNic(nicCmd)
-		utils.SetHaStatus(oldHaStatus)
-	})
+	rcmd := &removeVipCmd{Vips: vips}
+	removeVip(rcmd)
+	s.checkVipDelete(vips, utils.PubNicForUT)
 
-	It("test set vip with sync", func() {
+	removeVip(rcmd)
+	s.checkVipDelete(vips, utils.PubNicForUT)
 
-		nicCmd := &configureNicCmd{}
-		nicCmd.Nics = append(nicCmd.Nics, utils.PubNicForUT)
-		configureNic(nicCmd)
+	removeNic(nicCmd)
+	utils.SetHaStatus(oldHaStatus)
+}
 
-		var vips []vipInfo
-		vip1 := vipInfo{Ip: "100.64.1.200", Netmask: utils.PubNicForUT.Netmask, Gateway: utils.PubNicForUT.Gateway,
-			OwnerEthernetMac: utils.PubNicForUT.Mac}
-		vip2 := vipInfo{Ip: "100.64.1.201", Netmask: utils.PubNicForUT.Netmask, Gateway: utils.PubNicForUT.Gateway,
-			OwnerEthernetMac: utils.PubNicForUT.Mac}
-		vips = append(vips, vip1)
-		vips = append(vips, vip2)
-		ip1 := nicIpInfo{Ip: utils.PubNicForUT.Ip, Netmask: utils.PubNicForUT.Netmask, OwnerEthernetMac: utils.PubNicForUT.Mac}
+// TestSetVipWithSync tests setting VIP with sync enabled
+func (s *VipTestSuite) TestSetVipWithSync() {
+	nicCmd := &configureNicCmd{}
+	nicCmd.Nics = append(nicCmd.Nics, utils.PubNicForUT)
+	configureNic(nicCmd)
 
-		oldHaStatus := utils.GetHaStatus()
-		utils.SetHaStatus(utils.HABACKUP)
-		cmd := &setVipCmd{SyncVip: true, Vips: vips, NicIps: []nicIpInfo{ip1}}
-		setVip(cmd)
-		checkVipConfig(vips, utils.PubNicForUT, utils.HABACKUP)
+	var vips []vipInfo
+	vip1 := vipInfo{Ip: "100.64.1.200", Netmask: utils.PubNicForUT.Netmask, Gateway: utils.PubNicForUT.Gateway,
+		OwnerEthernetMac: utils.PubNicForUT.Mac}
+	vip2 := vipInfo{Ip: "100.64.1.201", Netmask: utils.PubNicForUT.Netmask, Gateway: utils.PubNicForUT.Gateway,
+		OwnerEthernetMac: utils.PubNicForUT.Mac}
+	vips = append(vips, vip1)
+	vips = append(vips, vip2)
+	ip1 := nicIpInfo{Ip: utils.PubNicForUT.Ip, Netmask: utils.PubNicForUT.Netmask, OwnerEthernetMac: utils.PubNicForUT.Mac}
 
-		// remove the nic ip address
-		cidr, err := utils.NetmaskToCIDR(utils.PubNicForUT.Netmask)
-		utils.PanicOnError(err)
-		addr := fmt.Sprintf("%v/%v", utils.PubNicForUT.Ip, cidr)
-		bash := utils.Bash{
-			Command: fmt.Sprintf("ip address del %s dev %s", addr, utils.PubNicForUT.Name),
-		}
-		bash.Run()
+	oldHaStatus := utils.GetHaStatus()
+	utils.SetHaStatus(utils.HABACKUP)
+	cmd := &setVipCmd{SyncVip: true, Vips: vips, NicIps: []nicIpInfo{ip1}}
+	setVip(cmd)
+	s.checkVipConfig(vips, utils.PubNicForUT, utils.HABACKUP)
 
-		setVip(cmd)
-		checkVipConfig(vips, utils.PubNicForUT, utils.HABACKUP)
+	// remove the nic ip address
+	cidr, err := utils.NetmaskToCIDR(utils.PubNicForUT.Netmask)
+	utils.PanicOnError(err)
+	addr := fmt.Sprintf("%v/%v", utils.PubNicForUT.Ip, cidr)
+	bash := utils.Bash{
+		Command: fmt.Sprintf("ip address del %s dev %s", addr, utils.PubNicForUT.Name),
+	}
+	bash.Run()
 
-		rcmd := &removeVipCmd{Vips: vips}
-		removeVip(rcmd)
-		checkVipDelete(vips, utils.PubNicForUT)
+	setVip(cmd)
+	s.checkVipConfig(vips, utils.PubNicForUT, utils.HABACKUP)
 
-		removeNic(nicCmd)
-		utils.SetHaStatus(oldHaStatus)
-	})
+	rcmd := &removeVipCmd{Vips: vips}
+	removeVip(rcmd)
+	s.checkVipDelete(vips, utils.PubNicForUT)
 
-	It("test set vip for backup on mgt", func() {
-		nicCmd := &configureNicCmd{}
-		nicCmd.Nics = append(nicCmd.Nics, utils.MgtNicForUT)
-		oldHaStatus := utils.GetHaStatus()
-		utils.SetHaStatus(utils.HABACKUP)
-		SetKeepalivedStatusForUt(KeepAlivedStatus_Master)
-		log.Debugf("TestSetVipForBackupOnMgt start ##############################")
-		SetKeepalivedStatusForUt(KeepAlivedStatus_Backup)
+	removeNic(nicCmd)
+	utils.SetHaStatus(oldHaStatus)
+}
 
-		var vips []vipInfo
-		ipInMgt1, _ := utils.GetFreeMgtIp()
-		ipInMgt2, _ := utils.GetFreeMgtIp()
-		vip1 := vipInfo{Ip: ipInMgt1, Netmask: utils.MgtNicForUT.Netmask, Gateway: utils.MgtNicForUT.Gateway,
-			OwnerEthernetMac: utils.MgtNicForUT.Mac}
-		vip2 := vipInfo{Ip: ipInMgt2, Netmask: utils.MgtNicForUT.Netmask, Gateway: utils.MgtNicForUT.Gateway,
-			OwnerEthernetMac: utils.MgtNicForUT.Mac}
-		vips = append(vips, vip1)
-		vips = append(vips, vip2)
-		ip1 := nicIpInfo{Ip: utils.MgtNicForUT.Ip, Netmask: utils.MgtNicForUT.Netmask, OwnerEthernetMac: utils.MgtNicForUT.Mac}
+// TestSetVipForBackupOnMgt tests setting VIP for backup on management interface
+func (s *VipTestSuite) TestSetVipForBackupOnMgt() {
+	nicCmd := &configureNicCmd{}
+	nicCmd.Nics = append(nicCmd.Nics, utils.MgtNicForUT)
+	oldHaStatus := utils.GetHaStatus()
+	utils.SetHaStatus(utils.HABACKUP)
+	SetKeepalivedStatusForUt(KeepAlivedStatus_Master)
+	log.Debugf("TestSetVipForBackupOnMgt start ##############################")
+	SetKeepalivedStatusForUt(KeepAlivedStatus_Backup)
 
-		cmd := &setVipCmd{SyncVip: false, Vips: vips, NicIps: []nicIpInfo{ip1}}
-		log.Debugf("TestSetVipForBackupOnMgt start cmd %+v", cmd)
-		setVip(cmd)
-		checkVipConfig(vips, utils.MgtNicForUT, utils.HABACKUP)
+	var vips []vipInfo
+	ipInMgt1, _ := utils.GetFreeMgtIp()
+	ipInMgt2, _ := utils.GetFreeMgtIp()
+	vip1 := vipInfo{Ip: ipInMgt1, Netmask: utils.MgtNicForUT.Netmask, Gateway: utils.MgtNicForUT.Gateway,
+		OwnerEthernetMac: utils.MgtNicForUT.Mac}
+	vip2 := vipInfo{Ip: ipInMgt2, Netmask: utils.MgtNicForUT.Netmask, Gateway: utils.MgtNicForUT.Gateway,
+		OwnerEthernetMac: utils.MgtNicForUT.Mac}
+	vips = append(vips, vip1)
+	vips = append(vips, vip2)
+	ip1 := nicIpInfo{Ip: utils.MgtNicForUT.Ip, Netmask: utils.MgtNicForUT.Netmask, OwnerEthernetMac: utils.MgtNicForUT.Mac}
 
-		log.Debugf("TestSetVipForBackupOnMgt start again cmd %+v", cmd)
-		setVip(cmd)
-		checkVipConfig(vips, utils.MgtNicForUT, utils.HABACKUP)
+	cmd := &setVipCmd{SyncVip: false, Vips: vips, NicIps: []nicIpInfo{ip1}}
+	log.Debugf("TestSetVipForBackupOnMgt start cmd %+v", cmd)
+	setVip(cmd)
+	s.checkVipConfig(vips, utils.MgtNicForUT, utils.HABACKUP)
 
-		rcmd := &removeVipCmd{Vips: vips}
-		log.Debugf("TestSetVipForBackupOnMgt removeVip cmd %+v", rcmd)
-		removeVip(rcmd)
-		checkVipDelete(vips, utils.MgtNicForUT)
+	log.Debugf("TestSetVipForBackupOnMgt start again cmd %+v", cmd)
+	setVip(cmd)
+	s.checkVipConfig(vips, utils.MgtNicForUT, utils.HABACKUP)
 
-		log.Debugf("TestSetVipForBackupOnMgt removeVip cmd %+v", rcmd)
-		removeVip(rcmd)
-		checkVipDelete(vips, utils.MgtNicForUT)
+	rcmd := &removeVipCmd{Vips: vips}
+	log.Debugf("TestSetVipForBackupOnMgt removeVip cmd %+v", rcmd)
+	removeVip(rcmd)
+	s.checkVipDelete(vips, utils.MgtNicForUT)
 
-		utils.SetHaStatus(oldHaStatus)
-		utils.ReleaseMgtIp(ipInMgt1)
-		utils.ReleaseMgtIp(ipInMgt2)
-	})
+	log.Debugf("TestSetVipForBackupOnMgt removeVip cmd %+v", rcmd)
+	removeVip(rcmd)
+	s.checkVipDelete(vips, utils.MgtNicForUT)
 
-	It("test set vip for master on mgt", func() {
-		nicCmd := &configureNicCmd{}
-		nicCmd.Nics = append(nicCmd.Nics, utils.MgtNicForUT)
-		oldHaStatus := utils.GetHaStatus()
-		utils.SetHaStatus(utils.HABACKUP)
-		SetKeepalivedStatusForUt(KeepAlivedStatus_Master)
-		log.Debugf("TestSetVipForMasterOnMgt start ##############################")
+	utils.SetHaStatus(oldHaStatus)
+	utils.ReleaseMgtIp(ipInMgt1)
+	utils.ReleaseMgtIp(ipInMgt2)
+}
 
-		var vips []vipInfo
-		ipInMgt1, _ := utils.GetFreeMgtIp()
-		ipInMgt2, _ := utils.GetFreeMgtIp()
-		vip1 := vipInfo{Ip: ipInMgt1, Netmask: utils.MgtNicForUT.Netmask, Gateway: utils.MgtNicForUT.Gateway,
-			OwnerEthernetMac: utils.MgtNicForUT.Mac}
-		vip2 := vipInfo{Ip: ipInMgt2, Netmask: utils.MgtNicForUT.Netmask, Gateway: utils.MgtNicForUT.Gateway,
-			OwnerEthernetMac: utils.MgtNicForUT.Mac}
-		vips = append(vips, vip1)
-		vips = append(vips, vip2)
-		ip1 := nicIpInfo{Ip: utils.MgtNicForUT.Ip, Netmask: utils.MgtNicForUT.Netmask, OwnerEthernetMac: utils.MgtNicForUT.Mac}
+// TestSetVipForMasterOnMgt tests setting VIP for master on management interface
+func (s *VipTestSuite) TestSetVipForMasterOnMgt() {
+	nicCmd := &configureNicCmd{}
+	nicCmd.Nics = append(nicCmd.Nics, utils.MgtNicForUT)
+	oldHaStatus := utils.GetHaStatus()
+	utils.SetHaStatus(utils.HABACKUP)
+	SetKeepalivedStatusForUt(KeepAlivedStatus_Master)
+	log.Debugf("TestSetVipForMasterOnMgt start ##############################")
 
-		cmd := &setVipCmd{SyncVip: false, Vips: vips, NicIps: []nicIpInfo{ip1}}
-		log.Debugf("TestSetVipForMasterOnMgt start cmd %+v", cmd)
-		setVip(cmd)
-		checkVipConfig(vips, utils.MgtNicForUT, utils.HAMASTER)
+	var vips []vipInfo
+	ipInMgt1, _ := utils.GetFreeMgtIp()
+	ipInMgt2, _ := utils.GetFreeMgtIp()
+	vip1 := vipInfo{Ip: ipInMgt1, Netmask: utils.MgtNicForUT.Netmask, Gateway: utils.MgtNicForUT.Gateway,
+		OwnerEthernetMac: utils.MgtNicForUT.Mac}
+	vip2 := vipInfo{Ip: ipInMgt2, Netmask: utils.MgtNicForUT.Netmask, Gateway: utils.MgtNicForUT.Gateway,
+		OwnerEthernetMac: utils.MgtNicForUT.Mac}
+	vips = append(vips, vip1)
+	vips = append(vips, vip2)
+	ip1 := nicIpInfo{Ip: utils.MgtNicForUT.Ip, Netmask: utils.MgtNicForUT.Netmask, OwnerEthernetMac: utils.MgtNicForUT.Mac}
 
-		log.Debugf("TestSetVipForMasterOnMgt start again cmd %+v", cmd)
-		setVip(cmd)
-		checkVipConfig(vips, utils.MgtNicForUT, utils.HAMASTER)
+	cmd := &setVipCmd{SyncVip: false, Vips: vips, NicIps: []nicIpInfo{ip1}}
+	log.Debugf("TestSetVipForMasterOnMgt start cmd %+v", cmd)
+	setVip(cmd)
+	s.checkVipConfig(vips, utils.MgtNicForUT, utils.HAMASTER)
 
-		rcmd := &removeVipCmd{Vips: vips}
-		log.Debugf("TestSetVipForMasterOnMgt removeVipCmd %+v", rcmd)
-		removeVip(rcmd)
-		checkVipDelete(vips, utils.MgtNicForUT)
+	log.Debugf("TestSetVipForMasterOnMgt start again cmd %+v", cmd)
+	setVip(cmd)
+	s.checkVipConfig(vips, utils.MgtNicForUT, utils.HAMASTER)
 
-		log.Debugf("TestSetVipForMasterOnMgt removeVipCmd %+v", rcmd)
-		removeVip(rcmd)
-		checkVipDelete(vips, utils.MgtNicForUT)
+	rcmd := &removeVipCmd{Vips: vips}
+	log.Debugf("TestSetVipForMasterOnMgt removeVipCmd %+v", rcmd)
+	removeVip(rcmd)
+	s.checkVipDelete(vips, utils.MgtNicForUT)
 
-		utils.SetHaStatus(oldHaStatus)
-		utils.ReleaseMgtIp(ipInMgt1)
-		utils.ReleaseMgtIp(ipInMgt2)
-	})
+	log.Debugf("TestSetVipForMasterOnMgt removeVipCmd %+v", rcmd)
+	removeVip(rcmd)
+	s.checkVipDelete(vips, utils.MgtNicForUT)
 
-	It("vip_test clean env", func() {
-		utils.CleanTestEnvForUT()
-	})
-})
+	utils.SetHaStatus(oldHaStatus)
+	utils.ReleaseMgtIp(ipInMgt1)
+	utils.ReleaseMgtIp(ipInMgt2)
+}
 
-func checkVipConfig(vips []vipInfo, nic utils.NicInfo, haStatus string) {
+// TestVipTestSuite runs the test suite
+func TestVipTestSuite(t *testing.T) {
+	suite.Run(t, new(VipTestSuite))
+}
+
+func (s *VipTestSuite) checkVipConfig(vips []vipInfo, nic utils.NicInfo, haStatus string) {
 	tree := server.NewParserFromShowConfiguration().Tree
 
 	/* nic ip must be the first ip of the nic */
 	ipsInLinux := getLinuxNicVips(nic.Name)
 
-	gomega.Expect(ipsInLinux[0]).To(gomega.ContainSubstring(nic.Ip), "check ip[%s] in linux failed on interface %s, result %s", nic.Ip, nic.Name, ipsInLinux)
+	s.Contains(ipsInLinux[0], nic.Ip, "check ip[%s] in linux failed on interface %s, result %s", nic.Ip, nic.Name, ipsInLinux)
 
 	ipMaps := make(map[string]string)
 	for _, ip := range ipsInLinux {
@@ -240,15 +252,15 @@ func checkVipConfig(vips []vipInfo, nic utils.NicInfo, haStatus string) {
 		n := tree.Getf("interfaces ethernet %s address %v", nic.Name, addr)
 		/* vip on mgt nic will not add to vyos, only add to linux ip command */
 		if nic.Name != utils.MgtNicForUT.Name {
-			gomega.Expect(n).NotTo(gomega.BeNil(), "check vip[%s] failed on interface %s", vip.Ip, nic.Name)
+			s.NotNil(n, "check vip[%s] failed on interface %s", vip.Ip, nic.Name)
 		} else {
-			gomega.Expect(n).To(gomega.BeNil(), "check vip[%s] failed on interface %s", vip.Ip, nic.Name)
+			s.Nil(n, "check vip[%s] failed on interface %s", vip.Ip, nic.Name)
 		}
 
 		/* when vip nic is the mgt and vpc is in backip, vip will be deleted from linux */
 		if haStatus != utils.HABACKUP || nic.Name != utils.MgtNicForUT.Name {
 			_, ok := ipMaps[vip.Ip]
-			gomega.Expect(ok).To(gomega.BeTrue(), "check ip[%s] in linux failed on interface %s, ipMaps %+v", vip.Ip, nic.Name, ipMaps)
+			s.True(ok, "check ip[%s] in linux failed on interface %s, ipMaps %+v", vip.Ip, nic.Name, ipMaps)
 		}
 	}
 
@@ -259,15 +271,15 @@ func checkVipConfig(vips []vipInfo, nic utils.NicInfo, haStatus string) {
 	addr := fmt.Sprintf("%v/%v", nic.Ip, cidr)
 
 	n := tree.Getf("interfaces ethernet %s address %v", nic.Name, addr)
-	gomega.Expect(n).NotTo(gomega.BeNil(), "check ip[%s] failed on interface %s", nic.Ip, nic.Name) */
+	s.NotNil(n, "check ip[%s] failed on interface %s", nic.Ip, nic.Name) */
 }
 
-func checkVipDelete(vips []vipInfo, nic utils.NicInfo) {
+func (s *VipTestSuite) checkVipDelete(vips []vipInfo, nic utils.NicInfo) {
 	tree := server.NewParserFromShowConfiguration().Tree
 
 	/* nic ip must be the first ip of the nic */
 	ipsInLinux := getLinuxNicVips(nic.Name)
-	gomega.Expect(ipsInLinux[0]).To(gomega.ContainSubstring(nic.Ip), "check ip[%s] in linux failed on interface %s", nic.Ip, nic.Name)
+	s.Contains(ipsInLinux[0], nic.Ip, "check ip[%s] in linux failed on interface %s", nic.Ip, nic.Name)
 
 	ipMaps := make(map[string]string)
 	for _, ip := range ipsInLinux {
@@ -281,12 +293,12 @@ func checkVipDelete(vips []vipInfo, nic utils.NicInfo) {
 		utils.PanicOnError(err)
 		addr := fmt.Sprintf("%v/%v", vip.Ip, cidr)
 		n := tree.Getf("interfaces ethernet %s address %v", nic.Name, addr)
-		gomega.Expect(n).To(gomega.BeNil(), "check vip[%s] delete failed on interface %s", vip.Ip, nic.Name)
+		s.Nil(n, "check vip[%s] delete failed on interface %s", vip.Ip, nic.Name)
 
 		/* vip deleted from linux */
 
 		_, ok := ipMaps[vip.Ip]
-		gomega.Expect(ok).NotTo(gomega.BeTrue(), "check delete ip[%s] in linux failed on interface %s", vip.Ip, nic.Name)
+		s.False(ok, "check delete ip[%s] in linux failed on interface %s", vip.Ip, nic.Name)
 	}
 
 	/* nic ip is still configured in vyos in ut vyos,
@@ -296,5 +308,5 @@ func checkVipDelete(vips []vipInfo, nic utils.NicInfo) {
 	addr := fmt.Sprintf("%v/%v", nic.Ip, cidr)
 
 	n := tree.Getf("interfaces ethernet %s address %v", nic.Name, addr)
-	gomega.Expect(n).NotTo(gomega.BeNil(), "check ip[%s] failed on interface %s", nic.Ip, nic.Name) */
+	s.NotNil(n, "check ip[%s] failed on interface %s", nic.Ip, nic.Name) */
 }

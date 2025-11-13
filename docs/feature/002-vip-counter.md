@@ -64,3 +64,12 @@ vipUuid, vipIp, 入方向pkt计数，入方向octet计数，出方向pkt计数�
 替换 func (c *vipCollector) Update 的函数逻辑
 根据前后的函数逻辑，把统计值传给prom.Metric
 
+
+## ipv6 vip
+对于ipv6的vip重复前面的步骤
+### 添加vip的iptables规则
+区别是命令ip6tables替换iptables
+### 删除vip的iptables规则
+区别是命令ip6tables替换iptables
+### 读取iptables规则计数
+区别是命令ip6tables替换iptables
