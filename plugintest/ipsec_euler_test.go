@@ -10,27 +10,27 @@ import (
 // IpsecEulerTestSuite IPsec 测试套件（针对 Euler 22.03）
 type IpsecEulerTestSuite struct {
 	suite.Suite
-	env *VpcIp4Env
+	env *VpcTestEnv
 }
 
 // SetupTest 每个测试前的准备工作
 func (s *IpsecEulerTestSuite) SetupTest() {
-	s.env = NewVpcIpv4Env()
-	s.env.SetupBootStrap()
-	s.env.SetupIpsec()
+	s.env = NewVpcTestEnv()
+	s.env.Setup()
+	s.env.SetupIPsec()
 }
 
 // TearDownTest 每个测试后的清理工作
 func (s *IpsecEulerTestSuite) TearDownTest() {
-	s.env.DestroyIpsec()
-	s.env.DestroyBootStrap()
+	s.env.TeardownIPsec()
+	s.env.Teardown()
 }
 
 // TestCreateIPsecConnection 测试创建 IPsec 连接
 func (s *IpsecEulerTestSuite) TestCreateIPsecConnection() {
 	s.env.AddPeerAddr("ut-pub", "192.168.2.102/24")
 	cmd := plugin.CreateIPsecCmd{
-		Infos:          []plugin.IpsecInfo{s.env.ipsec1},
+		Infos:          []plugin.IpsecInfo{s.env.IpsecConfig},
 		AutoRestartVpn: false,
 	}
 	plugin.CreateIPsecConnection(&cmd)
@@ -43,14 +43,14 @@ func (s *IpsecEulerTestSuite) TestDeleteIPsecConnection() {
 	// 先创建连接
 	s.env.AddPeerAddr("ut-pub", "192.168.2.102/24")
 	createCmd := plugin.CreateIPsecCmd{
-		Infos:          []plugin.IpsecInfo{s.env.ipsec1},
+		Infos:          []plugin.IpsecInfo{s.env.IpsecConfig},
 		AutoRestartVpn: false,
 	}
 	plugin.CreateIPsecConnection(&createCmd)
 
 	// 删除连接
 	cmd := plugin.DeleteIPsecCmd{
-		Infos: []plugin.IpsecInfo{s.env.ipsec1},
+		Infos: []plugin.IpsecInfo{s.env.IpsecConfig},
 	}
 	plugin.DeleteIPsecConnection(&cmd)
 
@@ -61,7 +61,7 @@ func (s *IpsecEulerTestSuite) TestDeleteIPsecConnection() {
 func (s *IpsecEulerTestSuite) TestSyncIPsecConnection() {
 	s.env.AddPeerAddr("ut-pub", "192.168.2.102/24")
 	cmd := plugin.SyncIPsecCmd{
-		Infos:          []plugin.IpsecInfo{s.env.ipsec1},
+		Infos:          []plugin.IpsecInfo{s.env.IpsecConfig},
 		AutoRestartVpn: false,
 	}
 	plugin.SyncIPsecConnection(&cmd)
@@ -74,14 +74,14 @@ func (s *IpsecEulerTestSuite) TestDeleteAfterSync() {
 	// 先同步
 	s.env.AddPeerAddr("ut-pub", "192.168.2.102/24")
 	syncCmd := plugin.SyncIPsecCmd{
-		Infos:          []plugin.IpsecInfo{s.env.ipsec1},
+		Infos:          []plugin.IpsecInfo{s.env.IpsecConfig},
 		AutoRestartVpn: false,
 	}
 	plugin.SyncIPsecConnection(&syncCmd)
 
 	// 再删除
 	deleteCmd := plugin.DeleteIPsecCmd{
-		Infos: []plugin.IpsecInfo{s.env.ipsec1},
+		Infos: []plugin.IpsecInfo{s.env.IpsecConfig},
 	}
 	plugin.DeleteIPsecConnection(&deleteCmd)
 

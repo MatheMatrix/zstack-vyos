@@ -11,15 +11,15 @@ import (
 // RouteTableTestSuite 路由表测试套件
 type RouteTableTestSuite struct {
 	suite.Suite
-	env                    *VpcIp4Env
+	env                    *VpcTestEnv
 	r1, r2, r3, r4, r5, r6 plugin.RouteInfo
 	r7, r8                 plugin.RouteInfo
 }
 
 // SetupTest 每个测试前的准备工作
 func (s *RouteTableTestSuite) SetupTest() {
-	s.env = NewVpcIpv4Env()
-	s.env.SetupBootStrap()
+	s.env = NewVpcTestEnv()
+	s.env.Setup()
 
 	s.r1 = plugin.RouteInfo{Destination: "1.1.1.0/24", Target: "10.1.1.101", Distance: 100}
 	s.r2 = plugin.RouteInfo{Destination: "1.1.2.0/24", Target: "10.1.1.101", Distance: 110}
@@ -33,7 +33,7 @@ func (s *RouteTableTestSuite) SetupTest() {
 
 // TearDownTest 每个测试后的清理工作
 func (s *RouteTableTestSuite) TearDownTest() {
-	s.env.DestroyBootStrap()
+	s.env.Teardown()
 }
 
 // isRouteExisted 检查路由是否存在

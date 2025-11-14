@@ -10,27 +10,27 @@ import (
 // LbUdpTestSuite UDP 负载均衡测试套件
 type LbUdpTestSuite struct {
 	suite.Suite
-	env *SlbHaIp4Env
+	env *SlbHaTestEnv
 }
 
 // SetupTest 每个测试前的准备工作
 func (s *LbUdpTestSuite) SetupTest() {
-	s.env = NewSlbHaIp4Env()
-	s.env.SetupStrap()
-	s.env.SetupLb()
-	s.env.SetupVyosHa()
+	s.env = NewSlbHaTestEnv()
+	s.env.Setup()
+	s.env.SetupLoadBalancer()
+	s.env.SetupVyosHA()
 }
 
 // TearDownTest 每个测试后的清理工作
 func (s *LbUdpTestSuite) TearDownTest() {
-	s.env.DestroyBootStrap()
-	s.env.DestroyLb()
+	s.env.TeardownLoadBalancer()
+	s.env.Teardown()
 }
 
 // TestRefreshUdpLb 测试刷新 UDP 负载均衡
 func (s *LbUdpTestSuite) TestRefreshUdpLb() {
 	cmd := plugin.RefreshLbCmd{
-		Lbs:              []plugin.LbInfo{s.env.lb},
+		Lbs:              []plugin.LbInfo{s.env.Lb},
 		EnableHaproxyLog: true,
 	}
 	plugin.RefreshLbInternal(&cmd)
