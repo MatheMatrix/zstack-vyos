@@ -1,52 +1,94 @@
 package plugintest
 
 import (
-	. "github.com/onsi/ginkgo/v2"
+	"testing"
 	"zstack-vyos/plugin"
+
+	"github.com/stretchr/testify/suite"
 )
 
-var _ = Describe("euler22.03 ipsec test", func() {
-	Context("vpc ipsec test", func() {
-		env := NewVpcIpv4Env()
-		It("ipsec_euler :test prepare env", func() {
-			env.SetupBootStrap()
-			env.SetupIpsec()
-		})
+// IpsecEulerTestSuite IPsec 测试套件（针对 Euler 22.03）
+type IpsecEulerTestSuite struct {
+	suite.Suite
+	env *VpcIp4Env
+}
 
-		It("ipsec_euler: CreateIPsecConnection", func() {
-			env.AddPeerAddr("ut-pub", "192.168.2.102/24")
-			cmd := plugin.CreateIPsecCmd{
-				Infos:          []plugin.IpsecInfo{env.ipsec1},
-				AutoRestartVpn: false,
-			}
-			plugin.CreateIPsecConnection(&cmd)
-		})
+// SetupTest 每个测试前的准备工作
+func (s *IpsecEulerTestSuite) SetupTest() {
+	s.env = NewVpcIpv4Env()
+	s.env.SetupBootStrap()
+	s.env.SetupIpsec()
+}
 
-		It("ipsec_euler: DeleteIPsecConnection", func() {
-			cmd := plugin.DeleteIPsecCmd{
-				Infos: []plugin.IpsecInfo{env.ipsec1},
-			}
-			plugin.DeleteIPsecConnection(&cmd)
-		})
+// TearDownTest 每个测试后的清理工作
+func (s *IpsecEulerTestSuite) TearDownTest() {
+	s.env.DestroyIpsec()
+	s.env.DestroyBootStrap()
+}
 
-		It("ipsec_euler: ", func() {
-			cmd := plugin.SyncIPsecCmd{
-				Infos:          []plugin.IpsecInfo{env.ipsec1},
-				AutoRestartVpn: false,
-			}
-			plugin.SyncIPsecConnection(&cmd)
-		})
+// TestCreateIPsecConnection 测试创建 IPsec 连接
+func (s *IpsecEulerTestSuite) TestCreateIPsecConnection() {
+	s.env.AddPeerAddr("ut-pub", "192.168.2.102/24")
+	cmd := plugin.CreateIPsecCmd{
+		Infos:          []plugin.IpsecInfo{s.env.ipsec1},
+		AutoRestartVpn: false,
+	}
+	plugin.CreateIPsecConnection(&cmd)
 
-		It("ipsec_euler: DeleteIPsecConnection", func() {
-			cmd := plugin.DeleteIPsecCmd{
-				Infos: []plugin.IpsecInfo{env.ipsec1},
-			}
-			plugin.DeleteIPsecConnection(&cmd)
-		})
+	// TODO: 添加验证逻辑，检查 IPsec 连接是否创建成功
+}
 
-		It("ipsec_euler: test destroy env", func() {
-			env.DestroyIpsec()
-			env.DestroyBootStrap()
-		})
-	})
-})
+// TestDeleteIPsecConnection 测试删除 IPsec 连接
+func (s *IpsecEulerTestSuite) TestDeleteIPsecConnection() {
+	// 先创建连接
+	s.env.AddPeerAddr("ut-pub", "192.168.2.102/24")
+	createCmd := plugin.CreateIPsecCmd{
+		Infos:          []plugin.IpsecInfo{s.env.ipsec1},
+		AutoRestartVpn: false,
+	}
+	plugin.CreateIPsecConnection(&createCmd)
+
+	// 删除连接
+	cmd := plugin.DeleteIPsecCmd{
+		Infos: []plugin.IpsecInfo{s.env.ipsec1},
+	}
+	plugin.DeleteIPsecConnection(&cmd)
+
+	// TODO: 添加验证逻辑，检查 IPsec 连接是否删除成功
+}
+
+// TestSyncIPsecConnection 测试同步 IPsec 连接
+func (s *IpsecEulerTestSuite) TestSyncIPsecConnection() {
+	s.env.AddPeerAddr("ut-pub", "192.168.2.102/24")
+	cmd := plugin.SyncIPsecCmd{
+		Infos:          []plugin.IpsecInfo{s.env.ipsec1},
+		AutoRestartVpn: false,
+	}
+	plugin.SyncIPsecConnection(&cmd)
+
+	// TODO: 添加验证逻辑，检查 IPsec 连接是否同步成功
+}
+
+// TestDeleteAfterSync 测试同步后删除 IPsec 连接
+func (s *IpsecEulerTestSuite) TestDeleteAfterSync() {
+	// 先同步
+	s.env.AddPeerAddr("ut-pub", "192.168.2.102/24")
+	syncCmd := plugin.SyncIPsecCmd{
+		Infos:          []plugin.IpsecInfo{s.env.ipsec1},
+		AutoRestartVpn: false,
+	}
+	plugin.SyncIPsecConnection(&syncCmd)
+
+	// 再删除
+	deleteCmd := plugin.DeleteIPsecCmd{
+		Infos: []plugin.IpsecInfo{s.env.ipsec1},
+	}
+	plugin.DeleteIPsecConnection(&deleteCmd)
+
+	// TODO: 添加验证逻辑
+}
+
+// TestIpsecEulerSuite 运行 IPsec 测试套件
+func TestIpsecEulerSuite(t *testing.T) {
+	suite.Run(t, new(IpsecEulerTestSuite))
+}
