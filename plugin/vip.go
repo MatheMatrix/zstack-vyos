@@ -1796,3 +1796,100 @@ func VipEntryPoint() {
 	server.RegisterAsyncCommandHandler(VR_DELETE_VIP_QOS, server.VyosLock(deleteVipQos))
 	server.RegisterAsyncCommandHandler(VR_SYNC_VIP_QOS, server.VyosLock(syncVipQos))
 }
+
+// Exported types and functions for testing
+
+// VipInfo 导出的 VIP 信息结构
+type VipInfo struct {
+	Ip               string `json:"ip"`
+	Netmask          string `json:"netmask"`
+	Gateway          string `json:"gateway"`
+	OwnerEthernetMac string `json:"ownerEthernetMac"`
+	Nic              string `json:"nic"`
+	VipUuid          string `json:"vipUuid"`
+	Ip6              string `json:"ip6"`
+	PrefixLength     int    `json:"prefixLength"`
+	Gateway6         string `json:"gateway6"`
+	AddressMode      string `json:"addressMode"`
+}
+
+// NicIpInfo 导出的网卡 IP 信息结构
+type NicIpInfo struct {
+	Ip               string `json:"ip"`
+	Netmask          string `json:"netmask"`
+	OwnerEthernetMac string `json:"ownerEthernetMac"`
+}
+
+// SetVipCmd 导出的设置 VIP 命令结构
+type SetVipCmd struct {
+	SyncVip       bool        `json:"syncVip"`
+	ResetQosRules bool        `json:"resetQosRules"`
+	Vips          []VipInfo   `json:"vips"`
+	NicIps        []NicIpInfo `json:"nicIps"`
+}
+
+// RemoveVipCmd 导出的删除 VIP 命令结构
+type RemoveVipCmd struct {
+	Vips []VipInfo `json:"vips"`
+}
+
+// SetVip 导出的设置 VIP 函数
+func SetVip(cmd *SetVipCmd) interface{} {
+	// 转换为内部类型
+	internalCmd := &setVipCmd{
+		SyncVip:       cmd.SyncVip,
+		ResetQosRules: cmd.ResetQosRules,
+		Vips:          make([]vipInfo, len(cmd.Vips)),
+		NicIps:        make([]nicIpInfo, len(cmd.NicIps)),
+	}
+
+	for i, v := range cmd.Vips {
+		internalCmd.Vips[i] = vipInfo{
+			Ip:               v.Ip,
+			Netmask:          v.Netmask,
+			Gateway:          v.Gateway,
+			OwnerEthernetMac: v.OwnerEthernetMac,
+			Nic:              v.Nic,
+			VipUuid:          v.VipUuid,
+			Ip6:              v.Ip6,
+			PrefixLength:     v.PrefixLength,
+			Gateway6:         v.Gateway6,
+			AddressMode:      v.AddressMode,
+		}
+	}
+
+	for i, n := range cmd.NicIps {
+		internalCmd.NicIps[i] = nicIpInfo{
+			Ip:               n.Ip,
+			Netmask:          n.Netmask,
+			OwnerEthernetMac: n.OwnerEthernetMac,
+		}
+	}
+
+	return setVip(internalCmd)
+}
+
+// RemoveVip 导出的删除 VIP 函数
+func RemoveVip(cmd *RemoveVipCmd) interface{} {
+	// 转换为内部类型
+	internalCmd := &removeVipCmd{
+		Vips: make([]vipInfo, len(cmd.Vips)),
+	}
+
+	for i, v := range cmd.Vips {
+		internalCmd.Vips[i] = vipInfo{
+			Ip:               v.Ip,
+			Netmask:          v.Netmask,
+			Gateway:          v.Gateway,
+			OwnerEthernetMac: v.OwnerEthernetMac,
+			Nic:              v.Nic,
+			VipUuid:          v.VipUuid,
+			Ip6:              v.Ip6,
+			PrefixLength:     v.PrefixLength,
+			Gateway6:         v.Gateway6,
+			AddressMode:      v.AddressMode,
+		}
+	}
+
+	return removeVip(internalCmd)
+}

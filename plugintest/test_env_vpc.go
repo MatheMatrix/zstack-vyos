@@ -22,6 +22,13 @@ type VpcTestEnv struct {
 	Snat3        plugin.SnatInfo
 	Snat4        plugin.SnatInfo
 	SetSnatState plugin.SetSnatStateCmd
+
+	// VIP 配置
+	Vip1     plugin.VipInfo
+	Vip2     plugin.VipInfo
+	Vip3     plugin.VipInfo
+	PubNicIp plugin.NicIpInfo
+	PriNicIp plugin.NicIpInfo
 }
 
 // NewVpcTestEnv 创建 VPC 测试环境
@@ -287,4 +294,47 @@ func (env *VpcTestEnv) SetupSNAT() {
 	}
 
 	log.Debugf("SNAT configuration setup completed")
+}
+
+// SetupVIP 设置 VIP 配置
+func (env *VpcTestEnv) SetupVIP() {
+	// 配置公网网卡 IP 信息
+	env.PubNicIp = plugin.NicIpInfo{
+		Ip:               env.PubNic.Ip,
+		Netmask:          env.PubNic.Netmask,
+		OwnerEthernetMac: env.PubNic.Mac,
+	}
+
+	// 配置私网网卡 IP 信息
+	env.PriNicIp = plugin.NicIpInfo{
+		Ip:               env.PriNic.Ip,
+		Netmask:          env.PriNic.Netmask,
+		OwnerEthernetMac: env.PriNic.Mac,
+	}
+
+	// 配置公网 VIP 1
+	env.Vip1 = plugin.VipInfo{
+		Ip:               "10.1.1.200",
+		Netmask:          env.PubNic.Netmask,
+		Gateway:          env.PubNic.Gateway,
+		OwnerEthernetMac: env.PubNic.Mac,
+	}
+
+	// 配置公网 VIP 2
+	env.Vip2 = plugin.VipInfo{
+		Ip:               "10.1.1.201",
+		Netmask:          env.PubNic.Netmask,
+		Gateway:          env.PubNic.Gateway,
+		OwnerEthernetMac: env.PubNic.Mac,
+	}
+
+	// 配置私网 VIP
+	env.Vip3 = plugin.VipInfo{
+		Ip:               "10.2.1.200",
+		Netmask:          env.PriNic.Netmask,
+		Gateway:          env.PriNic.Gateway,
+		OwnerEthernetMac: env.PriNic.Mac,
+	}
+
+	log.Debugf("VIP configuration setup completed")
 }
