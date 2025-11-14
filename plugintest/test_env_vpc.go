@@ -1,6 +1,7 @@
 package plugintest
 
 import (
+	"fmt"
 	"os"
 
 	log "github.com/sirupsen/logrus"
@@ -130,22 +131,22 @@ func (env *VpcTestEnv) Setup() error {
 
 	// 配置网卡
 	if err := env.configureNic(env.MgtNic); err != nil {
-		return err
+		return fmt.Errorf("create management nic failed")
 	}
 	if err := env.configureNic(env.PubNic); err != nil {
-		return err
+		return fmt.Errorf("create public nic failed")
 	}
 	if err := env.configureNic(env.PriNic); err != nil {
-		return err
+		return fmt.Errorf("create private nic failed")
 	}
 	if err := env.configureNic(env.AdditionalPubNic1); err != nil {
-		return err
+		return fmt.Errorf("create public nic1 failed")
 	}
 	if err := env.configureNic(env.AdditionalPubNic2); err != nil {
-		return err
+		return fmt.Errorf("create public nic2 failed")
 	}
 	if err := env.configureNic(env.PriNic1); err != nil {
-		return err
+		return fmt.Errorf("create private nic1 failed")
 	}
 
 	env.envCreated = true
@@ -196,27 +197,27 @@ func (env *VpcTestEnv) SetupIPsec() error {
 	}
 
 	env.IpsecConfig = plugin.IpsecInfo{
-		Uuid:                     "a6c89c57c0684cb4926b346b68eaee3a",
-		PublicNic:                env.PriNic.Mac,
-		Vip:                      "192.168.2.101",
-		LocalCidrs:               []string{"192.167.100.0/24"},
-		PeerAddress:              "192.168.2.102",
-		PeerCidrs:                []string{"192.168.1.0/24"},
-		IdType:                   "ip",
-		AuthMode:                 "psk",
-		AuthKey:                  "123456",
-		IkeVersion:               "ikev2",
-		IkeLifeTime:              86400,
-		LifeTime:                 3600,
-		IkeAuthAlgorithm:         "sha256",
-		IkeEncryptionAlgorithm:   "aes256",
-		IkeDhGroup:               2,
-		PolicyAuthAlgorithm:      "sha256",
+		Uuid:                      "a6c89c57c0684cb4926b346b68eaee3a",
+		PublicNic:                 env.PriNic.Mac,
+		Vip:                       "192.168.2.101",
+		LocalCidrs:                []string{"192.167.100.0/24"},
+		PeerAddress:               "192.168.2.102",
+		PeerCidrs:                 []string{"192.168.1.0/24"},
+		IdType:                    "ip",
+		AuthMode:                  "psk",
+		AuthKey:                   "123456",
+		IkeVersion:                "ikev2",
+		IkeLifeTime:               86400,
+		LifeTime:                  3600,
+		IkeAuthAlgorithm:          "sha256",
+		IkeEncryptionAlgorithm:    "aes256",
+		IkeDhGroup:                2,
+		PolicyAuthAlgorithm:       "sha256",
 		PolicyEncryptionAlgorithm: "aes256",
-		Pfs:                      "dh-group14",
-		PolicyMode:               "tunnel",
-		TransformProtocol:        "esp",
-		ExcludeSnat:              true,
+		Pfs:                       "dh-group14",
+		PolicyMode:                "tunnel",
+		TransformProtocol:         "esp",
+		ExcludeSnat:               true,
 	}
 
 	log.Debugf("IPsec configuration setup completed")

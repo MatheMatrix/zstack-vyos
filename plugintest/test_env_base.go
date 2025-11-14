@@ -113,7 +113,7 @@ func (env *TestEnvBase) createVethNic(name, ip, netmask, gateway, category strin
 }
 
 // configureNic 配置网卡
-func (env *TestEnvBase) configureNic(nic utils.NicInfo) error {
+func (env *TestEnvBase) configureNic(nic utils.NicInfo) interface{} {
 	nicCmd := &plugin.ConfigureNicCmd{
 		Nics: []utils.NicInfo{nic},
 	}
@@ -121,7 +121,7 @@ func (env *TestEnvBase) configureNic(nic utils.NicInfo) error {
 }
 
 // removeNic 移除网卡
-func (env *TestEnvBase) removeNic(nic utils.NicInfo) error {
+func (env *TestEnvBase) removeNic(nic utils.NicInfo) interface{} {
 	nicCmd := &plugin.ConfigureNicCmd{
 		Nics: []utils.NicInfo{nic},
 	}

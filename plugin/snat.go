@@ -445,12 +445,15 @@ func SyncSnat(cmd *SyncSnatCmd) interface{} {
 					outIf := r.Get("outbound-interface")
 					sAddr := r.Get("source address")
 					tAddr := r.Get("translation address")
+					log.Debugf("private nat compare outIf: %s, p.nicName: %s\nsAddr: %s, p.addr: %s\ntAddr:%s, p.nicIp: %s",
+						outIf, p.nicName, sAddr, p.addr, tAddr, p.nicIp)
 					if outIf != nil && outIf.Value() == p.nicName &&
 						sAddr != nil && sAddr.Value() == p.addr &&
 						tAddr != nil && tAddr.Value() == p.nicIp {
 						exists = true
 						break
 					}
+					log.Debugf("private nat compare not match")
 				}
 			}
 			if !exists {

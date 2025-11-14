@@ -1,6 +1,7 @@
 package plugintest
 
 import (
+	"fmt"
 	"os"
 
 	log "github.com/sirupsen/logrus"
@@ -95,13 +96,13 @@ func (env *SlbHaTestEnv) Setup() error {
 
 	// 配置网卡
 	if err := env.configureNic(env.MgtNic); err != nil {
-		return err
+		return fmt.Errorf("configure management nic failed")
 	}
 	if err := env.configureNic(env.PubNic); err != nil {
-		return err
+		return fmt.Errorf("configure public nic failed")
 	}
 	if err := env.configureNic(env.PriNic); err != nil {
-		return err
+		return fmt.Errorf("configure private nic failed")
 	}
 
 	env.envCreated = true
@@ -132,7 +133,7 @@ func (env *SlbHaTestEnv) Teardown() error {
 }
 
 // SetupVyosHA 设置 VyOS HA 配置
-func (env *SlbHaTestEnv) SetupVyosHA() error {
+func (env *SlbHaTestEnv) SetupVyosHA() interface{} {
 	vip4 := plugin.MacVipPair{
 		NicMac:  env.PubNic.Mac,
 		NicVip:  "169.254.2.102",

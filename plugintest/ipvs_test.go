@@ -13,20 +13,20 @@ import (
 // IpvsTestSuite IPVS 负载均衡测试套件
 type IpvsTestSuite struct {
 	suite.Suite
-	env *SlbHaIp4Env
+	env *SlbHaTestEnv
 }
 
 // SetupTest 每个测试前的准备工作
 func (s *IpvsTestSuite) SetupTest() {
-	s.env = NewSlbHaIp4Env()
-	s.env.SetupStrap()
-	s.env.SetupLb()
+	s.env = NewSlbHaTestEnv()
+	_ = s.env.Setup()
+	_ = s.env.SetupLoadBalancer()
 }
 
 // TearDownTest 每个测试后的清理工作
 func (s *IpvsTestSuite) TearDownTest() {
-	s.env.DestroyBootStrap()
-	s.env.DestroyLb()
+	_ = s.env.TeardownLoadBalancer
+	_ = s.env.Teardown()
 }
 
 // TestInitIpvs 测试初始化 IPVS
@@ -46,7 +46,7 @@ func (s *IpvsTestSuite) TestRefreshIpvsService() {
 	go utils.StartUdpServer("192.168.3.10", 8080, ctx1)
 	go utils.StartUdpServer("192.168.3.11", 8080, ctx2)
 
-	plugin.RefreshIpvsService(map[string]plugin.LbInfo{s.env.lb.ListenerUuid: s.env.lb}, true)
+	plugin.RefreshIpvsService(map[string]plugin.LbInfo{s.env.Lb.ListenerUuid: s.env.Lb}, true)
 
 	// 等待健康检查
 	wait := 5
@@ -71,7 +71,7 @@ func (s *IpvsTestSuite) TestRefreshIpvsService() {
 
 	// 检查后端服务器健康状态
 	plugin.UpdateIpvsCounters()
-	fs := plugin.GetIpvsFrontService(s.env.lb.ListenerUuid)
+	fs := plugin.GetIpvsFrontService(s.env.Lb.ListenerUuid)
 	for _, bs := range fs.BackendServers {
 		s.Equal(1, bs.Counter.Status, "backend server should be up")
 	}
@@ -98,7 +98,7 @@ func (s *IpvsTestSuite) TestAddBackendServer() {
 	s.env.AddPeerAddr("ut-pri", "192.168.3.11/24")
 	s.env.AddPeerAddr("ut-pri", "192.168.3.12/24")
 
-	s.env.lb.ServerGroups = append(s.env.lb.ServerGroups, s.env.sg1)
+	s.env.Lb.ServerGroups = append(s.env.Lb.ServerGroups, s.env.SG1)
 	ctx1, cancel1 := context.WithCancel(context.Background())
 	ctx2, cancel2 := context.WithCancel(context.Background())
 	ctx3, cancel3 := context.WithCancel(context.Background())
@@ -106,8 +106,8 @@ func (s *IpvsTestSuite) TestAddBackendServer() {
 	go utils.StartUdpServer("192.168.3.11", 8080, ctx2)
 	go utils.StartUdpServer("192.168.3.12", 8080, ctx3)
 
-	s.env.lb.ServerGroups[0].BackendServers = []plugin.BackendServerInfo{s.env.bs1, s.env.bs2, s.env.bs3}
-	plugin.RefreshIpvsService(map[string]plugin.LbInfo{s.env.lb.ListenerUuid: s.env.lb}, true)
+	s.env.Lb.ServerGroups[0].BackendServers = []plugin.BackendServerInfo{s.env.BS1, s.env.BS2, s.env.BS3}
+	plugin.RefreshIpvsService(map[string]plugin.LbInfo{s.env.Lb.ListenerUuid: s.env.Lb}, true)
 
 	wait := 6
 	time.Sleep(time.Duration(wait) * time.Second)
@@ -121,13 +121,13 @@ func (s *IpvsTestSuite) TestAddBackendServer() {
 
 	// 检查健康状态
 	plugin.UpdateIpvsCounters()
-	fs := plugin.GetIpvsFrontService(s.env.lb.ListenerUuid)
+	fs := plugin.GetIpvsFrontService(s.env.Lb.ListenerUuid)
 	for _, bs := range fs.BackendServers {
 		s.Equal(1, bs.Counter.Status, "all backend servers should be up")
 	}
 
 	// 不做任何改变，再次刷新
-	plugin.RefreshIpvsService(map[string]plugin.LbInfo{s.env.lb.ListenerUuid: s.env.lb}, true)
+	plugin.RefreshIpvsService(map[string]plugin.LbInfo{s.env.Lb.ListenerUuid: s.env.Lb}, true)
 	time.Sleep(time.Duration(wait) * time.Second)
 
 	ipvs, _ = plugin.NewIpvsConfFromSave()
@@ -149,9 +149,9 @@ func (s *IpvsTestSuite) TestRemoveBackendServer() {
 	s.env.AddPeerAddr("ut-pri", "192.168.3.11/24")
 	s.env.AddPeerAddr("ut-pri", "192.168.3.12/24")
 
-	s.env.lb.ServerGroups = []plugin.ServerGroupInfo{s.env.sg1}
-	s.env.sg1.BackendServers = []plugin.BackendServerInfo{s.env.bs1, s.env.bs2, s.env.bs3}
-	s.env.lb.ServerGroups[0].BackendServers = s.env.sg1.BackendServers
+	s.env.Lb.ServerGroups = []plugin.ServerGroupInfo{s.env.SG1}
+	s.env.SG1.BackendServers = []plugin.BackendServerInfo{s.env.BS1, s.env.BS2, s.env.BS3}
+	s.env.Lb.ServerGroups[0].BackendServers = s.env.SG1.BackendServers
 
 	ctx1, cancel1 := context.WithCancel(context.Background())
 	ctx2, cancel2 := context.WithCancel(context.Background())
@@ -160,14 +160,14 @@ func (s *IpvsTestSuite) TestRemoveBackendServer() {
 	go utils.StartUdpServer("192.168.3.11", 8080, ctx2)
 	go utils.StartUdpServer("192.168.3.12", 8080, ctx3)
 
-	plugin.RefreshIpvsService(map[string]plugin.LbInfo{s.env.lb.ListenerUuid: s.env.lb}, true)
+	plugin.RefreshIpvsService(map[string]plugin.LbInfo{s.env.Lb.ListenerUuid: s.env.Lb}, true)
 	time.Sleep(6 * time.Second)
 
 	// 删除一个后端服务器
 	cancel3()
-	s.env.sg1.BackendServers = []plugin.BackendServerInfo{s.env.bs1, s.env.bs2}
-	s.env.lb.ServerGroups = []plugin.ServerGroupInfo{s.env.sg1}
-	plugin.RefreshIpvsService(map[string]plugin.LbInfo{s.env.lb.ListenerUuid: s.env.lb}, true)
+	s.env.SG1.BackendServers = []plugin.BackendServerInfo{s.env.BS1, s.env.BS2}
+	s.env.Lb.ServerGroups = []plugin.ServerGroupInfo{s.env.SG1}
+	plugin.RefreshIpvsService(map[string]plugin.LbInfo{s.env.Lb.ListenerUuid: s.env.Lb}, true)
 
 	wait := 6
 	time.Sleep(time.Duration(wait) * time.Second)
@@ -179,7 +179,7 @@ func (s *IpvsTestSuite) TestRemoveBackendServer() {
 	}
 
 	plugin.UpdateIpvsCounters()
-	fs := plugin.GetIpvsFrontService(s.env.lb.ListenerUuid)
+	fs := plugin.GetIpvsFrontService(s.env.Lb.ListenerUuid)
 	for _, bs := range fs.BackendServers {
 		s.Equal(1, bs.Counter.Status, "remaining backend servers should be up")
 	}
@@ -194,13 +194,13 @@ func (s *IpvsTestSuite) TestAddFrontService() {
 	ctx1, cancel1 := context.WithCancel(context.Background())
 	ctx2, cancel2 := context.WithCancel(context.Background())
 	ctx3, cancel3 := context.WithCancel(context.Background())
-	go utils.StartUdpServer(s.env.bs1.Ip, s.env.lb.InstancePort, ctx1)
-	go utils.StartUdpServer(s.env.bs2.Ip, s.env.lb.InstancePort, ctx2)
-	go utils.StartUdpServer(s.env.bs3.Ip, s.env.lb1.InstancePort, ctx3)
+	go utils.StartUdpServer(s.env.BS1.Ip, s.env.Lb.InstancePort, ctx1)
+	go utils.StartUdpServer(s.env.BS2.Ip, s.env.Lb.InstancePort, ctx2)
+	go utils.StartUdpServer(s.env.BS3.Ip, s.env.Lb1.InstancePort, ctx3)
 
 	plugin.RefreshIpvsService(map[string]plugin.LbInfo{
-		s.env.lb.ListenerUuid:  s.env.lb,
-		s.env.lb1.ListenerUuid: s.env.lb1,
+		s.env.Lb.ListenerUuid:  s.env.Lb,
+		s.env.Lb1.ListenerUuid: s.env.Lb1,
 	}, false)
 
 	wait := 6
@@ -211,12 +211,12 @@ func (s *IpvsTestSuite) TestAddFrontService() {
 
 	// 检查健康状态
 	plugin.UpdateIpvsCounters()
-	fs := plugin.GetIpvsFrontService(s.env.lb.ListenerUuid)
+	fs := plugin.GetIpvsFrontService(s.env.Lb.ListenerUuid)
 	for _, bs := range fs.BackendServers {
 		s.Equal(1, bs.Counter.Status)
 	}
 
-	fs = plugin.GetIpvsFrontService(s.env.lb1.ListenerUuid)
+	fs = plugin.GetIpvsFrontService(s.env.Lb1.ListenerUuid)
 	for _, bs := range fs.BackendServers {
 		s.Equal(1, bs.Counter.Status)
 	}
@@ -230,31 +230,31 @@ func (s *IpvsTestSuite) TestAddFrontService() {
 // TestRefreshWithEmptyNicIps 测试空 NicIps 刷新
 func (s *IpvsTestSuite) TestRefreshWithEmptyNicIps() {
 	ctx3, cancel3 := context.WithCancel(context.Background())
-	go utils.StartUdpServer(s.env.bs3.Ip, s.env.lb1.InstancePort, ctx3)
+	go utils.StartUdpServer(s.env.BS3.Ip, s.env.Lb1.InstancePort, ctx3)
 
 	// 设置 lb 的 NicIps 为空
-	s.env.lb.NicIps = []string{}
+	s.env.Lb.NicIps = []string{}
 	plugin.RefreshIpvsService(map[string]plugin.LbInfo{
-		s.env.lb.ListenerUuid:  s.env.lb,
-		s.env.lb1.ListenerUuid: s.env.lb1,
+		s.env.Lb.ListenerUuid:  s.env.Lb,
+		s.env.Lb1.ListenerUuid: s.env.Lb1,
 	}, false)
 
 	wait := 6
 	time.Sleep(time.Duration(wait) * time.Second)
 
 	ipvs, _ := plugin.NewIpvsConfFromSave()
-	s.Nil(plugin.GetIpvsFrontService(s.env.lb.ListenerUuid), "lb should be deleted")
+	s.Nil(plugin.GetIpvsFrontService(s.env.Lb.ListenerUuid), "lb should be deleted")
 	s.Len(ipvs.Services, 1, "should only have 1 service")
 
 	plugin.UpdateIpvsCounters()
-	s.Nil(plugin.GetIpvsFrontService(s.env.lb.ListenerUuid), "lb should be deleted")
+	s.Nil(plugin.GetIpvsFrontService(s.env.Lb.ListenerUuid), "lb should be deleted")
 
-	fs := plugin.GetIpvsFrontService(s.env.lb1.ListenerUuid)
+	fs := plugin.GetIpvsFrontService(s.env.Lb1.ListenerUuid)
 	for _, bs := range fs.BackendServers {
 		s.Equal(1, bs.Counter.Status)
 	}
 
-	s.env.lb.NicIps = []string{s.env.bs1.Ip, s.env.bs2.Ip}
+	s.env.Lb.NicIps = []string{s.env.BS1.Ip, s.env.BS2.Ip}
 	cancel3()
 	time.Sleep(2 * time.Second)
 }
@@ -271,12 +271,12 @@ func (s *IpvsTestSuite) TestDelLb() {
 		BackendServers:  []plugin.BackendServerInfo{bs},
 		IsDefault:       false,
 	}
-	s.env.lb.ServerGroups = []plugin.ServerGroupInfo{sg}
-	s.env.lb.RedirectRules = nil
+	s.env.Lb.ServerGroups = []plugin.ServerGroupInfo{sg}
+	s.env.Lb.RedirectRules = nil
 
 	plugin.DelIpvsService(map[string]plugin.LbInfo{
-		s.env.lb.ListenerUuid:  s.env.lb,
-		s.env.lb1.ListenerUuid: s.env.lb1,
+		s.env.Lb.ListenerUuid:  s.env.Lb,
+		s.env.Lb1.ListenerUuid: s.env.Lb1,
 	})
 
 	wait := 6
@@ -286,7 +286,7 @@ func (s *IpvsTestSuite) TestDelLb() {
 	s.Len(ipvs.Services, 0, "all ipvs services should be deleted")
 
 	plugin.UpdateIpvsCounters()
-	fs := plugin.GetIpvsFrontService(s.env.lb.ListenerUuid)
+	fs := plugin.GetIpvsFrontService(s.env.Lb.ListenerUuid)
 	s.Nil(fs, "front service should be deleted")
 }
 
