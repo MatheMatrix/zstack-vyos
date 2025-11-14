@@ -256,12 +256,12 @@ func (s *VipTestSuite) getLinuxNicVips(nicName string) []string {
 	bash := utils.Bash{
 		Command: fmt.Sprintf("ip add show dev %s | grep -E \"inet|inet6\" | awk '{print $2}'", nicName),
 	}
-	ret, _, _, err := bash.RunWithReturn()
+	_, out, _, err := bash.RunWithReturn()
 	if err != nil {
 		return linuxIps
 	}
 
-	lines := strings.Split(ret, "\n")
+	lines := strings.Split(out, "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line != "" {
