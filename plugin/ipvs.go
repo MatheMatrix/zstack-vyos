@@ -863,7 +863,7 @@ func getIpvsBackend(proto, frontIp, frontPort, backendIp, backendPort string) *I
 		}
 	}
 
-	log.Debugf("backend not found for :%s-%s-%s-%s-%s-%s", proto, frontIp, frontPort, backendIp, backendPort)
+	log.Debugf("backend not found for :%s-%s-%s-%s-%s", proto, frontIp, frontPort, backendIp, backendPort)
 	return nil
 }
 

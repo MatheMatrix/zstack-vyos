@@ -155,23 +155,48 @@ func setVipByLinux(cmd *setVipCmd) interface{} {
 		for _, vip := range cmd.Vips {
 			nicname, err := utils.GetNicNameByMac(vip.OwnerEthernetMac)
 			utils.PanicOnError(err)
-			addr, _ := vip.GetIpWithCidr()
-			err = utils.IpAddrAdd(nicname, addr)
-			utils.PanicOnError(err)
+
+			// Add IPv4 VIP
+			if vip.Ip != "" {
+				cidr, err := utils.NetmaskToCIDR(vip.Netmask)
+				utils.PanicOnError(err)
+				addr := fmt.Sprintf("%v/%v", vip.Ip, cidr)
+				err = utils.IpAddrAdd(nicname, addr)
+				utils.PanicOnError(err)
+			}
+
+			// Add IPv6 VIP
+			if vip.Ip6 != "" {
+				addr := fmt.Sprintf("%s/%d", vip.Ip6, vip.PrefixLength)
+				err = utils.IpAddrAdd(nicname, addr)
+				utils.PanicOnError(err)
+			}
 		}
 	} else {
 		for _, vip := range cmd.Vips {
 			nicname, err := utils.GetNicNameByMac(vip.OwnerEthernetMac)
 			utils.PanicOnError(err)
-			addr, _ := vip.GetIpWithCidr()
 
-			/* vip on mgt nic will not configure in vyos config */
-			if vip.Ip != "" && utils.IsInManagementCidr(vip.Ip) {
-				if IsMaster() {
+			// IPv4 VIP on mgt nic will not configure in vyos config
+			if vip.Ip != "" {
+				cidr, err := utils.NetmaskToCIDR(vip.Netmask)
+				utils.PanicOnError(err)
+				addr := fmt.Sprintf("%v/%v", vip.Ip, cidr)
+
+				if utils.IsInManagementCidr(vip.Ip) {
+					if IsMaster() {
+						err := utils.IpAddrAdd(nicname, addr)
+						utils.PanicOnError(err)
+					}
+				} else {
 					err := utils.IpAddrAdd(nicname, addr)
 					utils.PanicOnError(err)
 				}
-			} else {
+			}
+
+			// Add IPv6 VIP
+			if vip.Ip6 != "" {
+				addr := fmt.Sprintf("%s/%d", vip.Ip6, vip.PrefixLength)
 				err := utils.IpAddrAdd(nicname, addr)
 				utils.PanicOnError(err)
 			}
@@ -186,7 +211,8 @@ func setVipByLinux(cmd *setVipCmd) interface{} {
 		if utils.IsIpv4Address(ip) {
 			vyosVips = append(vyosVips, nicVipPair{NicName: nicname, Vip: ip, Prefix: cidr})
 		} else {
-			vyosVips = append(vyosVips, nicVipPair{NicName: nicname, Vip6: ip, Prefix: cidr})
+			// vyosVips is used by vyosha, ipv6 vip is not used
+			// vyosVips = append(vyosVips, nicVipPair{NicName: nicname, Vip6: ip, Prefix: cidr})
 		}
 	}
 
@@ -209,11 +235,26 @@ func removeVipByLinux(cmd *removeVipCmd) interface{} {
 	for _, vip := range cmd.Vips {
 		nicname, err := utils.GetNicNameByMac(vip.OwnerEthernetMac)
 		utils.PanicOnError(err)
-		addr, _ := vip.GetIpWithCidr()
-		if err = utils.IpAddrDel(nicname, addr); err != nil {
-			return fmt.Errorf("IpAddrDel[%s, %s] error: %v", nicname, addr, err)
+
+		// Remove IPv4 VIP
+		if vip.Ip != "" {
+			cidr, err := utils.NetmaskToCIDR(vip.Netmask)
+			utils.PanicOnError(err)
+			addr := fmt.Sprintf("%v/%v", vip.Ip, cidr)
+			if err = utils.IpAddrDel(nicname, addr); err != nil {
+				return fmt.Errorf("IpAddrDel[%s, %s] error: %v", nicname, addr, err)
+			}
+			deleteQosRulesOfVip(nicname, vip.Ip)
 		}
-		deleteQosRulesOfVip(nicname, vip.Ip)
+
+		// Remove IPv6 VIP
+		if vip.Ip6 != "" {
+			addr := fmt.Sprintf("%s/%d", vip.Ip6, vip.PrefixLength)
+			if err = utils.IpAddrDel(nicname, addr); err != nil {
+				return fmt.Errorf("IpAddrDel[%s, %s] error: %v", nicname, addr, err)
+			}
+			deleteQosRulesOfVip(nicname, vip.Ip6)
+		}
 	}
 
 	vyosVips := []nicVipPair{}
@@ -223,7 +264,12 @@ func removeVipByLinux(cmd *removeVipCmd) interface{} {
 		_, cidr := vip.GetIpWithCidr()
 		ip := vip.GetIpWithOutCidr()
 
-		vyosVips = append(vyosVips, nicVipPair{NicName: nicname, Vip: ip, Prefix: cidr})
+		if utils.IsIpv4Address(ip) {
+			vyosVips = append(vyosVips, nicVipPair{NicName: nicname, Vip: ip, Prefix: cidr})
+		} else {
+			// vyosVips is used by vyosha, ipv6 vip is not used
+			// vyosVips = append(vyosVips, nicVipPair{NicName: nicname, Vip6: ip, Prefix: cidr})
+		}
 	}
 	removeHaNicVipPair(vyosVips)
 

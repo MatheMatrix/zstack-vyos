@@ -15,6 +15,7 @@ const (
 	REMOVE_SNAT_PATH    = "/removesnat"
 	SYNC_SNAT_PATH      = "/syncsnat"
 	SET_SNAT_STATE_PATH = "/setsnatservicestate"
+	GET_IPTABLES_RULES  = "/iptables-rules/get"
 )
 
 type SnatInfo struct {
@@ -47,6 +48,16 @@ type SetSnatStateCmd struct {
 
 type setNetworkServiceRsp struct {
 	ServiceStatus string `json:"serviceStatus"`
+}
+
+type GetIptablesCmd struct {
+	IpVersion int    `json:"ipVersion"`
+	TableName string `json:"tableName"`
+}
+
+type GetIptablesRsp struct {
+	Ip4Tables map[string]*utils.IpTables `json:"ip4Tables"`
+	Ip6Tables map[string]*utils.IpTables `json:"ip6Tables"`
 }
 
 func getNicSNATRuleNumberByConfig(tree *server.VyosConfigTree, snat SnatInfo, checkPubIp bool) (pubNicRuleNo int, priNicRuleNo int) {
@@ -460,9 +471,74 @@ func SyncSnat(cmd *SyncSnatCmd) interface{} {
 	return nil
 }
 
+func getIptableRulesHandler(ctx *server.CommandContext) interface{} {
+	cmd := &GetIptablesCmd{}
+	ctx.GetCommand(cmd)
+
+	rsp := &GetIptablesRsp{Ip4Tables: map[string]*utils.IpTables{}}
+	if cmd.TableName == "" {
+		if cmd.IpVersion == utils.IP_VERSION_4 {
+			rsp.Ip4Tables[utils.MangleTable] = utils.NewIpTablesByIpVersion(utils.MangleTable, utils.IP_VERSION_4)
+			rsp.Ip4Tables[utils.FirewallTable] = utils.NewIpTablesByIpVersion(utils.FirewallTable, utils.IP_VERSION_4)
+			rsp.Ip4Tables[utils.NatTable] = utils.NewIpTablesByIpVersion(utils.NatTable, utils.IP_VERSION_4)
+		} else if cmd.IpVersion == utils.IP_VERSION_6 {
+			rsp.Ip6Tables[utils.MangleTable] = utils.NewIpTablesByIpVersion(utils.MangleTable, utils.IP_VERSION_6)
+			rsp.Ip6Tables[utils.FirewallTable] = utils.NewIpTablesByIpVersion(utils.FirewallTable, utils.IP_VERSION_6)
+			rsp.Ip6Tables[utils.NatTable] = utils.NewIpTablesByIpVersion(utils.NatTable, utils.IP_VERSION_6)
+		} else if cmd.IpVersion == 0 {
+			rsp.Ip4Tables[utils.MangleTable] = utils.NewIpTablesByIpVersion(utils.MangleTable, utils.IP_VERSION_4)
+			rsp.Ip4Tables[utils.FirewallTable] = utils.NewIpTablesByIpVersion(utils.FirewallTable, utils.IP_VERSION_4)
+			rsp.Ip4Tables[utils.NatTable] = utils.NewIpTablesByIpVersion(utils.NatTable, utils.IP_VERSION_4)
+			rsp.Ip6Tables[utils.MangleTable] = utils.NewIpTablesByIpVersion(utils.MangleTable, utils.IP_VERSION_6)
+			rsp.Ip6Tables[utils.FirewallTable] = utils.NewIpTablesByIpVersion(utils.FirewallTable, utils.IP_VERSION_6)
+			rsp.Ip6Tables[utils.NatTable] = utils.NewIpTablesByIpVersion(utils.NatTable, utils.IP_VERSION_6)
+		} else {
+			utils.PanicOnError(fmt.Errorf("invalid ip version: %d", cmd.IpVersion))
+		}
+	} else if utils.MangleTable == cmd.TableName {
+		if cmd.IpVersion == utils.IP_VERSION_4 {
+			rsp.Ip4Tables[utils.MangleTable] = utils.NewIpTablesByIpVersion(utils.MangleTable, utils.IP_VERSION_4)
+		} else if cmd.IpVersion == utils.IP_VERSION_6 {
+			rsp.Ip6Tables[utils.MangleTable] = utils.NewIpTablesByIpVersion(utils.MangleTable, utils.IP_VERSION_6)
+		} else if cmd.IpVersion == 0 {
+			rsp.Ip4Tables[utils.MangleTable] = utils.NewIpTablesByIpVersion(utils.MangleTable, utils.IP_VERSION_4)
+			rsp.Ip6Tables[utils.MangleTable] = utils.NewIpTablesByIpVersion(utils.MangleTable, utils.IP_VERSION_6)
+		} else {
+			utils.PanicOnError(fmt.Errorf("invalid ip version: %d", cmd.IpVersion))
+		}
+	} else if utils.FirewallTable == cmd.TableName {
+		if cmd.IpVersion == utils.IP_VERSION_4 {
+			rsp.Ip4Tables[utils.FirewallTable] = utils.NewIpTablesByIpVersion(utils.FirewallTable, utils.IP_VERSION_4)
+		} else if cmd.IpVersion == utils.IP_VERSION_6 {
+			rsp.Ip6Tables[utils.FirewallTable] = utils.NewIpTablesByIpVersion(utils.FirewallTable, utils.IP_VERSION_6)
+		} else if cmd.IpVersion == 0 {
+			rsp.Ip4Tables[utils.FirewallTable] = utils.NewIpTablesByIpVersion(utils.FirewallTable, utils.IP_VERSION_4)
+			rsp.Ip6Tables[utils.FirewallTable] = utils.NewIpTablesByIpVersion(utils.FirewallTable, utils.IP_VERSION_6)
+		} else {
+			utils.PanicOnError(fmt.Errorf("invalid ip version: %d", cmd.IpVersion))
+		}
+	} else if utils.NatTable == cmd.TableName {
+		if cmd.IpVersion == utils.IP_VERSION_4 {
+			rsp.Ip4Tables[utils.NatTable] = utils.NewIpTablesByIpVersion(utils.NatTable, utils.IP_VERSION_4)
+		} else if cmd.IpVersion == utils.IP_VERSION_6 {
+			rsp.Ip6Tables[utils.NatTable] = utils.NewIpTablesByIpVersion(utils.NatTable, utils.IP_VERSION_6)
+		} else if cmd.IpVersion == 0 {
+			rsp.Ip4Tables[utils.NatTable] = utils.NewIpTablesByIpVersion(utils.NatTable, utils.IP_VERSION_4)
+			rsp.Ip6Tables[utils.NatTable] = utils.NewIpTablesByIpVersion(utils.NatTable, utils.IP_VERSION_6)
+		} else {
+			utils.PanicOnError(fmt.Errorf("invalid ip version: %d", cmd.IpVersion))
+		}
+	} else {
+		utils.PanicOnError(fmt.Errorf("invalid table name: %s", cmd.TableName))
+	}
+
+	return rsp
+}
+
 func SnatEntryPoint() {
 	server.RegisterAsyncCommandHandler(SET_SNAT_PATH, server.VyosLock(setSnatHandler))
 	server.RegisterAsyncCommandHandler(REMOVE_SNAT_PATH, server.VyosLock(removeSnatHandler))
 	server.RegisterAsyncCommandHandler(SYNC_SNAT_PATH, server.VyosLock(syncSnatHandler))
 	server.RegisterAsyncCommandHandler(SET_SNAT_STATE_PATH, server.VyosLock(setSnatStateHandler))
+	server.RegisterAsyncCommandHandler(GET_IPTABLES_RULES, getIptableRulesHandler)
 }
