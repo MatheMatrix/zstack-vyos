@@ -201,7 +201,7 @@ logdir /var/log/chrony
 # Select which information is logged.
 #log measurements statistics tracking
 local stratum 10
-allow 0.0.0.0/0
+# allow 0.0.0.0/0
 `)
 
 	for _, chronyServer := range timeServers {
