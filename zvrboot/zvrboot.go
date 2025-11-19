@@ -411,8 +411,8 @@ func configureVyos() {
 		return result
 	}
 
-	setNicTree := server.NewParserFromShowConfiguration().Tree
 	if haStatus != utils.NOHA && !utils.IsSLB() {
+		setNicTree := server.NewParserFromShowConfiguration().Tree
 		/* for vpc ha router, set interface down, it will be up when ha selection is finished */
 		for _, nic := range nics {
 			if nic.name != "eth0" {
@@ -420,10 +420,9 @@ func configureVyos() {
 			}
 		}
 		setNicTree.Apply(true)
-		setNicTree = server.NewParserFromShowConfiguration().Tree
 	}
 
-	setNic := func(nic *nic) {
+	setNic := func(nic *nic, setNicTree *server.VyosConfigTree) {
 		if nic.ip != "" {
 			cidr, err := utils.NetmaskToCIDR(nic.netmask)
 			utils.PanicOnError(err)
@@ -485,7 +484,9 @@ func configureVyos() {
 	if SkipVyosIptables {
 		for _, nic := range nics {
 			var err error
-			setNic(nic)
+			setNicTree := server.NewParserFromShowConfiguration().Tree
+			setNic(nic, setNicTree)
+			setNicTree.Apply(false)
 			if nic.isDefaultRoute {
 				defaultNic = utils.Nic{Name: nic.name, Mac: nic.mac, Ip: nic.ip, Ip6: nic.ip6,
 					Gateway: nic.gateway, Gateway6: nic.gateway6}
@@ -503,7 +504,8 @@ func configureVyos() {
 		}
 	} else {
 		for _, nic := range nics {
-			setNic(nic)
+			setNicTree := server.NewParserFromShowConfiguration().Tree
+			setNic(nic, setNicTree)
 			if nic.isDefaultRoute {
 				defaultNic = utils.Nic{Name: nic.name, Mac: nic.mac, Ip: nic.ip, Ip6: nic.ip6,
 					Gateway: nic.gateway, Gateway6: nic.gateway6}
@@ -567,10 +569,10 @@ func configureVyos() {
 					fmt.Sprintf("translation address %s", nic.ip),
 				)
 			}
+			setNicTree.Apply(true)
 		}
 	}
 
-	setNicTree.Apply(true)
 	log.Debugf("[configure: radvd service]")
 	radvdMap := make(utils.RadvdAttrsMap)
 	if utils.IsSLB() {
