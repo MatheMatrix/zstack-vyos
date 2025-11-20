@@ -46,6 +46,8 @@ type NicInfo struct {
 	AddressMode           string `json:"AddressMode"`
 	Name                  string
 	IsDefault             bool
+	// Bond configuration: "none" (default), "xor" (balance-xor), or "ab" (active-backup)
+	BondMode string `json:"bondMode"`
 }
 
 // ByAge implements sort.Interface for []Person based on

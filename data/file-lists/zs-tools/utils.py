@@ -129,6 +129,35 @@ def get_master_device(dev):
     return os.path.basename(os.readlink(path))
 
 
+def get_pci_address(dev):
+    '''Get PCI address for a network device.
+
+    Args:
+        dev: network device name (e.g., 'eth1', 'eth2')
+
+    Returns:
+        PCI address string (e.g., '0000:00:09.0') or None if not a PCI device
+    '''
+    if not dev:
+        return None
+
+    device_path = "/sys/class/net/%s/device" % dev
+    if not os.path.exists(device_path):
+        return None
+
+    # Get real path of the device symlink
+    real_path = os.path.realpath(device_path)
+
+    # Extract PCI address from path like: /sys/devices/pci0000:00/0000:00:09.0
+    # PCI address format: DDDD:BB:DD.F (Domain:Bus:Device.Function)
+    pattern = re.compile(r'([0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F])/?$')
+    match = pattern.search(real_path)
+    if match:
+        return match.group(1)
+
+    return None
+
+
 def retry(times=3, sleep_time=5):
     def wrap(f):
         @functools.wraps(f)
