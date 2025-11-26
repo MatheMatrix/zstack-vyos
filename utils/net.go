@@ -161,7 +161,7 @@ func GetNicNameByMac(mac string) (string, error) {
 	}
 
 	// If multiple NICs found with same MAC, prefer non-phy interface
-	// This handles bond scenario where eth1-phy0, eth1-phy1 exist, but we want eth1
+	// This handles bond scenario where eth1-phy1, eth1-phy2 exist, but we want eth1
 	for _, name := range matchedNics {
 		if !strings.Contains(name, "-phy") {
 			return name, nil
@@ -835,5 +835,77 @@ func SetupBondWithSlaves(bondName, mode string, slaves []string, ip, netmask str
 		return fmt.Errorf("configure bond interface failed: %v", err)
 	}
 
+	return nil
+}
+
+// GetBondMode reads the current bond mode from sysfs
+// Returns the mode in short format: "xor" (balance-xor) or "ab" (active-backup)
+func GetBondMode(bondName string) (string, error) {
+	modePath := fmt.Sprintf("/sys/class/net/%s/bonding/mode", bondName)
+	data, err := os.ReadFile(modePath)
+	if err != nil {
+		return "", fmt.Errorf("cannot read bond mode from %s: %v", modePath, err)
+	}
+
+	// The content format is like "balance-xor 2" or "active-backup 1"
+	modeStr := strings.TrimSpace(string(data))
+	parts := strings.Fields(modeStr)
+	if len(parts) == 0 {
+		return "", fmt.Errorf("invalid bond mode format: %s", modeStr)
+	}
+
+	// Convert from kernel format to short format
+	kernelMode := parts[0]
+	switch kernelMode {
+	case "balance-xor":
+		return "xor", nil
+	case "active-backup":
+		return "ab", nil
+	default:
+		return "", fmt.Errorf("unsupported bond mode: %s", kernelMode)
+	}
+}
+
+// DeleteBondInterface removes a bond interface
+// It will first remove all slave interfaces from the bond
+func DeleteBondInterface(bondName string) error {
+	// Get all slaves
+	slavesPath := fmt.Sprintf("/sys/class/net/%s/bonding/slaves", bondName)
+	data, err := os.ReadFile(slavesPath)
+	if err != nil {
+		log.Warnf("cannot read bond slaves from %s: %v", slavesPath, err)
+	} else {
+		// Remove all slaves
+		slavesStr := strings.TrimSpace(string(data))
+		if slavesStr != "" {
+			slaves := strings.Fields(slavesStr)
+			for _, slave := range slaves {
+				bash := Bash{
+					Command: fmt.Sprintf("sudo ip link set %s nomaster", slave),
+				}
+				ret, _, e, err := bash.RunWithReturn()
+				if err != nil {
+					log.Warnf("remove slave %s from bond %s failed: %v", slave, bondName, err)
+				}
+				if ret != 0 {
+					log.Warnf("remove slave %s from bond %s failed: %s", slave, bondName, e)
+				}
+			}
+		}
+	}
+
+	// Delete bond interface
+	bash := Bash{
+		Command: fmt.Sprintf("sudo ip link delete %s", bondName),
+	}
+	ret, _, e, err := bash.RunWithReturn()
+	if err != nil {
+		return fmt.Errorf("delete bond interface %s failed: %v", bondName, err)
+	}
+	if ret != 0 {
+		return fmt.Errorf("delete bond interface %s failed: %s", bondName, e)
+	}
+
+	log.Debugf("bond interface %s deleted", bondName)
 	return nil
 }

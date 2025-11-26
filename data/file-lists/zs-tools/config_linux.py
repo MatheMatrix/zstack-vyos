@@ -2220,7 +2220,15 @@ def _output_result_to_caller(ret):
 
 
 @utils.retry(times=3, sleep_time=5)
-def _retry_find_expect_nics_by_mac(mac, ha_state):
+def _retry_find_expect_nics_by_mac(mac, ha_state, expected_name=None):
+    """
+    Find expected NICs by MAC address
+
+    Args:
+        mac: MAC address to search for
+        ha_state: HA state (Enabled/Disconnecting/Reconnecting/Disabled)
+        expected_name: Expected bond/nic name (optional, used in Reconnecting state to avoid multi-bond conflicts)
+    """
     if not mac:
         raise ConfigException('mac is invalid')
     all_nics = utils.find_nic_list_by_mac(mac)
@@ -2271,15 +2279,23 @@ def _retry_find_expect_nics_by_mac(mac, ha_state):
         nic_dict['available_nics'] = physical_nics
         logger.info('migration state %s, available nics: %s' % (ha_state, physical_nics))
 
-        # In Reconnecting state, bond may have changed MAC due to losing all slaves
-        # Try to find bond by checking common bond names (eth1, eth2, etc.)
+        # In Reconnecting state, use expected_name to determine bond name
+        # expected_name is either from management plane or PCI-based allocation
         if ha_state == netconfig.NET_CONFIG_HA_STATE_RECONECTING and 'bond' not in nic_dict:
-            # Try to find any existing bond device by checking typical names
-            for potential_bond in ['eth1', 'eth2', 'eth3', 'bond0', 'bond1']:
-                if os.path.exists('/sys/class/net/{0}/bonding'.format(potential_bond)):
-                    nic_dict['bond'] = potential_bond
-                    logger.info('Reconnecting: found existing bond %s (MAC may have changed)' % potential_bond)
-                    break
+            if expected_name:
+                # Check if this bond exists (it might exist from previous config)
+                if os.path.exists('/sys/class/net/{0}/bonding'.format(expected_name)):
+                    nic_dict['bond'] = expected_name
+                    logger.info('Reconnecting: found existing bond %s' % expected_name)
+                else:
+                    # Bond doesn't exist yet, but we'll create it with this name later
+                    nic_dict['bond'] = expected_name
+                    logger.info('Reconnecting: will create bond %s' % expected_name)
+            else:
+                # This should not happen in normal cases - expected_name should always be provided
+                # Either from PCI-based allocation or management plane
+                logger.error('Reconnecting: no expected_name provided for MAC %s' % mac)
+                raise ConfigException('Reconnecting state requires expected_name for bond (MAC=%s)' % mac)
     else:
         if len(physical_nics) != 1:
             raise ConfigException('could not find enough physical nics for ha state: %s' % ha_state)
@@ -2296,10 +2312,48 @@ def _config_nics_with_enable_ha(nics):
     net_service = netconfig.get_system_network_service()
     service_type = net_service['type']
     service_config_path = net_service['path']
+
+    # For Reconnecting state, determine NIC names by global PCI ordering
+    # KISS principle: scan ALL system NICs, sort by PCI address = ethX order
+    config_based_nic_names = {}
+    ha_state = nics[0].get('haState') if nics else None
+
+    if ha_state == netconfig.NET_CONFIG_HA_STATE_RECONECTING:
+        logger.info('Reconnecting state: determining NIC names by global PCI ordering')
+
+        for nic in nics:
+            mac = nic.get('mac')
+
+            # Use global PCI ordering to determine NIC name
+            pci_based_name = utils.get_nic_name_by_global_pci_order(mac)
+            if pci_based_name:
+                config_based_nic_names[mac] = pci_based_name
+                logger.info('Reconnecting: MAC %s -> %s (by global PCI order)' % (mac, pci_based_name))
+            else:
+                # Fallback: try to find existing bond with this MAC
+                existing_bond = utils.find_bond_name_by_mac(mac)
+                if existing_bond:
+                    config_based_nic_names[mac] = existing_bond
+                    logger.info('Reconnecting: MAC %s -> found existing bond %s' % (mac, existing_bond))
+                else:
+                    logger.warn('Reconnecting: MAC %s -> could not determine NIC name' % mac)
+
+    # Configure each NIC
     for nic in nics:
-        nic_dict = _retry_find_expect_nics_by_mac(nic.get('mac'), nic.get('haState'))
+        # Determine expected_name based on state
+        mac = nic.get('mac')
+
+        if mac in config_based_nic_names:
+            # Use config-based name for Reconnecting state (from ifcfg-* or NetworkManager config)
+            expected_name = config_based_nic_names[mac]
+            logger.info('Using config-based name %s for MAC %s' % (expected_name, mac))
+        else:
+            # Use management plane provided name for other states
+            expected_name = nic.get('nic_name') or nic.get('deviceName')
+
+        nic_dict = _retry_find_expect_nics_by_mac(mac, nic.get('haState'), expected_name)
         if not nic_dict:
-            raise ConfigException('could not find target nics by mac: {0}'.format(nic.get('mac')))
+            raise ConfigException('could not find target nics by mac: {0}'.format(mac))
 
         bond_mode = nic.get('bondMode')
         bond_slaves = nic.get('bondSlaves') or []
@@ -2364,9 +2418,9 @@ def _config_nics_with_enable_ha(nics):
                             renamed_slaves = []
 
                             # Rename VF devices based on PCI address order
-                            for idx, pci_addr in enumerate(sorted_pci_addrs, start=1):
+                            for idx, pci_addr in enumerate(sorted_pci_addrs):
                                 current_name = pci_nic_map[pci_addr]
-                                new_name = '{0}-phy{1}'.format(target_name, idx)
+                                new_name = '{0}-phy{1}'.format(target_name, idx + 1)
 
                                 # Skip renaming if already has the expected name
                                 if current_name == new_name:

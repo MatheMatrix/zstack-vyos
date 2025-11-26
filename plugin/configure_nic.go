@@ -588,6 +588,33 @@ func RemoveNic(cmd *ConfigureNicCmd) interface{} {
 		delete(nicsMap, nicName)
 	}
 
+	// Disband bond interfaces if bondMode is set
+	for _, nic := range cmd.Nics {
+		if nic.BondMode != "" && nic.BondMode != "none" {
+			// Get all NICs with the same MAC to find the bond
+			allNics, err := utils.GetAllNicNamesByMac(nic.Mac)
+			if err != nil {
+				log.Warnf("failed to get all nics by mac %s: %+v", nic.Mac, err)
+				continue
+			}
+
+			// Find and delete the actual bond interface
+			// Note: allNics may contain both bond (eth2) and slaves (eth2-phy1, eth2-phy2)
+			// We need to find the one that is actually a bond device
+			for _, nicName := range allNics {
+				bondingPath := fmt.Sprintf("/sys/class/net/%s/bonding", nicName)
+				isBond, err := utils.PathExists(bondingPath)
+				if err == nil && isBond {
+					log.Debugf("disbanding bond interface %s for mac %s", nicName, nic.Mac)
+					if err := utils.DeleteBondInterface(nicName); err != nil {
+						log.Warnf("failed to delete bond interface %s: %+v", nicName, err)
+					}
+					break // Only one bond per MAC
+				}
+			}
+		}
+	}
+
 	/* this is for debug, will be deleted */
 	bash := utils.Bash{
 		Command: fmt.Sprintf("ip add"),
