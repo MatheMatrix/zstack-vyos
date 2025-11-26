@@ -954,6 +954,11 @@ func addVipFirewalRuleByIptables(cmd *setVipCmd) error {
 	var rules []*utils.IpTableRule
 
 	for _, vip := range cmd.Vips {
+		// Skip IPv6 VIPs - no IPv6 iptables management yet
+		if vip.Ip == "" || !utils.IsIpv4Address(vip.Ip) {
+			continue
+		}
+
 		nicname, err := utils.GetNicNameByMac(vip.OwnerEthernetMac)
 		utils.PanicOnError(err)
 
@@ -964,8 +969,12 @@ func addVipFirewalRuleByIptables(cmd *setVipCmd) error {
 		rules = append(rules, rule)
 	}
 
-	table.AddIpTableRules(rules)
-	return table.Apply()
+	if len(rules) > 0 {
+		table.AddIpTableRules(rules)
+		return table.Apply()
+	}
+
+	return nil
 }
 
 func addVipFirewalRuleByVyos(cmd *setVipCmd) error {
@@ -1417,6 +1426,11 @@ func delVipFirewalRuleByIptables(cmd *removeVipCmd) error {
 	var rules []*utils.IpTableRule
 
 	for _, vip := range cmd.Vips {
+		// Skip IPv6 VIPs - no IPv6 iptables management yet
+		if vip.Ip == "" || !utils.IsIpv4Address(vip.Ip) {
+			continue
+		}
+
 		nicname, err := utils.GetNicNameByMac(vip.OwnerEthernetMac)
 		utils.PanicOnError(err)
 
@@ -1427,8 +1441,10 @@ func delVipFirewalRuleByIptables(cmd *removeVipCmd) error {
 		rules = append(rules, rule)
 	}
 
-	table.RemoveIpTableRule(rules)
-	table.Apply()
+	if len(rules) > 0 {
+		table.RemoveIpTableRule(rules)
+		table.Apply()
+	}
 
 	return nil
 }
