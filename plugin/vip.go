@@ -1013,11 +1013,11 @@ func ensureVipCounterChains() error {
 		t4.AddChain(vipOutCounterChain)
 	}
 	var rules4 []*utils.IpTableRule
-	inHook4 := utils.NewIpTableRule(utils.PREROUTING.String()).SetAction(vipInCounterChain)
+	inHook4 := utils.NewIpTableRule(utils.PREROUTING.String()).SetComment(utils.SystemTopRule).SetAction(vipInCounterChain)
 	if !t4.Check(inHook4) {
 		rules4 = append(rules4, inHook4)
 	}
-	outHook4 := utils.NewIpTableRule(utils.POSTROUTING.String()).SetAction(vipOutCounterChain)
+	outHook4 := utils.NewIpTableRule(utils.POSTROUTING.String()).SetComment(utils.SystemLastLastRule).SetAction(vipOutCounterChain)
 	if !t4.Check(outHook4) {
 		rules4 = append(rules4, outHook4)
 	}
@@ -1037,11 +1037,11 @@ func ensureVipCounterChains() error {
 		t6.AddChain(vipOutCounterChain)
 	}
 	var rules6 []*utils.IpTableRule
-	inHook6 := utils.NewIpTableRule(utils.PREROUTING.String()).SetAction(vipInCounterChain)
+	inHook6 := utils.NewIpTableRule(utils.PREROUTING.String()).SetComment(utils.SystemTopRule).SetAction(vipInCounterChain)
 	if !t6.Check(inHook6) {
 		rules6 = append(rules6, inHook6)
 	}
-	outHook6 := utils.NewIpTableRule(utils.POSTROUTING.String()).SetAction(vipOutCounterChain)
+	outHook6 := utils.NewIpTableRule(utils.POSTROUTING.String()).SetComment(utils.SystemLastLastRule).SetAction(vipOutCounterChain)
 	if !t6.Check(outHook6) {
 		rules6 = append(rules6, outHook6)
 	}
@@ -1748,26 +1748,6 @@ type VipCounter struct {
 	VipUuid      string
 }
 
-func ParseVipCounterFromIptables(chain string, isOut bool) map[string]*VipCounter {
-	ret := make(map[string]*VipCounter)
-
-	// Parse IPv4 rules
-	bash4 := utils.Bash{Command: "iptables-save -c -t nat", NoLog: false}
-	rc4, out4, _, _ := bash4.RunWithReturn()
-	if rc4 == 0 && out4 != "" {
-		parseIptablesOutput(out4, chain, isOut, ret)
-	}
-
-	// Parse IPv6 rules
-	bash6 := utils.Bash{Command: "ip6tables-save -c -t nat", NoLog: false}
-	rc6, out6, _, _ := bash6.RunWithReturn()
-	if rc6 == 0 && out6 != "" {
-		parseIptablesOutput(out6, chain, isOut, ret)
-	}
-
-	return ret
-}
-
 // ParseVipCounters executes iptables-save and ip6tables-save only once,
 // then parses both vip.in.counter and vip.out.counter chains in a single pass
 func ParseVipCounters() (inCounters, outCounters map[string]*VipCounter) {
@@ -1775,14 +1755,14 @@ func ParseVipCounters() (inCounters, outCounters map[string]*VipCounter) {
 	outCounters = make(map[string]*VipCounter)
 
 	// Execute iptables-save once for IPv4
-	bash4 := utils.Bash{Command: "iptables-save -c -t nat", NoLog: false}
+	bash4 := utils.Bash{Command: "iptables-save -c -t nat", NoLog: true}
 	rc4, out4, _, _ := bash4.RunWithReturn()
 	if rc4 == 0 && out4 != "" {
 		parseIptablesOutputBothChains(out4, inCounters, outCounters)
 	}
 
 	// Execute ip6tables-save once for IPv6
-	bash6 := utils.Bash{Command: "ip6tables-save -c -t nat", NoLog: false}
+	bash6 := utils.Bash{Command: "ip6tables-save -c -t nat", NoLog: true}
 	rc6, out6, _, _ := bash6.RunWithReturn()
 	if rc6 == 0 && out6 != "" {
 		parseIptablesOutputBothChains(out6, inCounters, outCounters)
