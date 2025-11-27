@@ -415,13 +415,41 @@ class NetConfig(object):
 
         if not utils.is_device_exists(self.name):
             execute_command('ip link add %s type bond mode %s', self.name, bond_mode)
+        else:
+            # Bond exists: check if mode matches
+            mode_path = '/sys/class/net/{0}/bonding/mode'.format(self.name)
+            if os.path.exists(mode_path):
+                try:
+                    with open(mode_path, 'r') as f:
+                        # Format: "balance-xor 2" or "active-backup 1"
+                        current_mode_str = f.read().strip().split()[0]
+                        if current_mode_str != bond_mode:
+                            logger.warn('Bond %s mode mismatch: expected=%s, current=%s, recreating bond' %
+                                       (self.name, bond_mode, current_mode_str))
+                            # Get current slaves before deleting bond
+                            current_slaves = utils.find_bond_slaves(self.name) or []
+                            # Delete old bond
+                            execute_command('ip link delete %s', self.name)
+                            # Recreate with correct mode
+                            execute_command('ip link add %s type bond mode %s', self.name, bond_mode)
+                            logger.info('Bond %s recreated with mode %s' % (self.name, bond_mode))
+                except Exception as e:
+                    logger.warn('Failed to read bond mode for %s: %s, will try to set mode' % (self.name, str(e)))
 
         miimon_path = '/sys/class/net/{0}/bonding/miimon'.format(self.name)
         if os.path.exists(miimon_path):
             execute_command('echo %s > %s', self.bond_miimon, miimon_path)
+
+        # Only try to set mode if bond was not recreated
         mode_path = '/sys/class/net/{0}/bonding/mode'.format(self.name)
         if os.path.exists(mode_path):
-            execute_command('echo %s > %s', bond_mode, mode_path)
+            try:
+                with open(mode_path, 'r') as f:
+                    current_mode_str = f.read().strip().split()[0]
+                    if current_mode_str != bond_mode:
+                        execute_command('echo %s > %s', bond_mode, mode_path)
+            except Exception as e:
+                logger.debug('Failed to check/set bond mode: %s' % str(e))
 
         current_slaves = utils.find_bond_slaves(self.name) or []
         if desired_slaves:

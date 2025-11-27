@@ -120,13 +120,37 @@ func configureBondNicByLinux(nic *utils.NicInfo) {
 		err = utils.CreateBondInterface(bondName, nic.BondMode)
 		utils.Assertf(err == nil, "CreateBondInterface[%s] error: %+v", bondName, err)
 	} else {
-		// Bond already exists: get existing slave interfaces
-		slaves = getBondSlaveInterfaces(nic, bondName)
-		if err := utils.IpLinkSetDown(bondName); err != nil {
-			log.Debugf("IpLinkSetDown[%s] error: %+v", bondName, err)
-		}
-		if err := utils.IpAddrFlush(bondName); err != nil {
-			log.Debugf("IpAddrFlush[%s] error: %+v", bondName, err)
+		// Bond already exists: check if mode matches expected mode
+		currentMode, err := utils.GetBondMode(bondName)
+		if err != nil {
+			log.Warnf("failed to get bond mode for %s: %+v, will recreate bond", bondName, err)
+			// If we cannot read the bond mode, recreate the bond
+			if err := utils.DeleteBondInterface(bondName); err != nil {
+				log.Warnf("DeleteBondInterface[%s] error: %+v", bondName, err)
+			}
+			slaves = preparePhysicalNicsForBond(bondName, allNics)
+			err = utils.CreateBondInterface(bondName, nic.BondMode)
+			utils.Assertf(err == nil, "CreateBondInterface[%s] error: %+v", bondName, err)
+		} else if currentMode != nic.BondMode {
+			// Bond mode mismatch: delete and recreate with correct mode
+			log.Warnf("bond %s mode mismatch: expected=%s, current=%s, recreating bond",
+				bondName, nic.BondMode, currentMode)
+			if err := utils.DeleteBondInterface(bondName); err != nil {
+				log.Warnf("DeleteBondInterface[%s] error: %+v", bondName, err)
+			}
+			slaves = preparePhysicalNicsForBond(bondName, allNics)
+			err = utils.CreateBondInterface(bondName, nic.BondMode)
+			utils.Assertf(err == nil, "CreateBondInterface[%s] error: %+v", bondName, err)
+		} else {
+			// Bond exists and mode matches: reuse existing bond
+			log.Debugf("bond %s already exists with correct mode %s, reusing", bondName, currentMode)
+			slaves = getBondSlaveInterfaces(nic, bondName)
+			if err := utils.IpLinkSetDown(bondName); err != nil {
+				log.Debugf("IpLinkSetDown[%s] error: %+v", bondName, err)
+			}
+			if err := utils.IpAddrFlush(bondName); err != nil {
+				log.Debugf("IpAddrFlush[%s] error: %+v", bondName, err)
+			}
 		}
 	}
 

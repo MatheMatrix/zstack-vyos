@@ -41,10 +41,10 @@ func renameNic() {
 						nic.Name, nic.Mac, len(nicnames))
 				}
 
-				// Bond scenario: rename physical NICs to ethX-phy0, ethX-phy1
+				// Bond scenario: rename physical NICs to ethX-phy1, ethX-phy2
 				// Later we will create bond interface with name ethX
 				for i, nicname := range nicnames {
-					expectedName := fmt.Sprintf("%s-phy%d", nic.Name, i)
+					expectedName := fmt.Sprintf("%s-phy%d", nic.Name, i+1)
 					isSlave := true // All physical NICs are slaves in bond scenario
 
 					if nicname != expectedName {
@@ -247,10 +247,10 @@ func configureSshMonitor() {
 func configureBondNic(nic *utils.NicInfo) {
 	var err error
 
-	// Get slave interface names (eth1-phy0 and eth1-phy1)
-	// Physical NICs have been renamed to ethX-phy0, ethX-phy1 in renameNic()
-	slave0 := fmt.Sprintf("%s-phy0", nic.Name)
-	slave1 := fmt.Sprintf("%s-phy1", nic.Name)
+	// Get slave interface names (eth1-phy1 and eth1-phy2)
+	// Physical NICs have been renamed to ethX-phy1, ethX-phy2 in renameNic()
+	slave0 := fmt.Sprintf("%s-phy1", nic.Name)
+	slave1 := fmt.Sprintf("%s-phy2", nic.Name)
 	slaves := []string{slave0, slave1}
 
 	// Use nic.Name (ethX) as bond interface name

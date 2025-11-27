@@ -70,6 +70,74 @@ def find_bond_name_by_mac(mac):
         if is_bond(nic):
             return nic
 
+
+def get_nic_name_by_global_pci_order(target_mac):
+    '''
+    Determine NIC name based on global PCI address ordering of ALL system NICs.
+
+    KISS principle: PCI address order = ethX order
+    - 00:03.0 -> eth0
+    - 00:04.0 -> eth1
+    - 00:0a.0 (min of bond) -> eth2
+    - 00:0c.0 (min of bond) -> eth3
+
+    For bonds, multiple VFs share the same MAC, so we group by MAC
+    and use the minimum PCI address to represent the group.
+
+    Args:
+        target_mac: MAC address to find name for
+
+    Returns:
+        NIC name (e.g., 'eth2') or None if not found
+    '''
+    # Collect all NICs grouped by MAC, with their minimum PCI address
+    mac_to_min_pci = {}
+
+    for nic in os.listdir('/sys/class/net'):
+        # Skip virtual/special interfaces
+        if nic in ['lo', 'bonding_masters'] or nic.startswith('pimreg') or nic.startswith('ipsec'):
+            continue
+
+        # Skip bond master devices (we care about the underlying physical NICs)
+        if is_bond(nic):
+            continue
+
+        # Note: Do NOT skip -phy devices! They have the same MAC as their bond
+        # and must be counted for correct PCI ordering
+
+        # Get MAC address
+        mac_path = '/sys/class/net/%s/address' % nic
+        if not os.path.exists(mac_path):
+            continue
+        try:
+            with open(mac_path, 'r') as f:
+                nic_mac = f.read().strip().lower()
+        except (IOError, OSError):
+            continue
+
+        # Get PCI address
+        pci_addr = get_pci_address(nic)
+        if not pci_addr:
+            continue
+
+        # Group by MAC, keep minimum PCI
+        if nic_mac not in mac_to_min_pci:
+            mac_to_min_pci[nic_mac] = pci_addr
+        else:
+            if pci_addr < mac_to_min_pci[nic_mac]:
+                mac_to_min_pci[nic_mac] = pci_addr
+
+    # Sort all MACs by their minimum PCI address
+    sorted_macs = sorted(mac_to_min_pci.keys(), key=lambda m: mac_to_min_pci[m])
+
+    # Find target MAC's position
+    target_mac_lower = target_mac.lower()
+    for idx, mac in enumerate(sorted_macs):
+        if mac == target_mac_lower:
+            return 'eth%d' % idx
+
+    return None
+
 def is_device_exists(dev):
     if not dev:
         return False
@@ -148,9 +216,12 @@ def get_pci_address(dev):
     # Get real path of the device symlink
     real_path = os.path.realpath(device_path)
 
-    # Extract PCI address from path like: /sys/devices/pci0000:00/0000:00:09.0
+    # Extract PCI address from path
+    # VF path:     /sys/devices/pci0000:00/0000:00:09.0
+    # virtio path: /sys/devices/pci0000:00/0000:00:03.0/virtio0
     # PCI address format: DDDD:BB:DD.F (Domain:Bus:Device.Function)
-    pattern = re.compile(r'([0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F])/?$')
+    # Note: Don't require PCI address at end of path (virtio has /virtioX suffix)
+    pattern = re.compile(r'/([0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F])')
     match = pattern.search(real_path)
     if match:
         return match.group(1)
