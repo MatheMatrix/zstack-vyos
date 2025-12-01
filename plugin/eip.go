@@ -408,7 +408,7 @@ func syncEipByIptables() error {
 	var toAddIpv6Memeber []string
 	var toDelIpv6Memeber []string
 	for _, eip := range eipMap {
-		if eip.IpVersion == IP_VERSION_6 {
+		if eip.IpVersion == IP_VERSION_6 && !utils.IsVYOS() {
 			if _, ok := ipsetMemberIpv6Map[eip.GuestIp]; !ok {
 				toAddIpv6Memeber = append(toAddIpv6Memeber, eip.GuestIp)
 			}

@@ -1335,6 +1335,33 @@ func setVip(cmd *setVipCmd) interface{} {
 		}
 		bash.Run()
 	}
+
+	/* add default qos for vip traffic counter */
+	if utils.IsConfigTcForVipQos() && utils.IsVYOS() {
+		for _, vip := range cmd.Vips {
+			publicInterface, err := utils.GetNicNameByMac(vip.OwnerEthernetMac)
+			utils.PanicOnError(err)
+			addr := vip.GetIpWithOutCidr()
+			ingressrule := newQosRule(addr, 0, MAX_BINDWIDTH, vip.VipUuid)
+			if biRule, ok := totalQosRules[publicInterface]; ok {
+				if biRule[INGRESS].InterfaceQosRuleFind(ingressrule) == nil {
+					addQosRule(publicInterface, INGRESS, ingressrule)
+				}
+			} else {
+				addQosRule(publicInterface, INGRESS, ingressrule)
+			}
+
+			egressrule := newQosRule(addr, 0, MAX_BINDWIDTH, vip.VipUuid)
+			if biRule, ok := totalQosRules[publicInterface]; ok {
+				if biRule[EGRESS].InterfaceQosRuleFind(egressrule) == nil {
+					addQosRule(publicInterface, EGRESS, egressrule)
+				}
+			} else {
+				addQosRule(publicInterface, EGRESS, egressrule)
+			}
+		}
+	}
+
 	vyosVips := []nicVipPair{}
 	for _, vip := range cmd.Vips {
 		nicname, err := utils.GetNicNameByMac(vip.OwnerEthernetMac)
@@ -1999,22 +2026,176 @@ func (c *vipCollector) Update(ch chan<- prom.Metric) error {
 		return nil
 	}
 
-	// Parse both vip.in.counter and vip.out.counter with only 1 iptables-save + 1 ip6tables-save call
-	inRules, outRules := ParseVipCounters()
+	if utils.IsVYOS() {
+		rules := getMonitoringRules(EGRESS)
+		for _, rule := range rules {
+			vipUuid := rule.VipUuid
+			ch <- prom.MustNewConstMetric(c.outByteEntry, prom.GaugeValue, float64(rule.Bytes), vipUuid)
+			ch <- prom.MustNewConstMetric(c.outPktEntry, prom.GaugeValue, float64(rule.Packets), vipUuid)
+		}
 
-	for _, rule := range inRules {
-		vipUuid := rule.VipUuid
-		ch <- prom.MustNewConstMetric(c.inByteEntry, prom.GaugeValue, float64(rule.Bytes), vipUuid)
-		ch <- prom.MustNewConstMetric(c.inPktEntry, prom.GaugeValue, float64(rule.Packets), vipUuid)
-	}
+		rules = getMonitoringRules(INGRESS)
+		for _, rule := range rules {
+			vipUuid := rule.VipUuid
+			ch <- prom.MustNewConstMetric(c.inByteEntry, prom.GaugeValue, float64(rule.Bytes), vipUuid)
+			ch <- prom.MustNewConstMetric(c.inPktEntry, prom.GaugeValue, float64(rule.Packets), vipUuid)
+		}
+	} else {
+		// Parse both vip.in.counter and vip.out.counter with only 1 iptables-save + 1 ip6tables-save call
+		inRules, outRules := ParseVipCounters()
 
-	for _, rule := range outRules {
-		vipUuid := rule.VipUuid
-		ch <- prom.MustNewConstMetric(c.outByteEntry, prom.GaugeValue, float64(rule.Bytes), vipUuid)
-		ch <- prom.MustNewConstMetric(c.outPktEntry, prom.GaugeValue, float64(rule.Packets), vipUuid)
+		for _, rule := range inRules {
+			vipUuid := rule.VipUuid
+			ch <- prom.MustNewConstMetric(c.inByteEntry, prom.GaugeValue, float64(rule.Bytes), vipUuid)
+			ch <- prom.MustNewConstMetric(c.inPktEntry, prom.GaugeValue, float64(rule.Packets), vipUuid)
+		}
+
+		for _, rule := range outRules {
+			vipUuid := rule.VipUuid
+			ch <- prom.MustNewConstMetric(c.outByteEntry, prom.GaugeValue, float64(rule.Bytes), vipUuid)
+			ch <- prom.MustNewConstMetric(c.outPktEntry, prom.GaugeValue, float64(rule.Packets), vipUuid)
+		}
 	}
 
 	return nil
+}
+
+/*
+output example
+# tc -s class show dev eth0 | grep -A 1 'class htb'
+class htb 1:1 root leaf 8003: prio 0 rate 10000Mbit ceil 10000Mbit burst 0b cburst 0b
+
+	Sent 353013 bytes 2725 pkt (dropped 0, overlimits 0 requeues 0)
+
+--
+class htb 1:2 root leaf 8004: prio 0 rate 100000Kbit ceil 100000Kbit burst 15337b cburst 15337b
+
+	Sent 29400 bytes 300 pkt (dropped 0, overlimits 0 requeues 0)
+
+--
+*/
+func getInterfaceMonitorRules(direct direction, qosRules *interfaceQosRules) map[string]*VipCounter {
+	name := qosRules.name
+	if direct == INGRESS {
+		name = qosRules.ifbName
+	}
+
+	bash := &utils.Bash{
+		Command: fmt.Sprintf("sudo tc -s class show dev %s | grep -A 1 'class htb'", name),
+		NoLog:   true,
+	}
+	ret, stdout, _, _ := bash.RunWithReturn()
+	if ret != 0 {
+		return nil
+	}
+
+	lines := strings.Split(stdout, "\n")
+	var cnt, classId uint32
+	var byteCnt, pktCnt uint64
+	var vipIps []string
+	var vipOk bool
+	monitorRules := make(map[string]*VipCounter)
+
+	/*
+		# tc -s class show dev eth1 | grep -A 1 'class htb'
+		class htb 1:1 root leaf 8003: prio 0 rate 10000Mbit ceil 10000Mbit burst 0b cburst 0b
+		 Sent 3180 bytes 38 pkt (dropped 0, overlimits 0 requeues 0)
+		--
+		class htb 1:2 root leaf 8004: prio 0 rate 104858Kbit ceil 104858Kbit burst 15335b cburst 15335b
+		 Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0)
+	*/
+
+	for _, line := range lines {
+		switch cnt {
+		case 0:
+			strs := strings.Split(line, " ")
+			classStr := strings.Split(strs[2], ":")
+			id, _ := strconv.ParseUint(strings.Trim(classStr[1], " "), 16, 64)
+			classId = (uint32)(id)
+			/* in case class delete fail, just skip lines for this classid */
+			vipIps, vipOk = qosRules.classIdMap[classId]
+			cnt++
+			break
+		case 1:
+			if vipOk {
+				strs := strings.Split(strings.Trim(line, " "), " ")
+				byteCnt, _ = strconv.ParseUint(strings.Trim(strs[1], " "), 10, 64)
+				pktCnt, _ = strconv.ParseUint(strings.Trim(strs[3], " "), 10, 64)
+			}
+			cnt++
+			break
+		case 2:
+			if vipOk {
+				for _, vipIp := range vipIps {
+					if qosRule, ok := qosRules.rules[vipIp]; ok {
+						vipUuid := qosRule.vipUuid
+						if _, ok := monitorRules[vipUuid]; !ok {
+							monitorRules[vipUuid] = &VipCounter{}
+						}
+						monitorRule := monitorRules[vipUuid]
+						monitorRule.Packets += pktCnt
+						monitorRule.Bytes += byteCnt
+						monitorRule.VipUuid = vipUuid
+
+						if direct == INGRESS {
+							monitorRule.Destination = qosRules.rules[vipIp].vip
+						} else {
+							monitorRule.Source = qosRules.rules[vipIp].vip
+						}
+					}
+				}
+			}
+			cnt = 0
+			classId = 0
+			vipOk = false
+			byteCnt = 0
+			pktCnt = 0
+			break
+		default:
+			cnt = 0
+			classId = 0
+			vipOk = false
+			byteCnt = 0
+			pktCnt = 0
+			break
+		}
+	}
+
+	// add counter of last tc rule
+	if cnt == 2 && vipOk {
+		for _, vipIp := range vipIps {
+			if qosRule, ok := qosRules.rules[vipIp]; ok {
+				vipUuid := qosRule.vipUuid
+				if _, ok := monitorRules[vipUuid]; !ok {
+					monitorRules[vipUuid] = &VipCounter{}
+				}
+				monitorRule := monitorRules[vipUuid]
+				monitorRule.Packets += pktCnt
+				monitorRule.Bytes += byteCnt
+				monitorRule.VipUuid = vipUuid
+
+				if direct == INGRESS {
+					monitorRule.Destination = qosRules.rules[vipIp].vip
+				} else {
+					monitorRule.Source = qosRules.rules[vipIp].vip
+				}
+			}
+		}
+	}
+
+	return monitorRules
+}
+
+func getMonitoringRules(direct direction) map[string]*VipCounter {
+	monitoringRules := make(map[string]*VipCounter)
+	for _, biRules := range totalQosRules {
+		rules := getInterfaceMonitorRules(direct, biRules[direct])
+		for k, v := range rules {
+			monitoringRules[k] = v
+		}
+	}
+
+	return monitoringRules
 }
 
 func checkQdisc(nic string) {

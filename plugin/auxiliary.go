@@ -414,6 +414,32 @@ func setVipByLinux(cmd *setVipCmd) interface{} {
 			}
 		}
 	}
+
+	if utils.IsConfigTcForVipQos() && utils.IsVYOS() {
+		for _, vip := range cmd.Vips {
+			publicInterface, err := utils.GetNicNameByMac(vip.OwnerEthernetMac)
+			utils.PanicOnError(err)
+			ip := vip.GetIpWithOutCidr()
+			ingressrule := newQosRule(ip, 0, MAX_BINDWIDTH, vip.VipUuid)
+			if biRule, ok := totalQosRules[publicInterface]; ok {
+				if biRule[INGRESS].InterfaceQosRuleFind(ingressrule) == nil {
+					addQosRule(publicInterface, INGRESS, ingressrule)
+				}
+			} else {
+				addQosRule(publicInterface, INGRESS, ingressrule)
+			}
+
+			egressrule := newQosRule(ip, 0, MAX_BINDWIDTH, vip.VipUuid)
+			if biRule, ok := totalQosRules[publicInterface]; ok {
+				if biRule[EGRESS].InterfaceQosRuleFind(egressrule) == nil {
+					addQosRule(publicInterface, EGRESS, egressrule)
+				}
+			} else {
+				addQosRule(publicInterface, EGRESS, egressrule)
+			}
+		}
+	}
+
 	vyosVips := []nicVipPair{}
 	for _, vip := range cmd.Vips {
 		nicname, err := utils.GetNicNameByMac(vip.OwnerEthernetMac)
