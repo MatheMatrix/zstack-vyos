@@ -3,6 +3,7 @@ package plugin
 import (
 	"bytes"
 	"fmt"
+	"net"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,6 +22,7 @@ const (
 	VR_SET_VIP_QOS       = "/setvipqos"
 	VR_DELETE_VIP_QOS    = "/deletevipqos"
 	VR_SYNC_VIP_QOS      = "/syncvipqos"
+	VR_FLUSH_VIP_QOS     = "/flushvipqos"
 	VR_IFB               = "ifb"
 	TC_MAX_CLASSID       = 0xFFFF
 	TC_MAX_FILTER        = 0xFFF
@@ -907,6 +909,10 @@ type syncVipQosCmd struct {
 	Settings []vipQosSettings `json:"vipQosSettings"`
 }
 
+type flushVipQosCmd struct {
+	VipUuids []string `json:"vipUuids"`
+}
+
 type vipQosSettingsArray []vipQosSettings
 
 func (a vipQosSettingsArray) Len() int           { return len(a) }
@@ -1669,6 +1675,14 @@ func syncVipQos(ctx *server.CommandContext) interface{} {
 	return nil
 }
 
+func flushVipQos(ctx *server.CommandContext) interface{} {
+	cmd := &flushVipQosCmd{}
+	ctx.GetCommand(cmd)
+
+	clearUnusedTcRule()
+	return nil
+}
+
 type vipQosRemoveNic struct{}
 
 func (vipQos *vipQosRemoveNic) RemoveNic(nicName string) error {
@@ -1755,14 +1769,20 @@ func ParseVipCounters() (inCounters, outCounters map[string]*VipCounter) {
 	outCounters = make(map[string]*VipCounter)
 
 	// Execute iptables-save once for IPv4
-	bash4 := utils.Bash{Command: "iptables-save -c -t nat", NoLog: true}
+	bash4 := utils.Bash{
+		Command: "iptables-save -c -t nat",
+		NoLog:   true,
+	}
 	rc4, out4, _, _ := bash4.RunWithReturn()
 	if rc4 == 0 && out4 != "" {
 		parseIptablesOutputBothChains(out4, inCounters, outCounters)
 	}
 
 	// Execute ip6tables-save once for IPv6
-	bash6 := utils.Bash{Command: "ip6tables-save -c -t nat", NoLog: true}
+	bash6 := utils.Bash{
+		Command: "ip6tables-save -c -t nat",
+		NoLog:   true,
+	}
 	rc6, out6, _, _ := bash6.RunWithReturn()
 	if rc6 == 0 && out6 != "" {
 		parseIptablesOutputBothChains(out6, inCounters, outCounters)
@@ -2021,4 +2041,26 @@ func VipEntryPoint() {
 	server.RegisterAsyncCommandHandler(VR_SET_VIP_QOS, server.VyosLock(setVipQos))
 	server.RegisterAsyncCommandHandler(VR_DELETE_VIP_QOS, server.VyosLock(deleteVipQos))
 	server.RegisterAsyncCommandHandler(VR_SYNC_VIP_QOS, server.VyosLock(syncVipQos))
+	server.RegisterAsyncCommandHandler(VR_FLUSH_VIP_QOS, server.VyosLock(flushVipQos))
+}
+
+func clearUnusedTcRule() {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return
+	}
+
+	for _, iface := range interfaces {
+		if !strings.HasPrefix(iface.Name, "ifb") {
+			continue
+		}
+
+		srcNicName := strings.Replace(iface.Name, "ifb", "eth", -1)
+		b := utils.Bash{
+			Command: fmt.Sprintf("tc qdisc show dev %s ingress; ip link del %s", srcNicName, iface.Name),
+			Sudo:    true,
+		}
+
+		b.Run()
+	}
 }
