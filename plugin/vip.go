@@ -1,12 +1,15 @@
 package plugin
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"net"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode"
 
 	"zstack-vyos/server"
@@ -524,11 +527,12 @@ func (rules *interfaceQosRules) InterfaceQosRuleInit(direct direction) interface
 	bash := utils.Bash{
 		Command: fmt.Sprintf("sudo tc qdisc del dev %s root;", name),
 	}
-	_, _, e, err := bash.RunWithReturn()
-	if err != nil {
-		ignore := strings.Contains(e, "with handle of zero") || strings.Contains(e, "No such file")
-		utils.Assertf(ignore, "Failed to del rules from dev %s", name)
-	}
+	bash.RunWithReturn()
+	/*
+		if err != nil {
+			ignore := strings.Contains(e, "with handle of zero") || strings.Contains(e, "No such file")
+			utils.Assertf(ignore, "Failed to del rules from dev %s", name)
+		}*/
 
 	checkQdisc(name)
 
@@ -1004,157 +1008,14 @@ func addVipFirewalRuleByVyos(cmd *setVipCmd) error {
 	return nil
 }
 
-const (
-	vipInCounterChain  = "vip.in.counter"
-	vipOutCounterChain = "vip.out.counter"
-)
-
-func ensureVipCounterChains() error {
-	// IPv4
-	t4 := utils.NewIpTables(utils.NatTable)
-	if !t4.CheckChain(vipInCounterChain) {
-		t4.AddChain(vipInCounterChain)
-	}
-	if !t4.CheckChain(vipOutCounterChain) {
-		t4.AddChain(vipOutCounterChain)
-	}
-	var rules4 []*utils.IpTableRule
-	inHook4 := utils.NewIpTableRule(utils.PREROUTING.String()).SetComment(utils.SystemTopRule).SetAction(vipInCounterChain)
-	if !t4.Check(inHook4) {
-		rules4 = append(rules4, inHook4)
-	}
-	outHook4 := utils.NewIpTableRule(utils.POSTROUTING.String()).SetComment(utils.SystemLastLastRule).SetAction(vipOutCounterChain)
-	if !t4.Check(outHook4) {
-		rules4 = append(rules4, outHook4)
-	}
-	if len(rules4) > 0 {
-		t4.AddIpTableRules(rules4)
-		if err := t4.Apply(); err != nil {
-			return err
-		}
+func initVipCounterChains() error {
+	bash := utils.Bash{
+		Command: "sysctl -w net.netfilter.nf_conntrack_acct=1",
+		Sudo:    true,
 	}
 
-	// IPv6
-	t6 := utils.NewIpTablesByIpVersion(utils.NatTable, utils.IP_VERSION_6)
-	if !t6.CheckChain(vipInCounterChain) {
-		t6.AddChain(vipInCounterChain)
-	}
-	if !t6.CheckChain(vipOutCounterChain) {
-		t6.AddChain(vipOutCounterChain)
-	}
-	var rules6 []*utils.IpTableRule
-	inHook6 := utils.NewIpTableRule(utils.PREROUTING.String()).SetComment(utils.SystemTopRule).SetAction(vipInCounterChain)
-	if !t6.Check(inHook6) {
-		rules6 = append(rules6, inHook6)
-	}
-	outHook6 := utils.NewIpTableRule(utils.POSTROUTING.String()).SetComment(utils.SystemLastLastRule).SetAction(vipOutCounterChain)
-	if !t6.Check(outHook6) {
-		rules6 = append(rules6, outHook6)
-	}
-	if len(rules6) > 0 {
-		t6.AddIpTableRules(rules6)
-		if err := t6.Apply(); err != nil {
-			return err
-		}
-	}
-
+	bash.Run()
 	return nil
-}
-
-func addVipCounterRulesByIptables(cmd *setVipCmd) {
-	// best-effort create chains and hooks
-	_ = ensureVipCounterChains()
-
-	t4 := utils.NewIpTables(utils.NatTable)
-	t6 := utils.NewIpTablesByIpVersion(utils.NatTable, utils.IP_VERSION_6)
-	var rules4 []*utils.IpTableRule
-	var rules6 []*utils.IpTableRule
-
-	for _, vip := range cmd.Vips {
-		nicName, err := utils.GetNicNameByMac(vip.OwnerEthernetMac)
-		if err != nil {
-			continue
-		}
-
-		// IPv4 VIP
-		if vip.Ip != "" && utils.IsIpv4Address(vip.Ip) {
-			inRule := utils.NewIpTableRule(vipInCounterChain).
-				SetInNic(nicName).
-				SetDstIp(vip.Ip + "/32").
-				SetComment(vip.VipUuid).
-				SetAction(utils.IPTABLES_ACTION_RETURN)
-			if !t4.Check(inRule) {
-				rules4 = append(rules4, inRule)
-			}
-			outRule := utils.NewIpTableRule(vipOutCounterChain).
-				SetOutNic(nicName).
-				SetSrcIp(vip.Ip + "/32").
-				SetComment(vip.VipUuid).
-				SetAction(utils.IPTABLES_ACTION_RETURN)
-			if !t4.Check(outRule) {
-				rules4 = append(rules4, outRule)
-			}
-		}
-
-		// IPv6 VIP
-		if vip.Ip6 != "" && !utils.IsIpv4Address(vip.Ip6) {
-			inRule := utils.NewIpTableRule(vipInCounterChain).
-				SetInNic(nicName).
-				SetDstIp(vip.Ip6 + "/128").
-				SetComment(vip.VipUuid).
-				SetAction(utils.IPTABLES_ACTION_RETURN)
-			if !t6.Check(inRule) {
-				rules6 = append(rules6, inRule)
-			}
-			outRule := utils.NewIpTableRule(vipOutCounterChain).
-				SetOutNic(nicName).
-				SetSrcIp(vip.Ip6 + "/128").
-				SetComment(vip.VipUuid).
-				SetAction(utils.IPTABLES_ACTION_RETURN)
-			if !t6.Check(outRule) {
-				rules6 = append(rules6, outRule)
-			}
-		}
-	}
-
-	if len(rules4) > 0 {
-		t4.AddIpTableRules(rules4)
-		_ = t4.Apply()
-	}
-	if len(rules6) > 0 {
-		t6.AddIpTableRules(rules6)
-		_ = t6.Apply()
-	}
-}
-
-func delVipCounterRulesByIptables(cmd *removeVipCmd) {
-	t4 := utils.NewIpTables(utils.NatTable)
-	t6 := utils.NewIpTablesByIpVersion(utils.NatTable, utils.IP_VERSION_6)
-
-	hasV4 := false
-	hasV6 := false
-
-	for _, vip := range cmd.Vips {
-		if vip.VipUuid == "" {
-			continue
-		}
-		// Remove from both IPv4 and IPv6 tables
-		if vip.Ip != "" {
-			t4.RemoveIpTableRuleByComments(vip.VipUuid)
-			hasV4 = true
-		}
-		if vip.Ip6 != "" {
-			t6.RemoveIpTableRuleByComments(vip.VipUuid)
-			hasV6 = true
-		}
-	}
-
-	if hasV4 {
-		_ = t4.Apply()
-	}
-	if hasV6 {
-		_ = t6.Apply()
-	}
 }
 
 func setVipHandler(ctx *server.CommandContext) interface{} {
@@ -1165,6 +1026,23 @@ func setVipHandler(ctx *server.CommandContext) interface{} {
 }
 
 func SetVip(cmd *setVipCmd) interface{} {
+	for _, vip := range cmd.Vips {
+		if vipPromCollector != nil {
+			vipPromCollector.mu.Lock()
+			if vip.Ip != "" {
+				if _, ok := vipPromCollector.counters[vip.Ip]; !ok {
+					vipPromCollector.counters[vip.Ip] = &VipCounter{VipUuid: vip.VipUuid}
+				}
+			}
+			if vip.Ip6 != "" {
+				if _, ok := vipPromCollector.counters[vip.Ip6]; !ok {
+					vipPromCollector.counters[vip.Ip6] = &VipCounter{VipUuid: vip.VipUuid}
+				}
+			}
+			vipPromCollector.mu.Unlock()
+		}
+	}
+
 	if cmd.ResetQosRules {
 		clearedNics := make(map[string]bool)
 		for _, vip := range cmd.Vips {
@@ -1184,7 +1062,6 @@ func SetVip(cmd *setVipCmd) interface{} {
 
 	if utils.IsSkipVyosIptables() {
 		addVipFirewalRuleByIptables(cmd)
-		addVipCounterRulesByIptables(cmd)
 	} else {
 		addVipFirewalRuleByVyos(cmd)
 	}
@@ -1507,9 +1384,21 @@ func removeVipHandler(ctx *server.CommandContext) interface{} {
 }
 
 func RemoveVip(cmd *removeVipCmd) interface{} {
+	for _, vip := range cmd.Vips {
+		if vipPromCollector != nil {
+			vipPromCollector.mu.Lock()
+			if vip.Ip != "" {
+				delete(vipPromCollector.counters, vip.Ip)
+			}
+			if vip.Ip6 != "" {
+				delete(vipPromCollector.counters, vip.Ip6)
+			}
+			vipPromCollector.mu.Unlock()
+		}
+	}
+
 	if utils.IsSkipVyosIptables() {
 		delVipFirewalRuleByIptables(cmd)
-		delVipCounterRulesByIptables(cmd)
 	} else {
 		delVipFirewalRuleByVyos(cmd)
 	}
@@ -1737,15 +1626,20 @@ type vipCollector struct {
 	outByteEntry *prom.Desc
 	outPktEntry  *prom.Desc
 
-	vipUUIds map[string]string
+	// Fields for conntrack-based monitoring
+	mu            sync.Mutex
+	previousStats map[string]*SessionStat
+	counters      map[string]*VipCounter
 }
+
+var vipPromCollector *vipCollector
 
 const (
 	LABEL_VIP_UUID = "VipUUID"
 )
 
 func NewVipPrometheusCollector() MetricCollector {
-	return &vipCollector{
+	vipPromCollector = &vipCollector{
 		inByteEntry: prom.NewDesc(
 			"zstack_vip_in_bytes",
 			"VIP inbound traffic in bytes",
@@ -1767,8 +1661,10 @@ func NewVipPrometheusCollector() MetricCollector {
 			[]string{LABEL_VIP_UUID}, nil,
 		),
 
-		vipUUIds: make(map[string]string),
+		previousStats: make(map[string]*SessionStat),
+		counters:      make(map[string]*VipCounter),
 	}
+	return vipPromCollector
 }
 
 func (c *vipCollector) Describe(ch chan<- *prom.Desc) error {
@@ -1780,245 +1676,200 @@ func (c *vipCollector) Describe(ch chan<- *prom.Desc) error {
 }
 
 type VipCounter struct {
-	Packets      uint64
-	Bytes        uint64
-	Source       string
-	Destination  string
-	Source6      string
-	Destination6 string
-	VipUuid      string
+	VipUuid    string
+	InPackets  uint64
+	InBytes    uint64
+	OutPackets uint64
+	OutBytes   uint64
 }
 
-// ParseVipCounters executes iptables-save and ip6tables-save only once,
-// then parses both vip.in.counter and vip.out.counter chains in a single pass
-func ParseVipCounters() (inCounters, outCounters map[string]*VipCounter) {
-	inCounters = make(map[string]*VipCounter)
-	outCounters = make(map[string]*VipCounter)
-
-	// Execute iptables-save once for IPv4
-	bash4 := utils.Bash{
-		Command: "iptables-save -c -t nat",
-		NoLog:   true,
-	}
-	rc4, out4, _, _ := bash4.RunWithReturn()
-	if rc4 == 0 && out4 != "" {
-		parseIptablesOutputBothChains(out4, inCounters, outCounters)
-	}
-
-	// Execute ip6tables-save once for IPv6
-	bash6 := utils.Bash{
-		Command: "ip6tables-save -c -t nat",
-		NoLog:   true,
-	}
-	rc6, out6, _, _ := bash6.RunWithReturn()
-	if rc6 == 0 && out6 != "" {
-		parseIptablesOutputBothChains(out6, inCounters, outCounters)
-	}
-
-	return inCounters, outCounters
+// SessionStat holds the parsed statistics for a single connection track entry.
+type SessionStat struct {
+	Protocol      string
+	SrcIp         string
+	DstIp         string
+	SrcPort       string
+	DstPort       string
+	IcmpType      string
+	IcmpCode      string
+	ReplySrcIp    string
+	ReplyDstIp    string
+	ReplySrcPort  string
+	ReplyDstPort  string
+	ReplyIcmpType string
+	ReplyIcmpCode string
+	Packets       uint64
+	Bytes         uint64
+	ReplyPackets  uint64
+	ReplyBytes    uint64
 }
 
-// parseIptablesOutputBothChains parses both vip.in.counter and vip.out.counter chains in a single pass
-func parseIptablesOutputBothChains(output string, inCounters, outCounters map[string]*VipCounter) {
-	lines := strings.Split(output, "\n")
-	inPrefix := "-A " + vipInCounterChain + " "
-	outPrefix := "-A " + vipOutCounterChain + " "
+func (s *SessionStat) Key() string {
+	if s.Protocol == "icmp" {
+		return fmt.Sprintf("%s-%s-%s-%s-%s", s.Protocol, s.SrcIp, s.DstIp, s.IcmpType, s.IcmpCode)
+	} else {
+		return fmt.Sprintf("%s-%s-%s-%s-%s", s.Protocol, s.SrcIp, s.SrcPort, s.DstIp, s.DstPort)
+	}
+}
 
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
+// parseConntrackLine parses a single line from /proc/net/nf_conntrack.
+// example: ipv4     2 icmp     1 8 src=10.1.2.197 dst=192.168.100.1 type=8 code=0 id=63489 packets=88 bytes=7392 src=192.168.100.1 dst=192.168.100.147 type=0 code=0 id=63489 packets=20 bytes=1680 mark=0 zone=0 use=2
+func parseConntrackLine(line string) (*SessionStat, bool) {
+	fields := strings.Fields(line)
+	if len(fields) < 10 {
+		return nil, false
+	}
 
-		// Determine which chain this line belongs to
-		var isOut bool
-		if strings.Contains(line, inPrefix) {
-			isOut = false
-		} else if strings.Contains(line, outPrefix) {
-			isOut = true
-		} else {
+	stat := &SessionStat{
+		Protocol: fields[2],
+	}
+
+	var packets, bytes, replyPackets, replyBytes uint64
+	var src, dst, rsrc, rdst string
+	var sport, dport, rsport, rdport string
+	var icmpType, replyIcmpType, icmpCode, replyIcmpCode string
+
+	unreplied := strings.Contains(line, "[UNREPLIED]")
+
+	for _, field := range fields {
+		parts := strings.Split(field, "=")
+		if len(parts) != 2 {
 			continue
 		}
+		key, value := parts[0], parts[1]
 
-		// Check if it's a valid counter rule
-		if !strings.Contains(line, "-m comment --comment ") || !strings.Contains(line, " -j RETURN") {
-			continue
-		}
-
-		// Extract counters [pkts:bytes]
-		var pkts, bytes uint64
-		if strings.HasPrefix(line, "[") {
-			end := strings.Index(line, "]")
-			if end > 1 {
-				cnt := line[1:end]
-				parts := strings.Split(cnt, ":")
-				if len(parts) == 2 {
-					fmt.Sscanf(parts[0], "%d", &pkts)
-					fmt.Sscanf(parts[1], "%d", &bytes)
-				}
-			}
-		}
-
-		// Extract UUID
-		uuid := ""
-		if idx := strings.Index(line, "-m comment --comment "); idx >= 0 {
-			uuid = strings.TrimSpace(line[idx+len("-m comment --comment "):])
-			if sp := strings.Index(uuid, " "); sp >= 0 {
-				uuid = uuid[:sp]
-				uuid = strings.Replace(uuid, "\"", "", 2)
-				uuid = strings.Split(uuid, "@")[0] // comment format: uuid@vip.in.counter
-			}
-		}
-		if uuid == "" {
-			continue
-		}
-
-		// Extract IP address
-		ip := ""
-		if isOut {
-			// -s ip/32 or -s ip/128
-			if idx := strings.Index(line, " -s "); idx >= 0 {
-				rem := line[idx+4:]
-				sp := strings.Index(rem, " ")
-				if sp > 0 {
-					ip = strings.Split(rem[:sp], "/")[0]
-				}
-			}
-		} else {
-			// -d ip/32 or -d ip/128
-			if idx := strings.Index(line, " -d "); idx >= 0 {
-				rem := line[idx+4:]
-				sp := strings.Index(rem, " ")
-				if sp > 0 {
-					ip = strings.Split(rem[:sp], "/")[0]
-				}
-			}
-		}
-
-		// Select the appropriate counter map
-		var ret map[string]*VipCounter
-		if isOut {
-			ret = outCounters
-		} else {
-			ret = inCounters
-		}
-
-		// Accumulate counters if UUID already exists (from both IPv4 and IPv6)
-		if existing, ok := ret[uuid]; ok {
-			existing.Packets += pkts
-			existing.Bytes += bytes
-			if !utils.IsIpv4Address(ip) {
-				if isOut {
-					existing.Source6 = ip
-				} else {
-					existing.Destination6 = ip
-				}
-			}
-		} else {
-			ret[uuid] = &VipCounter{Packets: pkts, Bytes: bytes, VipUuid: uuid}
-			if utils.IsIpv4Address(ip) {
-				if isOut {
-					ret[uuid].Source = ip
-				} else {
-					ret[uuid].Destination = ip
-				}
+		switch key {
+		case "src":
+			if src == "" {
+				src = value
 			} else {
-				if isOut {
-					ret[uuid].Source6 = ip
-				} else {
-					ret[uuid].Destination6 = ip
-				}
+				rsrc = value
+			}
+		case "dst":
+			if dst == "" {
+				dst = value
+			} else {
+				rdst = value
+			}
+		case "sport":
+			if sport == "" {
+				sport = value
+			} else {
+				rsport = value
+			}
+		case "dport":
+			if dport == "" {
+				dport = value
+			} else {
+				rdport = value
+			}
+		case "type":
+			if icmpType == "" {
+				icmpType = value
+			} else {
+				replyIcmpType = value
+			}
+		case "code":
+			if icmpCode == "" {
+				icmpCode = value
+			} else {
+				replyIcmpCode = value
+			}
+		case "packets":
+			if packets == 0 {
+				packets, _ = strconv.ParseUint(value, 10, 64)
+			} else {
+				replyPackets, _ = strconv.ParseUint(value, 10, 64)
+			}
+		case "bytes":
+			if bytes == 0 {
+				bytes, _ = strconv.ParseUint(value, 10, 64)
+			} else {
+				replyBytes, _ = strconv.ParseUint(value, 10, 64)
 			}
 		}
 	}
+
+	stat.SrcIp = src
+	stat.DstIp = dst
+	stat.IcmpType = icmpType
+	stat.IcmpCode = icmpCode
+	stat.SrcPort = sport
+	stat.DstPort = dport
+	stat.Packets = packets
+	stat.Bytes = bytes
+
+	if !unreplied {
+		stat.ReplySrcIp = rsrc
+		stat.ReplyDstIp = rdst
+		stat.ReplySrcPort = rsport
+		stat.ReplyDstPort = rdport
+		stat.ReplyIcmpType = replyIcmpType
+		stat.ReplyIcmpCode = replyIcmpCode
+		stat.ReplyPackets = replyPackets
+		stat.ReplyBytes = replyBytes
+	}
+
+	return stat, true
 }
 
-func parseIptablesOutput(output string, chain string, isOut bool, ret map[string]*VipCounter) {
-	lines := strings.Split(output, "\n")
-	// We only care about lines like: [pkts:bytes] -A chain -s/-d 1.2.3.4/32 -m comment --comment UUID -j RETURN
-	// Skip chain header line ":chain - [0:0]"
-	prefix := "-A " + chain + " "
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if !strings.Contains(line, prefix) {
+func (c *vipCollector) updateCountersByConntrack() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	file, err := os.Open("/proc/net/nf_conntrack")
+	if err != nil {
+		log.Warnf("Failed to open /proc/net/nf_conntrack: %v", err)
+		return
+	}
+	defer file.Close()
+
+	currentStats := make(map[string]*SessionStat)
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		stat, ok := parseConntrackLine(line)
+		if !ok {
 			continue
 		}
-		if !strings.Contains(line, "-m comment --comment ") || !strings.Contains(line, " -j RETURN") {
-			continue
-		}
-		// extract counters [pkts:bytes]
-		var pkts, bytes uint64
-		if strings.HasPrefix(line, "[") {
-			end := strings.Index(line, "]")
-			if end > 1 {
-				cnt := line[1:end]
-				parts := strings.Split(cnt, ":")
-				if len(parts) == 2 {
-					fmt.Sscanf(parts[0], "%d", &pkts)
-					fmt.Sscanf(parts[1], "%d", &bytes)
-				}
-			}
-		}
-		// extract ip and uuid
-		uuid := ""
-		if idx := strings.Index(line, "-m comment --comment "); idx >= 0 {
-			uuid = strings.TrimSpace(line[idx+len("-m comment --comment "):])
-			// strip tail after space (before -j)
-			if sp := strings.Index(uuid, " "); sp >= 0 {
-				uuid = uuid[:sp]
-				uuid = strings.Replace(uuid, "\"", "", 2)
-				uuid = strings.Split(uuid, "@")[0] //comment format: uuid@vip.in.counter
-			}
-		}
-		ip := ""
-		if isOut {
-			// -s ip/32 or -s ip/128
-			if idx := strings.Index(line, " -s "); idx >= 0 {
-				rem := line[idx+4:]
-				sp := strings.Index(rem, " ")
-				if sp > 0 {
-					ip = strings.Split(rem[:sp], "/")[0]
-				}
-			}
+		currentStats[stat.Key()] = stat
+	}
+
+	if err := scanner.Err(); err != nil {
+		log.Warnf("Error reading /proc/net/nf_conntrack: %v", err)
+	}
+
+	for key, current := range currentStats {
+		previous, exists := c.previousStats[key]
+
+		var pktIn, bytesIn, pktOut, bytesOut uint64
+
+		if exists {
+			pktIn = current.Packets - previous.Packets
+			bytesIn = current.Bytes - previous.Bytes
+			pktOut = current.ReplyPackets - previous.ReplyPackets
+			bytesOut = current.ReplyBytes - previous.ReplyBytes
 		} else {
-			// -d ip/32 or -d ip/128
-			if idx := strings.Index(line, " -d "); idx >= 0 {
-				rem := line[idx+4:]
-				sp := strings.Index(rem, " ")
-				if sp > 0 {
-					ip = strings.Split(rem[:sp], "/")[0]
-				}
-			}
-		}
-		if uuid == "" {
-			continue
+			pktIn = current.Packets
+			bytesIn = current.Bytes
+			pktOut = current.ReplyPackets
+			bytesOut = current.ReplyBytes
 		}
 
-		// Accumulate counters if UUID already exists (from both IPv4 and IPv6)
-		if existing, ok := ret[uuid]; ok {
-			existing.Packets += pkts
-			existing.Bytes += bytes
-			if !utils.IsIpv4Address(ip) {
-				if isOut {
-					existing.Source6 = ip
-				} else {
-					existing.Destination6 = ip
-				}
-			}
-		} else {
-			ret[uuid] = &VipCounter{Packets: pkts, Bytes: bytes, VipUuid: uuid}
-			if utils.IsIpv4Address(ip) {
-				if isOut {
-					ret[uuid].Source = ip
-				} else {
-					ret[uuid].Destination = ip
-				}
-			} else {
-				if isOut {
-					ret[uuid].Source6 = ip
-				} else {
-					ret[uuid].Destination6 = ip
-				}
-			}
+		if counter, ok := c.counters[current.DstIp]; ok {
+			counter.InPackets += pktIn
+			counter.InBytes += bytesIn
+			counter.OutPackets += pktOut
+			counter.OutBytes += bytesOut
+		} else if counter, ok := c.counters[current.ReplyDstIp]; ok {
+			counter.OutPackets += pktIn
+			counter.OutBytes += bytesIn
+			counter.InPackets += pktOut
+			counter.InBytes += bytesOut
 		}
 	}
+
+	c.previousStats = currentStats
 }
 
 func (c *vipCollector) Update(ch chan<- prom.Metric) error {
@@ -2026,176 +1877,19 @@ func (c *vipCollector) Update(ch chan<- prom.Metric) error {
 		return nil
 	}
 
-	if utils.IsVYOS() {
-		rules := getMonitoringRules(EGRESS)
-		for _, rule := range rules {
-			vipUuid := rule.VipUuid
-			ch <- prom.MustNewConstMetric(c.outByteEntry, prom.GaugeValue, float64(rule.Bytes), vipUuid)
-			ch <- prom.MustNewConstMetric(c.outPktEntry, prom.GaugeValue, float64(rule.Packets), vipUuid)
-		}
+	c.updateCountersByConntrack()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-		rules = getMonitoringRules(INGRESS)
-		for _, rule := range rules {
-			vipUuid := rule.VipUuid
-			ch <- prom.MustNewConstMetric(c.inByteEntry, prom.GaugeValue, float64(rule.Bytes), vipUuid)
-			ch <- prom.MustNewConstMetric(c.inPktEntry, prom.GaugeValue, float64(rule.Packets), vipUuid)
-		}
-	} else {
-		// Parse both vip.in.counter and vip.out.counter with only 1 iptables-save + 1 ip6tables-save call
-		inRules, outRules := ParseVipCounters()
-
-		for _, rule := range inRules {
-			vipUuid := rule.VipUuid
-			ch <- prom.MustNewConstMetric(c.inByteEntry, prom.GaugeValue, float64(rule.Bytes), vipUuid)
-			ch <- prom.MustNewConstMetric(c.inPktEntry, prom.GaugeValue, float64(rule.Packets), vipUuid)
-		}
-
-		for _, rule := range outRules {
-			vipUuid := rule.VipUuid
-			ch <- prom.MustNewConstMetric(c.outByteEntry, prom.GaugeValue, float64(rule.Bytes), vipUuid)
-			ch <- prom.MustNewConstMetric(c.outPktEntry, prom.GaugeValue, float64(rule.Packets), vipUuid)
-		}
+	for _, rule := range c.counters {
+		vipUuid := rule.VipUuid
+		ch <- prom.MustNewConstMetric(c.inByteEntry, prom.CounterValue, float64(rule.InBytes), vipUuid)
+		ch <- prom.MustNewConstMetric(c.inPktEntry, prom.CounterValue, float64(rule.InPackets), vipUuid)
+		ch <- prom.MustNewConstMetric(c.outByteEntry, prom.CounterValue, float64(rule.OutBytes), vipUuid)
+		ch <- prom.MustNewConstMetric(c.outPktEntry, prom.CounterValue, float64(rule.OutPackets), vipUuid)
 	}
 
 	return nil
-}
-
-/*
-output example
-# tc -s class show dev eth0 | grep -A 1 'class htb'
-class htb 1:1 root leaf 8003: prio 0 rate 10000Mbit ceil 10000Mbit burst 0b cburst 0b
-
-	Sent 353013 bytes 2725 pkt (dropped 0, overlimits 0 requeues 0)
-
---
-class htb 1:2 root leaf 8004: prio 0 rate 100000Kbit ceil 100000Kbit burst 15337b cburst 15337b
-
-	Sent 29400 bytes 300 pkt (dropped 0, overlimits 0 requeues 0)
-
---
-*/
-func getInterfaceMonitorRules(direct direction, qosRules *interfaceQosRules) map[string]*VipCounter {
-	name := qosRules.name
-	if direct == INGRESS {
-		name = qosRules.ifbName
-	}
-
-	bash := &utils.Bash{
-		Command: fmt.Sprintf("sudo tc -s class show dev %s | grep -A 1 'class htb'", name),
-		NoLog:   true,
-	}
-	ret, stdout, _, _ := bash.RunWithReturn()
-	if ret != 0 {
-		return nil
-	}
-
-	lines := strings.Split(stdout, "\n")
-	var cnt, classId uint32
-	var byteCnt, pktCnt uint64
-	var vipIps []string
-	var vipOk bool
-	monitorRules := make(map[string]*VipCounter)
-
-	/*
-		# tc -s class show dev eth1 | grep -A 1 'class htb'
-		class htb 1:1 root leaf 8003: prio 0 rate 10000Mbit ceil 10000Mbit burst 0b cburst 0b
-		 Sent 3180 bytes 38 pkt (dropped 0, overlimits 0 requeues 0)
-		--
-		class htb 1:2 root leaf 8004: prio 0 rate 104858Kbit ceil 104858Kbit burst 15335b cburst 15335b
-		 Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0)
-	*/
-
-	for _, line := range lines {
-		switch cnt {
-		case 0:
-			strs := strings.Split(line, " ")
-			classStr := strings.Split(strs[2], ":")
-			id, _ := strconv.ParseUint(strings.Trim(classStr[1], " "), 16, 64)
-			classId = (uint32)(id)
-			/* in case class delete fail, just skip lines for this classid */
-			vipIps, vipOk = qosRules.classIdMap[classId]
-			cnt++
-			break
-		case 1:
-			if vipOk {
-				strs := strings.Split(strings.Trim(line, " "), " ")
-				byteCnt, _ = strconv.ParseUint(strings.Trim(strs[1], " "), 10, 64)
-				pktCnt, _ = strconv.ParseUint(strings.Trim(strs[3], " "), 10, 64)
-			}
-			cnt++
-			break
-		case 2:
-			if vipOk {
-				for _, vipIp := range vipIps {
-					if qosRule, ok := qosRules.rules[vipIp]; ok {
-						vipUuid := qosRule.vipUuid
-						if _, ok := monitorRules[vipUuid]; !ok {
-							monitorRules[vipUuid] = &VipCounter{}
-						}
-						monitorRule := monitorRules[vipUuid]
-						monitorRule.Packets += pktCnt
-						monitorRule.Bytes += byteCnt
-						monitorRule.VipUuid = vipUuid
-
-						if direct == INGRESS {
-							monitorRule.Destination = qosRules.rules[vipIp].vip
-						} else {
-							monitorRule.Source = qosRules.rules[vipIp].vip
-						}
-					}
-				}
-			}
-			cnt = 0
-			classId = 0
-			vipOk = false
-			byteCnt = 0
-			pktCnt = 0
-			break
-		default:
-			cnt = 0
-			classId = 0
-			vipOk = false
-			byteCnt = 0
-			pktCnt = 0
-			break
-		}
-	}
-
-	// add counter of last tc rule
-	if cnt == 2 && vipOk {
-		for _, vipIp := range vipIps {
-			if qosRule, ok := qosRules.rules[vipIp]; ok {
-				vipUuid := qosRule.vipUuid
-				if _, ok := monitorRules[vipUuid]; !ok {
-					monitorRules[vipUuid] = &VipCounter{}
-				}
-				monitorRule := monitorRules[vipUuid]
-				monitorRule.Packets += pktCnt
-				monitorRule.Bytes += byteCnt
-				monitorRule.VipUuid = vipUuid
-
-				if direct == INGRESS {
-					monitorRule.Destination = qosRules.rules[vipIp].vip
-				} else {
-					monitorRule.Source = qosRules.rules[vipIp].vip
-				}
-			}
-		}
-	}
-
-	return monitorRules
-}
-
-func getMonitoringRules(direct direction) map[string]*VipCounter {
-	monitoringRules := make(map[string]*VipCounter)
-	for _, biRules := range totalQosRules {
-		rules := getInterfaceMonitorRules(direct, biRules[direct])
-		for k, v := range rules {
-			monitoringRules[k] = v
-		}
-	}
-
-	return monitoringRules
 }
 
 func checkQdisc(nic string) {
@@ -2217,6 +1911,8 @@ func init() {
 }
 
 func VipEntryPoint() {
+	initVipCounterChains()
+
 	server.RegisterAsyncCommandHandler(VR_CREATE_VIP, server.VyosLock(setVipHandler))
 	server.RegisterAsyncCommandHandler(VR_REMOVE_VIP, server.VyosLock(removeVipHandler))
 	server.RegisterAsyncCommandHandler(VR_SET_VIP_QOS, server.VyosLock(setVipQos))
