@@ -1934,7 +1934,7 @@ func clearUnusedTcRule() {
 
 		srcNicName := strings.Replace(iface.Name, "ifb", "eth", -1)
 		b := utils.Bash{
-			Command: fmt.Sprintf("tc qdisc show dev %s ingress; ip link del %s", srcNicName, iface.Name),
+			Command: fmt.Sprintf("tc qdisc del dev %s ingress; ip link del %s", srcNicName, iface.Name),
 			Sudo:    true,
 		}
 
