@@ -819,6 +819,75 @@ func deleteQosRulesOfVip(publicInterface string, vip string) {
 	}
 }
 
+func interfaceHasEffectiveVipQosRules(rules *interfaceQosRules) bool {
+	if rules == nil || len(rules.rules) == 0 {
+		return false
+	}
+
+	for _, vipRules := range rules.rules {
+		if vipRules == nil || len(vipRules.portRules) == 0 {
+			continue
+		}
+		for _, rule := range vipRules.portRules {
+			if rule == nil {
+				continue
+			}
+			if rule.port != 0 || rule.bandwidth != MAX_BINDWIDTH {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func deletePlaceholderVipQosRules(publicInterface string, direct direction) {
+	biRule, ok := totalQosRules[publicInterface]
+	if !ok {
+		return
+	}
+
+	rules := biRule[direct]
+	if rules == nil || len(rules.rules) == 0 {
+		return
+	}
+
+	var placeholderVips []string
+	for vip, vipRules := range rules.rules {
+		if vipRules == nil {
+			continue
+		}
+		if r, ok := vipRules.portRules[0]; ok && r != nil && r.bandwidth == MAX_BINDWIDTH {
+			placeholderVips = append(placeholderVips, vip)
+		}
+	}
+
+	for _, vip := range placeholderVips {
+		rules.InterfaceQosRuleDelRule(qosRule{ip: vip, port: 0})
+	}
+}
+
+func cleanupVipTcIfNoEffectiveVipQos(publicInterface string) {
+	biRule, ok := totalQosRules[publicInterface]
+	if !ok {
+		return
+	}
+
+	ingressHasEffective := interfaceHasEffectiveVipQosRules(biRule[INGRESS])
+	egressHasEffective := interfaceHasEffectiveVipQosRules(biRule[EGRESS])
+	if ingressHasEffective || egressHasEffective {
+		return
+	}
+
+	deletePlaceholderVipQosRules(publicInterface, INGRESS)
+	deletePlaceholderVipQosRules(publicInterface, EGRESS)
+
+	if (biRule[INGRESS] == nil || len(biRule[INGRESS].rules) == 0) &&
+		(biRule[EGRESS] == nil || len(biRule[EGRESS].rules) == 0) {
+		delete(totalQosRules, publicInterface)
+	}
+}
+
 type vipInfo struct {
 	Ip               string `json:"ip"`
 	Netmask          string `json:"netmask"`
@@ -1213,32 +1282,6 @@ func setVip(cmd *setVipCmd) interface{} {
 		bash.Run()
 	}
 
-	/* add default qos for vip traffic counter */
-	if utils.IsConfigTcForVipQos() && utils.IsVYOS() {
-		for _, vip := range cmd.Vips {
-			publicInterface, err := utils.GetNicNameByMac(vip.OwnerEthernetMac)
-			utils.PanicOnError(err)
-			addr := vip.GetIpWithOutCidr()
-			ingressrule := newQosRule(addr, 0, MAX_BINDWIDTH, vip.VipUuid)
-			if biRule, ok := totalQosRules[publicInterface]; ok {
-				if biRule[INGRESS].InterfaceQosRuleFind(ingressrule) == nil {
-					addQosRule(publicInterface, INGRESS, ingressrule)
-				}
-			} else {
-				addQosRule(publicInterface, INGRESS, ingressrule)
-			}
-
-			egressrule := newQosRule(addr, 0, MAX_BINDWIDTH, vip.VipUuid)
-			if biRule, ok := totalQosRules[publicInterface]; ok {
-				if biRule[EGRESS].InterfaceQosRuleFind(egressrule) == nil {
-					addQosRule(publicInterface, EGRESS, egressrule)
-				}
-			} else {
-				addQosRule(publicInterface, EGRESS, egressrule)
-			}
-		}
-	}
-
 	vyosVips := []nicVipPair{}
 	for _, vip := range cmd.Vips {
 		nicname, err := utils.GetNicNameByMac(vip.OwnerEthernetMac)
@@ -1527,30 +1570,21 @@ func deleteVipQos(ctx *server.CommandContext) interface{} {
 	cmd := &deleteVipQosCmd{}
 	ctx.GetCommand(cmd)
 
-	/* port 0 will not be deleted, but changed bandwidth to MAX_BINDWIDTH */
+	touchedIfaces := make(map[string]struct{})
+
+	/* sort will make sure vip with port rule is deleted first to avoid adjust filter position */
 	sort.Sort(vipQosSettingsArray(cmd.Settings))
 	for _, setting := range cmd.Settings {
-		if setting.Port == 0 {
-			continue
-		}
-
 		publicInterface, error := utils.GetNicNameByMac(setting.PublicNic)
 		utils.PanicOnError(error)
+		touchedIfaces[publicInterface] = struct{}{}
 		qosRule := qosRule{ip: setting.Vip, port: uint16(setting.Port), vipUuid: setting.VipUuid}
 		delQosRule(publicInterface, INGRESS, qosRule)
 		delQosRule(publicInterface, EGRESS, qosRule)
 	}
 
-	for _, setting := range cmd.Settings {
-		if setting.Port != 0 {
-			continue
-		}
-
-		publicInterface, error := utils.GetNicNameByMac(setting.PublicNic)
-		utils.PanicOnError(error)
-		qosRule := newQosRule(setting.Vip, 0, MAX_BINDWIDTH, setting.VipUuid)
-		addQosRule(publicInterface, INGRESS, qosRule)
-		addQosRule(publicInterface, EGRESS, qosRule)
+	for publicInterface := range touchedIfaces {
+		cleanupVipTcIfNoEffectiveVipQos(publicInterface)
 	}
 
 	return nil
@@ -1567,24 +1601,34 @@ func syncVipQos(ctx *server.CommandContext) interface{} {
 		if setting.InboundBandwidth != 0 {
 
 			ingressrule := newQosRule(setting.Vip, uint16(setting.Port), uint64(setting.InboundBandwidth), setting.VipUuid)
-			if biRule, ok := totalQosRules[publicInterface]; !ok {
-				if biRule[INGRESS].InterfaceQosRuleFind(ingressrule) == nil {
-					addQosRule(publicInterface, INGRESS, ingressrule)
+			ingressrule.sharedQosUuid = setting.SharedQosUuid
+			if biRule, ok := totalQosRules[publicInterface]; ok && biRule[INGRESS] != nil {
+				if existed := biRule[INGRESS].InterfaceQosRuleFind(ingressrule); existed != nil {
+					if existed.sharedQosUuid == ingressrule.sharedQosUuid {
+						if existed.bandwidth != ingressrule.bandwidth {
+							updateQosRule(publicInterface, INGRESS, ingressrule)
+						}
+						continue
+					}
 				}
-			} else {
-				addQosRule(publicInterface, INGRESS, ingressrule)
 			}
+			addQosRule(publicInterface, INGRESS, ingressrule)
 		}
 
 		if setting.OutboundBandwidth != 0 {
 			egressrule := newQosRule(setting.Vip, uint16(setting.Port), uint64(setting.OutboundBandwidth), setting.VipUuid)
-			if biRule, ok := totalQosRules[publicInterface]; !ok {
-				if biRule[EGRESS].InterfaceQosRuleFind(egressrule) == nil {
-					addQosRule(publicInterface, EGRESS, egressrule)
+			egressrule.sharedQosUuid = setting.SharedQosUuid
+			if biRule, ok := totalQosRules[publicInterface]; ok && biRule[EGRESS] != nil {
+				if existed := biRule[EGRESS].InterfaceQosRuleFind(egressrule); existed != nil {
+					if existed.sharedQosUuid == egressrule.sharedQosUuid {
+						if existed.bandwidth != egressrule.bandwidth {
+							updateQosRule(publicInterface, EGRESS, egressrule)
+						}
+						continue
+					}
 				}
-			} else {
-				addQosRule(publicInterface, EGRESS, egressrule)
 			}
+			addQosRule(publicInterface, EGRESS, egressrule)
 		}
 	}
 
@@ -1596,6 +1640,9 @@ func flushVipQos(ctx *server.CommandContext) interface{} {
 	ctx.GetCommand(cmd)
 
 	clearUnusedTcRule()
+	for publicInterface := range totalQosRules {
+		cleanupVipTcIfNoEffectiveVipQos(publicInterface)
+	}
 	return nil
 }
 
