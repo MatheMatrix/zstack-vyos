@@ -26,6 +26,12 @@ NET_CONFIG_HA_STATE_DISABLED = 'Disabled'
 
 NET_CONFIG_BOND_TYPE = 'BOND'
 NET_CONFIG_ETHER_TYPE = 'ETHER'
+_BOND_MODE_MAP = {
+    'xor': 'balance-xor',
+    'balance-xor': 'balance-xor',
+    'ab': 'active-backup',
+    'active-backup': 'active-backup',
+}
 
 NET_CONFIG_BOOTPROTO_STATIC = 'static'
 NET_CONFIG_BOOTPROTO_DHCP = 'dhcp'
@@ -150,7 +156,8 @@ class RouteConfig(object):
 class NetConfig(object):
     '''netconfig: net config'''
 
-    def __init__(self, name, link_type=None, service_type=None, config_path=None):
+    def __init__(self, name, link_type=None, service_type=None, config_path=None,
+                 bond_mode=None, bond_slaves=None, bond_slave_macs=None):
         self.name = name
         self.device = name
         self.mac = None
@@ -167,6 +174,11 @@ class NetConfig(object):
         self.service_type = service_type
         self.config_path = config_path
         self.standby_nic_name = None
+        self.bond_mode = bond_mode
+        self.bond_slaves = bond_slaves or []
+        self.bond_slave_macs = bond_slave_macs or []
+        self.bond_miimon = 100
+        self._cached_desired_slaves = None
 
     def add_ip_config(self, ip, netmask, version=NET_CONFIG_IPV4, gateway=None):
         '''add ip config'''
@@ -286,10 +298,14 @@ class NetConfig(object):
     def config_static_routes_base(self):
         '''netconfig: config static routes'''
         for route_config in self.route_configs:
-            execute_command('ip -%s route add %s via %s dev %s metric 181', route_config.version, route_config.prefix, route_config.nexthop, self.name)
+            execute_command('ip -%s route add %s via %s dev %s%s',
+                            route_config.version, route_config.prefix, route_config.nexthop, self.name,
+                            self._route_metric_clause())
 
     def config_network_base(self):
         '''netconfig: config network'''
+        if self._is_bond_enabled():
+            self._ensure_bond_interface()
         nic_info = utils.get_nic_info_by_name(self.name)
         if not nic_info:
             raise NetConfigError('configure error, could not get nic[%s] info' % self.name)
@@ -322,7 +338,8 @@ class NetConfig(object):
                     ip4_addr = '%s/%s' % (ip_config.ip, ip_config.netmask)
                     execute_command('ip -%s addr add %s dev %s brd +', NET_CONFIG_IPV4, ip4_addr, self.name)
                 if ip_config.gateway:
-                    execute_command('ip -%s route add default via %s dev %s metric 181', NET_CONFIG_IPV4, ip_config.gateway, self.name)
+                    execute_command('ip -%s route add default via %s dev %s%s',
+                                    NET_CONFIG_IPV4, ip_config.gateway, self.name, self._route_metric_clause())
             else:
                 is_exist = False
                 for item in ipv6_info:
@@ -334,7 +351,8 @@ class NetConfig(object):
                     ip6_addr = '%s/%s' % (ip_config.ip, ip_config.netmask)
                     execute_command('ip -%s addr add %s dev %s', NET_CONFIG_IPV6, ip6_addr, self.name)
                 if ip_config.gateway:
-                    execute_command('ip -%s route add default via %s dev %s metric 181', NET_CONFIG_IPV6, ip_config.gateway, self.name)
+                    execute_command('ip -%s route add default via %s dev %s%s',
+                                    NET_CONFIG_IPV6, ip_config.gateway, self.name, self._route_metric_clause())
 
         # config direct route
         if not is_ignore_linkdown_route:
@@ -344,9 +362,108 @@ class NetConfig(object):
                 for route in routes:
                     if not route or 'metric' in route or '169.254.169.254' in route:
                         continue
-                    execute_command('ip route add %s dev %s metric 181 && ip route del %s dev %s', route, self.name, route, self.name)
+                    execute_command('ip route add %s dev %s%s && ip route del %s dev %s',
+                                    route, self.name, self._route_metric_clause(), route, self.name)
 
         self.config_static_routes_base()
+
+    def _is_bond_enabled(self):
+        if not self.bond_mode:
+            return False
+        mode = str(self.bond_mode).strip().lower()
+        return mode not in ['', 'none']
+
+    def _normalized_bond_mode(self):
+        if not self._is_bond_enabled():
+            return ''
+        mode = str(self.bond_mode).strip().lower()
+        return _BOND_MODE_MAP.get(mode, mode)
+
+    def _resolve_bond_slaves(self):
+        if self._cached_desired_slaves is not None:
+            return self._cached_desired_slaves
+
+        slaves = []
+        for slave in self.bond_slaves:
+            if slave and slave not in slaves:
+                slaves.append(slave)
+        for mac in self.bond_slave_macs:
+            names = utils.find_nic_list_by_mac(mac)
+            for name in names:
+                if name and name not in slaves:
+                    slaves.append(name)
+        self._cached_desired_slaves = slaves
+        return slaves
+
+    def _route_metric_clause(self):
+        return ' metric 181' if not self.is_bond() else ''
+
+    def bond_option_string(self):
+        if not self._is_bond_enabled():
+            return ''
+        return 'mode={0} miimon={1}'.format(self._normalized_bond_mode(), self.bond_miimon)
+
+    def bond_slave_list(self):
+        return self._resolve_bond_slaves()
+
+    def is_bond(self):
+        return self._is_bond_enabled()
+
+    def _ensure_bond_interface(self):
+        bond_mode = self._normalized_bond_mode() or 'active-backup'
+        desired_slaves = self._resolve_bond_slaves()
+
+        if not utils.is_device_exists(self.name):
+            execute_command('ip link add %s type bond mode %s', self.name, bond_mode)
+        else:
+            # Bond exists: check if mode matches
+            mode_path = '/sys/class/net/{0}/bonding/mode'.format(self.name)
+            if os.path.exists(mode_path):
+                try:
+                    with open(mode_path, 'r') as f:
+                        # Format: "balance-xor 2" or "active-backup 1"
+                        current_mode_str = f.read().strip().split()[0]
+                        if current_mode_str != bond_mode:
+                            logger.warn('Bond %s mode mismatch: expected=%s, current=%s, recreating bond' %
+                                       (self.name, bond_mode, current_mode_str))
+                            # Get current slaves before deleting bond
+                            current_slaves = utils.find_bond_slaves(self.name) or []
+                            # Delete old bond
+                            execute_command('ip link delete %s', self.name)
+                            # Recreate with correct mode
+                            execute_command('ip link add %s type bond mode %s', self.name, bond_mode)
+                            logger.info('Bond %s recreated with mode %s' % (self.name, bond_mode))
+                except Exception as e:
+                    logger.warn('Failed to read bond mode for %s: %s, will try to set mode' % (self.name, str(e)))
+
+        miimon_path = '/sys/class/net/{0}/bonding/miimon'.format(self.name)
+        if os.path.exists(miimon_path):
+            execute_command('echo %s > %s', self.bond_miimon, miimon_path)
+
+        # Only try to set mode if bond was not recreated
+        mode_path = '/sys/class/net/{0}/bonding/mode'.format(self.name)
+        if os.path.exists(mode_path):
+            try:
+                with open(mode_path, 'r') as f:
+                    current_mode_str = f.read().strip().split()[0]
+                    if current_mode_str != bond_mode:
+                        execute_command('echo %s > %s', bond_mode, mode_path)
+            except Exception as e:
+                logger.debug('Failed to check/set bond mode: %s' % str(e))
+
+        current_slaves = utils.find_bond_slaves(self.name) or []
+        if desired_slaves:
+            for slave in current_slaves:
+                if slave not in desired_slaves:
+                    execute_command('ip link set %s down', slave)
+                    execute_command('ip link set %s nomaster', slave)
+
+            for slave in desired_slaves:
+                execute_command('ip link set %s down', slave)
+                execute_command('ip link set %s master %s', slave, self.name)
+                execute_command('ip link set %s up', slave)
+
+        execute_command('ip link set %s up', self.name)
 
     def pre_restore_config(self):
         '''netconfig: pre restore config'''
@@ -454,8 +571,16 @@ class NetConfigStyleRedhat(object):
         if self.instance.alias:
             self.add_config('ALIAS', '"{}"'.format(self.instance.alias))
 
-        # only for ethernet
-        if self.instance.link_type == NET_CONFIG_ETHER_TYPE:
+        # interface type
+        if self.instance.is_bond():
+            self.add_config('TYPE', 'Bond')
+            self.add_config('BONDING_MASTER', 'yes')
+            if self.instance.mac:
+                self.add_config('HWADDR', self.instance.mac)
+            bond_opts = self.instance.bond_option_string()
+            if bond_opts:
+                self.add_config('BONDING_OPTS', '"{}"'.format(bond_opts))
+        elif self.instance.link_type == NET_CONFIG_ETHER_TYPE:
             self.add_config('TYPE', 'Ethernet')
             if self.instance.mac:
                 self.add_config('HWADDR', self.instance.mac)
@@ -560,7 +685,9 @@ class NetConfigStyleRedhat(object):
             self.restore()
             self.instance.config_network_base()
 
-            if self.instance.standby_nic_name:
+            # For bond devices, standby nic is managed as bond slave, no need to config separately
+            # For non-bond devices, config standby nic independently
+            if self.instance.standby_nic_name and not self.instance.is_bond():
                 standby_instance = self.instance.make_standby_instance()
                 # config standby nic by iproute
                 standby_instance.config_network_base()
@@ -587,12 +714,22 @@ class NetConfigStyleNetworkManager(object):
         '''netconfig: build config file'''
 
         # build base config
-        content_list = ['[connection]', 'id=%s' % self.instance.name, 'type=ethernet', 'autoconnect=true']
+        conn_type = 'bond' if self.instance.is_bond() else 'ethernet'
+        content_list = ['[connection]', 'id=%s' % self.instance.name, 'type=%s' % conn_type, 'autoconnect=true']
+        if self.instance.is_bond():
+            content_list.append('interface-name=%s' % self.instance.name)
         content_list.append('')
 
         # build mac config
-        if self.instance.mac:
+        if not self.instance.is_bond() and self.instance.mac:
             content_list.extend(['[ethernet]', 'mac-address=%s' % self.instance.mac])
+            content_list.append('')
+        if self.instance.is_bond():
+            bond_section = ['[bond]']
+            bond_opts = self.instance.bond_option_string()
+            if bond_opts:
+                bond_section.append('options=%s' % bond_opts.replace(' ', ','))
+            content_list.extend(bond_section)
             content_list.append('')
         ipv4_config = [ip for ip in self.instance.ip_configs if ip.version == NET_CONFIG_IPV4]
         ipv6_config = [ip for ip in self.instance.ip_configs if ip.version == NET_CONFIG_IPV6]
@@ -654,9 +791,12 @@ class NetConfigStyleNetworkManager(object):
             self.restore()
             self.apply()
 
-            standby_instance = self.instance.make_standby_instance()
-            # config standby nic by nmcli
-            standby_instance.config_network_base()
+            # For bond devices, standby nic is managed as bond slave, no need to config separately
+            # For non-bond devices, config standby nic independently
+            if self.instance.standby_nic_name and not self.instance.is_bond():
+                standby_instance = self.instance.make_standby_instance()
+                # config standby nic by nmcli
+                standby_instance.config_network_base()
         elif ha_state == NET_CONFIG_HA_STATE_DISCONNECTING:
             self.instance.config_network_base()
         else:
@@ -784,9 +924,12 @@ class NetConfigStyleNetplan(object):
             self.restore()
             self.apply()
 
-            standby_instance = self.instance.make_standby_instance()
-            # config standby nic by ip link
-            standby_instance.config_network_base()
+            # For bond devices, standby nic is managed as bond slave, no need to config separately
+            # For non-bond devices, config standby nic independently
+            if self.instance.standby_nic_name and not self.instance.is_bond():
+                standby_instance = self.instance.make_standby_instance()
+                # config standby nic by ip link
+                standby_instance.config_network_base()
         elif ha_state == NET_CONFIG_HA_STATE_DISCONNECTING:
             self.instance.config_network_base()
         else:
@@ -1003,9 +1146,12 @@ class NetConfigStyleNetworking(object):
             self.restore()
             self.apply()
 
-            standby_instance = self.instance.make_standby_instance()
-            # config standby nic by ip link
-            standby_instance.config_network_base()
+            # For bond devices, standby nic is managed as bond slave, no need to config separately
+            # For non-bond devices, config standby nic independently
+            if self.instance.standby_nic_name and not self.instance.is_bond():
+                standby_instance = self.instance.make_standby_instance()
+                # config standby nic by ip link
+                standby_instance.config_network_base()
         elif ha_state == NET_CONFIG_HA_STATE_DISCONNECTING:
             self.instance.config_network_base()
             return

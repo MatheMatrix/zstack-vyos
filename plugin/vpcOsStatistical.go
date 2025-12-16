@@ -2,13 +2,14 @@ package plugin
 
 import (
 	"fmt"
-	prom "github.com/prometheus/client_golang/prometheus"
-	log "github.com/sirupsen/logrus"
-	"io/ioutil"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
 	"zstack-vyos/utils"
+
+	prom "github.com/prometheus/client_golang/prometheus"
+	log "github.com/sirupsen/logrus"
 )
 
 // the name of metric data label
@@ -18,22 +19,42 @@ const (
 
 	LABEL_MEMORY = "memory"
 
-	LABEL_FILESYSTEM_DEVOCE     = "device"
+	LABEL_FILESYSTEM_DEVICE     = "device"
 	LABEL_FILESYSTEM_FSTYPE     = "fstype"
 	LABEL_FILESYSTEM_MOUNTPOINT = "mountpoint"
 	LABEL_FILESYSTEM_TYPE       = "type"
+
+	LABEL_NIC_NAME = "type"
 )
 
 type vpcOsCollector struct {
 	vpcCpuUsage    *prom.Desc
 	vpcMemoryUsage *prom.Desc
 	vpcDiskUsage   *prom.Desc
+
+	interfaceIfDropIn     *prom.Desc
+	interfaceIfDropOut    *prom.Desc
+	interfaceIfErrorIn    *prom.Desc
+	interfaceIfErrorOut   *prom.Desc
+	interfaceIfPacketsIn  *prom.Desc
+	interfaceIfPacketsOut *prom.Desc
+	interfaceIfOctetsIn   *prom.Desc
+	interfaceIfOctetsOut  *prom.Desc
 }
 
 func (c *vpcOsCollector) Describe(ch chan<- *prom.Desc) error {
 	ch <- c.vpcCpuUsage
 	ch <- c.vpcMemoryUsage
 	ch <- c.vpcDiskUsage
+
+	ch <- c.interfaceIfDropIn
+	ch <- c.interfaceIfDropOut
+	ch <- c.interfaceIfErrorIn
+	ch <- c.interfaceIfErrorOut
+	ch <- c.interfaceIfPacketsIn
+	ch <- c.interfaceIfPacketsOut
+	ch <- c.interfaceIfOctetsIn
+	ch <- c.interfaceIfOctetsOut
 	return nil
 }
 
@@ -75,6 +96,21 @@ func (c *vpcOsCollector) Update(ch chan<- prom.Metric) error {
 		}
 	}
 
+	netInfos := getVPCNetInfo()
+	if netInfos != nil {
+		for _, ni := range netInfos {
+			ch <- prom.MustNewConstMetric(c.interfaceIfOctetsIn, prom.GaugeValue, ni.rxBytes, ni.nicName)
+			ch <- prom.MustNewConstMetric(c.interfaceIfPacketsIn, prom.GaugeValue, ni.rxPackets, ni.nicName)
+			ch <- prom.MustNewConstMetric(c.interfaceIfErrorIn, prom.GaugeValue, ni.rxErrs, ni.nicName)
+			ch <- prom.MustNewConstMetric(c.interfaceIfDropIn, prom.GaugeValue, ni.rxDrop, ni.nicName)
+
+			ch <- prom.MustNewConstMetric(c.interfaceIfOctetsOut, prom.GaugeValue, ni.txBytes, ni.nicName)
+			ch <- prom.MustNewConstMetric(c.interfaceIfPacketsOut, prom.GaugeValue, ni.txPackets, ni.nicName)
+			ch <- prom.MustNewConstMetric(c.interfaceIfErrorOut, prom.GaugeValue, ni.txErrs, ni.nicName)
+			ch <- prom.MustNewConstMetric(c.interfaceIfDropOut, prom.GaugeValue, ni.txDrop, ni.nicName)
+		}
+	}
+
 	return nil
 }
 
@@ -93,7 +129,48 @@ func NewVpcOsPrometheusCollector() MetricCollector {
 		vpcDiskUsage: prom.NewDesc(
 			"vpcDiskUsage",
 			"vpcDiskUsage VPC Router disk usage statistic",
-			[]string{LABEL_FILESYSTEM_DEVOCE, LABEL_FILESYSTEM_MOUNTPOINT, LABEL_FILESYSTEM_FSTYPE, LABEL_FILESYSTEM_TYPE}, nil,
+			[]string{LABEL_FILESYSTEM_DEVICE, LABEL_FILESYSTEM_MOUNTPOINT, LABEL_FILESYSTEM_FSTYPE, LABEL_FILESYSTEM_TYPE}, nil,
+		),
+
+		interfaceIfDropIn: prom.NewDesc(
+			"vrouter_if_drop_in",
+			"Interface received packets dropped",
+			[]string{LABEL_NIC_NAME}, nil,
+		),
+		interfaceIfDropOut: prom.NewDesc(
+			"vrouter_if_drop_out",
+			"Interface transmit packets dropped",
+			[]string{LABEL_NIC_NAME}, nil,
+		),
+		interfaceIfErrorIn: prom.NewDesc(
+			"vrouter_if_error_in",
+			"Interface receive errors",
+			[]string{LABEL_NIC_NAME}, nil,
+		),
+		interfaceIfErrorOut: prom.NewDesc(
+			"vrouter_if_error_out",
+			"Interface transmit errors",
+			[]string{LABEL_NIC_NAME}, nil,
+		),
+		interfaceIfPacketsIn: prom.NewDesc(
+			"vrouter_if_packets_in",
+			"Interface received packets",
+			[]string{LABEL_NIC_NAME}, nil,
+		),
+		interfaceIfPacketsOut: prom.NewDesc(
+			"vrouter_if_packets_out",
+			"Interface transmit packets",
+			[]string{LABEL_NIC_NAME}, nil,
+		),
+		interfaceIfOctetsIn: prom.NewDesc(
+			"vrouter_if_octets_in",
+			"Interface received bytes",
+			[]string{LABEL_NIC_NAME}, nil,
+		),
+		interfaceIfOctetsOut: prom.NewDesc(
+			"vrouter_if_octets_out",
+			"Interface transmit bytes",
+			[]string{LABEL_NIC_NAME}, nil,
 		),
 	}
 }
@@ -117,7 +194,7 @@ type memInfo struct {
 }
 
 func getWaterMark_Low() uint64 {
-	infoFromFile, err := ioutil.ReadFile("/proc/sys/vm/min_free_kbytes")
+	infoFromFile, err := os.ReadFile("/proc/sys/vm/min_free_kbytes")
 	if err != nil {
 		log.Error(err.Error())
 		return 0
@@ -140,7 +217,7 @@ Buffers:            1072 kB
 Cached:          1970788 kB
 */
 func getVPCMemInfo() *memInfo {
-	infoFromFile, err := ioutil.ReadFile("/proc/meminfo")
+	infoFromFile, err := os.ReadFile("/proc/meminfo")
 	if err != nil {
 		log.Error(err.Error())
 		return nil
@@ -214,7 +291,7 @@ ref: https://www.kgoettler.com/post/proc-stat/
 ref: https://elixir.bootlin.com/linux/latest/source/fs/proc/stat.c
 */
 func getVPCCpuInfo() []*cpuInfo {
-	infoFromFile, err := ioutil.ReadFile("/proc/stat")
+	infoFromFile, err := os.ReadFile("/proc/stat")
 	if err != nil {
 		log.Errorf("read /proc/stat failed: %v", err)
 		return nil
@@ -265,6 +342,80 @@ func getVPCCpuInfo() []*cpuInfo {
 	}
 
 	return cpuInfos
+}
+
+type netInfo struct {
+	nicName string
+	// receive
+	rxBytes   float64
+	rxPackets float64
+	rxErrs    float64
+	rxDrop    float64
+	// transmit
+	txBytes   float64
+	txPackets float64
+	txErrs    float64
+	txDrop    float64
+}
+
+func getVPCNetInfo() []*netInfo {
+	infoFromFile, err := os.ReadFile("/proc/net/dev")
+	if err != nil {
+		log.Errorf("read /proc/net/dev failed: %v", err)
+		return nil
+	}
+	stdout := string(infoFromFile)
+
+	lines := strings.Split(stdout, "\n")
+
+	var netInfos []*netInfo
+	reg := regexp.MustCompile(`\s+`)
+	for i, line := range lines {
+		if i < 2 {
+			continue
+		}
+
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+
+		items := reg.Split(strings.TrimSpace(line), -1)
+		if len(items) < 17 {
+			continue
+		}
+
+		nicName := strings.Trim(items[0], ":")
+		if !strings.HasPrefix(nicName, "eth") && !strings.HasPrefix(nicName, "bond") {
+			continue
+		}
+
+		// Receive: bytes, packets, errs, drop
+		rxBytes, _ := strconv.ParseFloat(items[1], 64)
+		rxPackets, _ := strconv.ParseFloat(items[2], 64)
+		rxErrs, _ := strconv.ParseFloat(items[3], 64)
+		rxDrop, _ := strconv.ParseFloat(items[4], 64)
+
+		// Transmit: bytes, packets, errs, drop
+		txBytes, _ := strconv.ParseFloat(items[9], 64)
+		txPackets, _ := strconv.ParseFloat(items[10], 64)
+		txErrs, _ := strconv.ParseFloat(items[11], 64)
+		txDrop, _ := strconv.ParseFloat(items[12], 64)
+
+		usage := netInfo{
+			nicName:   nicName,
+			rxBytes:   rxBytes,
+			rxPackets: rxPackets,
+			rxErrs:    rxErrs,
+			rxDrop:    rxDrop,
+			txBytes:   txBytes,
+			txPackets: txPackets,
+			txErrs:    txErrs,
+			txDrop:    txDrop,
+		}
+		netInfos = append(netInfos, &usage)
+	}
+
+	return netInfos
 }
 
 type diskInfo struct {

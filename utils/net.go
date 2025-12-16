@@ -105,7 +105,18 @@ func GetAllNics() (map[string]Nic, error) {
 
 	nics := make(map[string]Nic)
 	for _, f := range files {
-		if f.IsDir() || f.Name() == "lo" || strings.Contains(f.Name(), "ifb") {
+		if f.Name() == "lo" || strings.Contains(f.Name(), "ifb") {
+			continue
+		}
+
+		// Skip special sysfs entries such as bonding_masters that are files, not NICs
+		entryPath := filepath.Join(ROOT, f.Name())
+		info, err := os.Stat(entryPath)
+		if err != nil {
+			log.Debugf("skip sysfs entry %s: %v", entryPath, err)
+			continue
+		}
+		if !info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
 			continue
 		}
 
@@ -113,9 +124,13 @@ func GetAllNics() (map[string]Nic, error) {
 			continue
 		}
 
-		macfile := filepath.Join(ROOT, f.Name(), "address")
+		macfile := filepath.Join(entryPath, "address")
 		mac, err := os.ReadFile(macfile)
 		if err != nil {
+			if os.IsNotExist(err) {
+				log.Debugf("skip NIC %s without address file", f.Name())
+				continue
+			}
 			return nil, errors.Wrap(err, fmt.Sprintf("unable to read the mac file[%s]", macfile))
 		}
 		nics[f.Name()] = Nic{
@@ -133,15 +148,52 @@ func GetNicNameByMac(mac string) (string, error) {
 		return "", err
 	}
 
+	var matchedNics []string
+	for _, nic := range nics {
+		if nic.Mac == mac {
+			name := strings.Split(nic.Name, ".")[0]
+			matchedNics = append(matchedNics, name)
+		}
+	}
+
+	if len(matchedNics) == 0 {
+		return "", fmt.Errorf("cannot find any nic with the mac[%s]", mac)
+	}
+
+	// If multiple NICs found with same MAC, prefer non-phy interface
+	// This handles bond scenario where eth1-phy1, eth1-phy2 exist, but we want eth1
+	for _, name := range matchedNics {
+		if !strings.Contains(name, "-phy") {
+			return name, nil
+		}
+	}
+
+	// Fallback: return first match
+	return matchedNics[0], nil
+}
+
+// GetAllNicNamesByMac returns all NIC names with the same MAC address
+// This is used for bond scenarios where two NICs share the same MAC
+func GetAllNicNamesByMac(mac string) ([]string, error) {
+	nics, err := GetAllNics()
+	if err != nil {
+		return nil, err
+	}
+
+	var nicNames []string
 	for _, nic := range nics {
 		if nic.Mac == mac {
 			/* for vlan sub interface, nic.name is eth1.100 */
 			name := strings.Split(nic.Name, ".")
-			return name[0], nil
+			nicNames = append(nicNames, name[0])
 		}
 	}
 
-	return "", fmt.Errorf("cannot find any nic with the mac[%s]", mac)
+	if len(nicNames) == 0 {
+		return nil, fmt.Errorf("cannot find any nic with the mac[%s]", mac)
+	}
+
+	return nicNames, nil
 }
 
 func GetMacByNicName(nicName string) (string, error) {
@@ -640,4 +692,220 @@ func IsIpv4Address(address string) bool {
 
 func IsMgtNic(name string) bool {
 	return name == "eth0"
+}
+
+// CreateBondInterface creates a bond interface with the specified mode
+// mode can be "xor" (balance-xor) or "ab" (active-backup)
+func CreateBondInterface(bondName, mode string) error {
+	var bondMode string
+	switch mode {
+	case "xor":
+		bondMode = "balance-xor"
+	case "ab":
+		bondMode = "active-backup"
+	default:
+		return fmt.Errorf("unsupported bond mode: %s, only 'xor' and 'ab' are supported", mode)
+	}
+
+	// Create bond interface
+	bash := Bash{
+		Command: fmt.Sprintf("sudo ip link add %s type bond mode %s", bondName, bondMode),
+	}
+	ret, _, e, err := bash.RunWithReturn()
+	if err != nil {
+		return err
+	}
+	if ret != 0 {
+		return fmt.Errorf("create bond interface %s failed: %s", bondName, e)
+	}
+
+	// Set xmit_hash_policy for balance-xor mode
+	if mode == "xor" {
+		bash = Bash{
+			Command: fmt.Sprintf("sudo sh -c \"echo layer3+4 > /sys/class/net/%s/bonding/xmit_hash_policy\"", bondName),
+		}
+		ret, _, e, err = bash.RunWithReturn()
+		if err != nil {
+			return err
+		}
+		if ret != 0 {
+			return fmt.Errorf("set xmit_hash_policy for bond %s failed: %s", bondName, e)
+		}
+	}
+
+	// Set miimon
+	bash = Bash{
+		Command: fmt.Sprintf("sudo sh -c \"echo 100 > /sys/class/net/%s/bonding/miimon\"", bondName),
+	}
+	ret, _, e, err = bash.RunWithReturn()
+	if err != nil {
+		return err
+	}
+	if ret != 0 {
+		return fmt.Errorf("set miimon for bond %s failed: %s", bondName, e)
+	}
+
+	log.Debugf("bond interface %s created with mode %s", bondName, bondMode)
+	return nil
+}
+
+// AddSlaveToBond adds a slave interface to a bond
+func AddSlaveToBond(slaveName, bondName string) error {
+	// Set slave interface down
+	bash := Bash{
+		Command: fmt.Sprintf("sudo ip link set %s down", slaveName),
+	}
+	ret, _, e, err := bash.RunWithReturn()
+	if err != nil {
+		return err
+	}
+	if ret != 0 {
+		return fmt.Errorf("set slave %s down failed: %s", slaveName, e)
+	}
+
+	// Add slave to bond
+	bash = Bash{
+		Command: fmt.Sprintf("sudo ip link set %s master %s", slaveName, bondName),
+	}
+	ret, _, e, err = bash.RunWithReturn()
+	if err != nil {
+		return err
+	}
+	if ret != 0 {
+		return fmt.Errorf("add slave %s to bond %s failed: %s", slaveName, bondName, e)
+	}
+
+	log.Debugf("slave %s added to bond %s", slaveName, bondName)
+	return nil
+}
+
+// ConfigureBondInterface configures IP address and brings up the bond interface
+func ConfigureBondInterface(bondName, ip, netmask string) error {
+	// Add IP address to bond
+	cidr, err := NetmaskToCIDR(netmask)
+	if err != nil {
+		return err
+	}
+	ipString := fmt.Sprintf("%s/%d", ip, cidr)
+
+	bash := Bash{
+		Command: fmt.Sprintf("sudo ip addr add %s dev %s", ipString, bondName),
+	}
+	ret, _, e, err := bash.RunWithReturn()
+	if err != nil {
+		return err
+	}
+	if ret != 0 {
+		return fmt.Errorf("add ip %s to bond %s failed: %s", ipString, bondName, e)
+	}
+
+	// Bring up bond interface
+	bash = Bash{
+		Command: fmt.Sprintf("sudo ip link set %s up", bondName),
+	}
+	ret, _, e, err = bash.RunWithReturn()
+	if err != nil {
+		return err
+	}
+	if ret != 0 {
+		return fmt.Errorf("bring up bond %s failed: %s", bondName, e)
+	}
+
+	log.Debugf("bond %s configured with ip %s", bondName, ipString)
+	return nil
+}
+
+// SetupBondWithSlaves creates a bond interface and adds slave interfaces to it
+// This is the main function to setup a complete bond configuration
+func SetupBondWithSlaves(bondName, mode string, slaves []string, ip, netmask string) error {
+	// Create bond interface
+	if err := CreateBondInterface(bondName, mode); err != nil {
+		return fmt.Errorf("create bond interface failed: %v", err)
+	}
+
+	// Add slaves to bond
+	for _, slave := range slaves {
+		if err := AddSlaveToBond(slave, bondName); err != nil {
+			return fmt.Errorf("add slave %s to bond failed: %v", slave, err)
+		}
+	}
+
+	// Configure bond interface with IP
+	if err := ConfigureBondInterface(bondName, ip, netmask); err != nil {
+		return fmt.Errorf("configure bond interface failed: %v", err)
+	}
+
+	return nil
+}
+
+// GetBondMode reads the current bond mode from sysfs
+// Returns the mode in short format: "xor" (balance-xor) or "ab" (active-backup)
+func GetBondMode(bondName string) (string, error) {
+	modePath := fmt.Sprintf("/sys/class/net/%s/bonding/mode", bondName)
+	data, err := os.ReadFile(modePath)
+	if err != nil {
+		return "", fmt.Errorf("cannot read bond mode from %s: %v", modePath, err)
+	}
+
+	// The content format is like "balance-xor 2" or "active-backup 1"
+	modeStr := strings.TrimSpace(string(data))
+	parts := strings.Fields(modeStr)
+	if len(parts) == 0 {
+		return "", fmt.Errorf("invalid bond mode format: %s", modeStr)
+	}
+
+	// Convert from kernel format to short format
+	kernelMode := parts[0]
+	switch kernelMode {
+	case "balance-xor":
+		return "xor", nil
+	case "active-backup":
+		return "ab", nil
+	default:
+		return "", fmt.Errorf("unsupported bond mode: %s", kernelMode)
+	}
+}
+
+// DeleteBondInterface removes a bond interface
+// It will first remove all slave interfaces from the bond
+func DeleteBondInterface(bondName string) error {
+	// Get all slaves
+	slavesPath := fmt.Sprintf("/sys/class/net/%s/bonding/slaves", bondName)
+	data, err := os.ReadFile(slavesPath)
+	if err != nil {
+		log.Warnf("cannot read bond slaves from %s: %v", slavesPath, err)
+	} else {
+		// Remove all slaves
+		slavesStr := strings.TrimSpace(string(data))
+		if slavesStr != "" {
+			slaves := strings.Fields(slavesStr)
+			for _, slave := range slaves {
+				bash := Bash{
+					Command: fmt.Sprintf("sudo ip link set %s nomaster", slave),
+				}
+				ret, _, e, err := bash.RunWithReturn()
+				if err != nil {
+					log.Warnf("remove slave %s from bond %s failed: %v", slave, bondName, err)
+				}
+				if ret != 0 {
+					log.Warnf("remove slave %s from bond %s failed: %s", slave, bondName, e)
+				}
+			}
+		}
+	}
+
+	// Delete bond interface
+	bash := Bash{
+		Command: fmt.Sprintf("sudo ip link delete %s", bondName),
+	}
+	ret, _, e, err := bash.RunWithReturn()
+	if err != nil {
+		return fmt.Errorf("delete bond interface %s failed: %v", bondName, err)
+	}
+	if ret != 0 {
+		return fmt.Errorf("delete bond interface %s failed: %s", bondName, e)
+	}
+
+	log.Debugf("bond interface %s deleted", bondName)
+	return nil
 }
