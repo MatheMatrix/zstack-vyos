@@ -1974,6 +1974,30 @@ func clearUnusedTcRule() {
 		return
 	}
 
+	if utils.IsVYOS() && utils.IsEnableVyosCmd() {
+		tree := server.NewParserFromShowConfiguration().Tree
+		updated := false
+		for _, iface := range interfaces {
+			if !strings.HasPrefix(iface.Name, "ifb") {
+				continue
+			}
+
+			srcNicName := strings.Replace(iface.Name, "ifb", "eth", -1)
+			if n := tree.Getf("interfaces ethernet %s redirect", srcNicName); n != nil {
+				n.Delete()
+				updated = true
+			}
+			if n := tree.Getf("interfaces input %s", iface.Name); n != nil {
+				n.Delete()
+				updated = true
+			}
+		}
+		if updated {
+			tree.Apply(false)
+		}
+		return
+	}
+
 	for _, iface := range interfaces {
 		if !strings.HasPrefix(iface.Name, "ifb") {
 			continue
