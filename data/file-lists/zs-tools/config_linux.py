@@ -2360,21 +2360,28 @@ def _config_nics_with_enable_ha(nics):
         bond_slave_macs = nic.get('bondSlaveMacs') or []
         ha_state = nic.get('haState')
 
-        # If bond exists in system, we should continue using bond mode even if bondMode is not provided
-        # This happens during migration states (Enabled/Disconnecting/Reconnecting)
+        # Check if this NIC should use bond mode
+        # bondMode must be explicitly set to a valid bond mode (not None, not "", not "none")
+        is_bond_nic = _is_bond_nic(nic)
         detected_bond = 'bond' in nic_dict
-        if detected_bond and not bond_mode:
-            # Read bond mode from existing bond
-            bond_sysfs_mode = '/sys/class/net/{0}/bonding/mode'.format(nic_dict['bond'])
-            if os.path.exists(bond_sysfs_mode):
-                with open(bond_sysfs_mode, 'r') as f:
-                    # Format: "balance-xor 2" or "active-backup 1"
-                    mode_str = f.read().strip().split()[0]
-                    bond_mode = mode_str
-                    logger.info('detected existing bond mode from sysfs: %s' % bond_mode)
+
+        # If not bond mode, ensure 'master' is set correctly
+        # _retry_find_expect_nics_by_mac may have set 'bond' or 'available_nics' for migration states
+        # but for non-bond scenarios, we need 'master'
+        if not is_bond_nic:
+            if 'master' not in nic_dict:
+                if 'available_nics' in nic_dict and nic_dict['available_nics']:
+                    nic_dict['master'] = nic_dict['available_nics'][0]
+                    logger.info('non-bond mode: using %s as master from available_nics' % nic_dict['master'])
+                elif 'bond' in nic_dict:
+                    # If only bond exists (no available_nics), use bond name as master
+                    # This shouldn't normally happen, but handle it gracefully
+                    nic_dict['master'] = nic_dict['bond']
+                    logger.info('non-bond mode: using existing bond name %s as master' % nic_dict['master'])
 
         # Determine target device name and link type
-        if detected_bond or bond_mode:
+        # Only enter bond branch if bondMode explicitly requests bond
+        if is_bond_nic:
             # If bond exists, use existing bond name; otherwise use provided or master name
             if detected_bond:
                 target_name = nic_dict['bond']

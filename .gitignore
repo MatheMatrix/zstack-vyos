@@ -34,3 +34,7 @@ vendor/
 
 .DS_Store
 */.DS_Store
+
+# Go build cache
+.gocache/
+go.work.sum
