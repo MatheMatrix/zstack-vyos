@@ -2313,30 +2313,24 @@ def _config_nics_with_enable_ha(nics):
     service_type = net_service['type']
     service_config_path = net_service['path']
 
-    # For Reconnecting state, determine NIC names by global PCI ordering
-    # KISS principle: scan ALL system NICs, sort by PCI address = ethX order
+    # For Reconnecting state, determine NIC names by MAC suffix
     config_based_nic_names = {}
     ha_state = nics[0].get('haState') if nics else None
 
     if ha_state == netconfig.NET_CONFIG_HA_STATE_RECONECTING:
-        logger.info('Reconnecting state: determining NIC names by global PCI ordering')
+        logger.info('Reconnecting state: determining NIC names by MAC suffix')
 
         for nic in nics:
             mac = nic.get('mac')
 
-            # Use global PCI ordering to determine NIC name
-            pci_based_name = utils.get_nic_name_by_global_pci_order(mac)
-            if pci_based_name:
-                config_based_nic_names[mac] = pci_based_name
-                logger.info('Reconnecting: MAC %s -> %s (by global PCI order)' % (mac, pci_based_name))
+            # Use MAC suffix to determine NIC name (MAC :xx -> ethX)
+            # This keeps NIC order stable across migration since MAC is fixed
+            mac_based_name = utils.get_nic_name_by_mac_suffix(mac)
+            if mac_based_name:
+                config_based_nic_names[mac] = mac_based_name
+                logger.info('Reconnecting: MAC %s -> %s' % (mac, mac_based_name))
             else:
-                # Fallback: try to find existing bond with this MAC
-                existing_bond = utils.find_bond_name_by_mac(mac)
-                if existing_bond:
-                    config_based_nic_names[mac] = existing_bond
-                    logger.info('Reconnecting: MAC %s -> found existing bond %s' % (mac, existing_bond))
-                else:
-                    logger.warn('Reconnecting: MAC %s -> could not determine NIC name' % mac)
+                logger.warn('Reconnecting: MAC %s -> could not determine NIC name' % mac)
 
     # Configure each NIC
     for nic in nics:
