@@ -1625,13 +1625,13 @@ func addRuleForTcpListenerByVyos(lbs []Listener) error {
 				fmt.Sprintf("protocol tcp"),
 				"action accept",
 			)
-			configureInternalFirewallRule(tree, des, fmt.Sprintf("description %v", des),
-				fmt.Sprintf("destination address %v", info.Vip),
-				fmt.Sprintf("destination port %v", info.LoadBalancerPort),
-				fmt.Sprintf("protocol tcp"),
-				"action accept",
-			)
 		}
+		configureInternalFirewallRule(tree, des, fmt.Sprintf("description %v", des),
+			fmt.Sprintf("destination address %v", info.Vip),
+			fmt.Sprintf("destination port %v", info.LoadBalancerPort),
+			fmt.Sprintf("protocol tcp"),
+			"action accept",
+		)
 
 		tree.AttachFirewallToInterface(nicname, "local")
 	}
@@ -1710,15 +1710,14 @@ func addRuleForUdpListenerByVyos(lbs []Listener) error {
 				fmt.Sprintf("protocol udp"),
 				"action accept",
 			)
-
-			configureInternalFirewallRule(tree, des,
-				fmt.Sprintf("description %v", des),
-				fmt.Sprintf("destination address %v", info.Vip),
-				fmt.Sprintf("destination port %v", info.LoadBalancerPort),
-				fmt.Sprintf("protocol udp"),
-				"action accept",
-			)
 		}
+		configureInternalFirewallRule(tree, des,
+			fmt.Sprintf("description %v", des),
+			fmt.Sprintf("destination address %v", info.Vip),
+			fmt.Sprintf("destination port %v", info.LoadBalancerPort),
+			fmt.Sprintf("protocol udp"),
+			"action accept",
+		)
 
 		tree.AttachFirewallToInterface(nicname, "local")
 	}
