@@ -71,6 +71,33 @@ def find_bond_name_by_mac(mac):
             return nic
 
 
+def get_nic_name_by_mac_suffix(mac):
+    '''
+    Determine NIC name by MAC address suffix.
+
+    Assumes MAC addresses are assigned in order:
+      xx:xx:xx:xx:xx:00 -> eth0
+      xx:xx:xx:xx:xx:01 -> eth1
+      xx:xx:xx:xx:xx:02 -> eth2
+      ...
+
+    Args:
+        mac: MAC address (e.g., 'fa:ef:c3:ae:1b:02')
+
+    Returns:
+        NIC name (e.g., 'eth2') or None if invalid
+    '''
+    if not mac:
+        return None
+    try:
+        # Get last byte of MAC address
+        suffix = mac.strip().split(':')[-1]
+        idx = int(suffix, 16)
+        return 'eth%d' % idx
+    except (ValueError, IndexError):
+        return None
+
+
 def get_nic_name_by_global_pci_order(target_mac):
     '''
     Determine NIC name based on global PCI address ordering of ALL system NICs.
