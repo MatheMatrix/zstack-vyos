@@ -2372,6 +2372,22 @@ def _config_nics_with_enable_ha(nics):
                     # This shouldn't normally happen, but handle it gracefully
                     nic_dict['master'] = nic_dict['bond']
                     logger.info('non-bond mode: using existing bond name %s as master' % nic_dict['master'])
+            if ha_state == netconfig.NET_CONFIG_HA_STATE_RECONECTING:
+                if expected_name and nic_dict.get('master') and nic_dict['master'] != expected_name:
+                    if utils.is_device_exists(expected_name):
+                        logger.warn('Reconnecting: expected name %s already exists, keep %s' %
+                                    (expected_name, nic_dict['master']))
+                    else:
+                        try:
+                            logger.info('Reconnecting: renaming %s to expected name %s' %
+                                        (nic_dict['master'], expected_name))
+                            shell.run('ip link set dev {0} down'.format(nic_dict['master']))
+                            shell.run('ip link set dev {0} name {1}'.format(nic_dict['master'], expected_name))
+                            shell.run('ip link set dev {0} up'.format(expected_name))
+                            nic_dict['master'] = expected_name
+                        except Exception as e:
+                            logger.warn('Reconnecting: failed to rename %s to %s: %s, using original name' %
+                                        (nic_dict['master'], expected_name, str(e)))
 
         # Determine target device name and link type
         # Only enter bond branch if bondMode explicitly requests bond
