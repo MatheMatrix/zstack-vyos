@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 
 	"zstack-vyos/server"
@@ -1749,6 +1750,7 @@ type SessionStat struct {
 	Bytes         uint64
 	ReplyPackets  uint64
 	ReplyBytes    uint64
+	LastUpdate    int64 // Unix timestamp of last update in seconds
 }
 
 func (s *SessionStat) Key() string {
@@ -1872,13 +1874,16 @@ func (c *vipCollector) updateCountersByConntrack() {
 	defer file.Close()
 
 	currentStats := make(map[string]*SessionStat)
+	currentTime := time.Now().Unix()
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := scanner.Text()
 		stat, ok := parseConntrackLine(line)
 		if !ok {
+			log.Debugf("failed to parse conntrack line: %s", line)
 			continue
 		}
+		stat.LastUpdate = currentTime
 		currentStats[stat.Key()] = stat
 	}
 
@@ -1891,7 +1896,9 @@ func (c *vipCollector) updateCountersByConntrack() {
 
 		var pktIn, bytesIn, pktOut, bytesOut uint64
 
-		if exists {
+		// packets counter will not decrease when the session is closed
+		if exists && current.Packets >= previous.Packets &&
+			current.ReplyPackets >= previous.ReplyPackets {
 			pktIn = current.Packets - previous.Packets
 			bytesIn = current.Bytes - previous.Bytes
 			pktOut = current.ReplyPackets - previous.ReplyPackets
@@ -1904,19 +1911,32 @@ func (c *vipCollector) updateCountersByConntrack() {
 		}
 
 		if counter, ok := c.counters[current.DstIp]; ok {
+			log.Debugf("update incoming counter, vip: %s:%s, pktIn: %d, bytesIn: %d, pktOut: %d, bytesOut: %d",
+				counter.VipUuid, current.DstIp, pktIn, bytesIn, pktOut, bytesOut)
 			counter.InPackets += pktIn
 			counter.InBytes += bytesIn
 			counter.OutPackets += pktOut
 			counter.OutBytes += bytesOut
 		} else if counter, ok := c.counters[current.ReplyDstIp]; ok {
+			log.Debugf("update out counter, vip: %s:%s, pktIn: %d, bytesIn: %d, pktOut: %d, bytesOut: %d",
+				counter.VipUuid, current.ReplyDstIp, pktIn, bytesIn, pktOut, bytesOut)
 			counter.OutPackets += pktIn
 			counter.OutBytes += bytesIn
 			counter.InPackets += pktOut
 			counter.InBytes += bytesOut
 		}
+
+		// Update previousStats with current session data
+		c.previousStats[key] = current
 	}
 
-	c.previousStats = currentStats
+	// Clean up sessions older than 300 seconds from previousStats
+	for key, previous := range c.previousStats {
+		if currentTime-previous.LastUpdate > 300 {
+			log.Debugf("Removing stale session from previousStats: %s, age: %d seconds", key, currentTime-previous.LastUpdate)
+			delete(c.previousStats, key)
+		}
+	}
 }
 
 func (c *vipCollector) Update(ch chan<- prom.Metric) error {
