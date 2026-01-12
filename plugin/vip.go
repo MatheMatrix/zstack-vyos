@@ -1042,6 +1042,11 @@ func addVipFirewalRuleByIptables(cmd *setVipCmd) error {
 		nicname, err := utils.GetNicNameByMac(vip.OwnerEthernetMac)
 		utils.PanicOnError(err)
 
+		/* if vip is same to nic Ip, there is no need to add firewall again */
+		if nicIp, err := utils.GetIpByNicName(nicname); err == nil && nicIp == vip.Ip {
+			continue
+		}
+
 		vipDes := makeVipRuleDescription(vip)
 		rule := utils.NewIpTableRule(utils.GetRuleSetName(nicname, utils.RULESET_LOCAL))
 		rule.SetAction(utils.IPTABLES_ACTION_ACCEPT).SetComment(vipDes)
@@ -1063,6 +1068,11 @@ func addVipFirewalRuleByVyos(cmd *setVipCmd) error {
 	for _, vip := range cmd.Vips {
 		nicname, err := utils.GetNicNameByMac(vip.OwnerEthernetMac)
 		utils.PanicOnError(err)
+
+		/* if vip is same to nic Ip, there is no need to add firewall again */
+		if nicIp, err := utils.GetIpByNicName(nicname); err == nil && nicIp == vip.Ip {
+			continue
+		}
 
 		vipDes := makeVipRuleDescription(vip)
 		if r := tree.FindFirewallRuleByDescription(nicname, "local", vipDes); r == nil {
