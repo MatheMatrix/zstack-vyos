@@ -503,6 +503,13 @@ func SetZebraRoutes(infos []RouteInfo) {
 		err       error
 	)
 
+	changeDefaultRoute := false
+	for _, info := range infos {
+		if info.Destination == "0.0.0.0/0" {
+			changeDefaultRoute = true
+		}
+	}
+
 	// 1. get old routes by load json
 	if utils.IsEuler2203() {
 		routes := utils.GetCurrentRouteEntriesEuler2203(utils.ROUTETABLE_ID_MAIN)
@@ -543,6 +550,11 @@ func SetZebraRoutes(infos []RouteInfo) {
 		}
 
 		if !found {
+			if old.Dst == "0.0.0.0/0" && !changeDefaultRoute {
+				// mn don't want to change default
+				continue
+			}
+
 			if old.NextHop == "" {
 				old.NextHop = "Null0"
 			}
