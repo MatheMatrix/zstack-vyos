@@ -72,6 +72,40 @@ def execute_command(cmd_template, *args):
     shell.call(cmd)
 
 
+def _is_bnxt_en_driver(nic_name):
+    if not nic_name:
+        return False
+    driver_link = '/sys/class/net/%s/device/driver' % nic_name
+    if not os.path.islink(driver_link):
+        return False
+    try:
+        target = os.readlink(driver_link)
+    except OSError:
+        return False
+    return os.path.basename(target) == 'bnxt_en'
+
+
+def enable_promisc_for_bnxt_en_nics():
+    # http://jira.zstack.io/browse/ZSTAC-81287
+    # enable promisc for all bnxt_en nics
+    net_root = '/sys/class/net'
+    try:
+        nic_names = os.listdir(net_root)
+    except Exception as e:
+        logger.debug('list nics for bnxt_en failed: %s', str(e))
+        return
+
+    for nic_name in nic_names:
+        if not _is_bnxt_en_driver(nic_name):
+            continue
+        cmd = 'ip link set %s promisc on' % nic_name
+        ret, _, stderr = shell.call(cmd)
+        if ret != 0:
+            logger.warn('enable promisc for %s failed: %s', nic_name, stderr)
+        else:
+            logger.debug('enabled promisc for %s', nic_name)
+
+
 def get_system_network_service():
     '''get system network service'''
     net_service = {}

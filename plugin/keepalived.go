@@ -174,6 +174,14 @@ sudo ip add add {{.Vip}}/{{.Prefix}} dev {{.NicName}} || true
 sudo ip link set up dev {{$name}} || true
 {{ end }}
 
+# re-apply promisc for bnxt_en nics after link up
+for nic in $(ls /sys/class/net 2>/dev/null); do
+	driver=$(readlink /sys/class/net/$nic/device/driver 2>/dev/null)
+	if [ -n "$driver" ] && [ "${driver##*/}" = "bnxt_en" ]; then
+		ip link set $nic promisc on || true
+	fi
+done
+
 #send Gratuitous ARP
 (/bin/bash {{.DoGARPScript}}) &
 

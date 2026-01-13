@@ -403,6 +403,7 @@ func configureNicByVyos(nicList []utils.NicInfo) interface{} {
 
 func ConfigureNic(cmd *ConfigureNicCmd) interface{} {
 	log.Debugf("configure nic cmd: %+v", cmd)
+	utils.EnablePromiscForBnxtEnNics()
 	if !utils.IsEnableVyosCmd() {
 		if err := configureNicByLinux(cmd.Nics); err != nil {
 			return err
@@ -459,6 +460,8 @@ func ConfigureNic(cmd *ConfigureNicCmd) interface{} {
 		Command: fmt.Sprintf("ip add"),
 	}
 	bash.Run()
+
+	utils.EnablePromiscForBnxtEnNics()
 
 	return nil
 }
