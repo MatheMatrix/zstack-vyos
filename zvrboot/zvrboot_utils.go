@@ -562,6 +562,7 @@ func configureSystem() {
 	configureTimeZone()
 	parseNicFromBootstrap()
 	renameNic()
+	utils.EnablePromiscForBnxtEnNics()
 	configureMgmtNic()
 	configurePassword()
 	configureSshServer()
@@ -570,4 +571,5 @@ func configureSystem() {
 	configureSshMonitor()
 	checkNicAddress()
 	configureHaScript()
+	utils.EnablePromiscForBnxtEnNics()
 }

@@ -2536,6 +2536,7 @@ if __name__ == "__main__":
     try:
         data = utils.load_json_from_file(CONFIG_ARGUMENTS_PATH)
         nics = data.get('ports', [])
+        netconfig.enable_promisc_for_bnxt_en_nics()
 
         normal_nics = []
         enable_ha_nics = []
@@ -2551,6 +2552,8 @@ if __name__ == "__main__":
         # config normal nics
         _init_nw_config_func_table()
         _config_network(normal_nics)
+
+        netconfig.enable_promisc_for_bnxt_en_nics()
 
         ret['result'] = 'success'
     except Exception as e:

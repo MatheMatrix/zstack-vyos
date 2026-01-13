@@ -142,6 +142,48 @@ func GetAllNics() (map[string]Nic, error) {
 	return nics, nil
 }
 
+func EnablePromiscForBnxtEnNics() {
+	// http://jira.zstack.io/browse/ZSTAC-81287
+	// enable promisc for all bnxt_en nics
+	const (
+		driverName = "bnxt_en"
+		netRoot    = "/sys/class/net"
+	)
+
+	entries, err := os.ReadDir(netRoot)
+	if err != nil {
+		log.Debugf("list nics for bnxt_en failed: %v", err)
+		return
+	}
+
+	for _, entry := range entries {
+		nicName := entry.Name()
+		if !isNetDeviceDriver(nicName, driverName) {
+			continue
+		}
+
+		if err := IpLinkSetPromisc(nicName, true); err != nil {
+			log.Warnf("enable promisc for %s failed: %v", nicName, err)
+		} else {
+			log.Debugf("enabled promisc for %s", nicName)
+		}
+	}
+}
+
+func isNetDeviceDriver(nicName, driverName string) bool {
+	if nicName == "" || driverName == "" {
+		return false
+	}
+
+	driverLink := fmt.Sprintf("/sys/class/net/%s/device/driver", nicName)
+	target, err := os.Readlink(driverLink)
+	if err != nil {
+		return false
+	}
+
+	return filepath.Base(target) == driverName
+}
+
 func GetNicNameByMac(mac string) (string, error) {
 	nics, err := GetAllNics()
 	if err != nil {
