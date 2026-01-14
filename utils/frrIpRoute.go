@@ -44,8 +44,10 @@ func GetZStackRouteTables() []ZStackRouteTable {
 		return tables
 	}
 
-	log.Debugf("%s contents: %s", POLICY_ROUTE_TABLE_FILE, content)
-	lines := strings.Split(strings.TrimSpace(string(content)), "\n")
+	// rt_tables may contain unexpected NUL (\x00) bytes or other junk; sanitize to avoid parsing issues.
+	s := strings.ReplaceAll(string(content), "\x00", "")
+	log.Debugf("%s contents (sanitized): %q", POLICY_ROUTE_TABLE_FILE, s)
+	lines := strings.Split(strings.TrimSpace(s), "\n")
 
 	for _, line := range lines {
 		if line == "" {
@@ -57,8 +59,18 @@ func GetZStackRouteTables() []ZStackRouteTable {
 		}
 
 		items := strings.Fields(line)
+		if len(items) < 2 {
+			// Malformed line (e.g., only a table id). Skip to avoid index out of range.
+			log.Warnf("skip malformed rt_tables line: %q", line)
+			continue
+		}
+
 		if strings.Contains(items[1], PolicyRouteChainPrefix) {
-			tableId, _ := strconv.Atoi(items[0])
+			tableId, err := strconv.Atoi(items[0])
+			if err != nil {
+				log.Warnf("skip rt_tables line with invalid table id: %q", line)
+				continue
+			}
 			t := ZStackRouteTable{TableId: tableId, Alias: items[1]}
 			tables = append(tables, t)
 		}
