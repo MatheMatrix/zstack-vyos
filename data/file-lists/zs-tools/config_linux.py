@@ -68,6 +68,78 @@ def _bond_slave_interfaces(nic):
         return []
     return [slave for slave in slaves if slave]
 
+
+def _is_euler_2203():
+    try:
+        os_id, os_version_id = _get_os_info()
+    except Exception:
+        return False
+    return os_id == 'openEuler' and os_version_id == '22'
+
+
+def _is_vf_nic(nic_name):
+    if not nic_name:
+        return False
+    driver_link = '/sys/class/net/{0}/device/driver'.format(nic_name)
+    if not os.path.islink(driver_link):
+        return False
+    try:
+        driver_name = os.path.basename(os.readlink(driver_link))
+    except OSError:
+        return False
+    return driver_name != 'virtio_net'
+
+
+def _bond_has_slaves(nic_name):
+    if not nic_name:
+        return False
+    bond_path = '/sys/class/net/{0}/bonding'.format(nic_name)
+    if not os.path.exists(bond_path):
+        return False
+    slaves_path = os.path.join(bond_path, 'slaves')
+    if not os.path.exists(slaves_path):
+        return False
+    try:
+        with open(slaves_path, 'r') as fd:
+            slaves = [s for s in fd.read().strip().split() if s]
+    except Exception:
+        return False
+    return bool(slaves)
+
+
+def _get_default_rp_filter():
+    path = '/proc/sys/net/ipv4/conf/default/rp_filter'
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, 'r') as fd:
+            value = fd.read().strip()
+    except Exception as e:
+        logger.warn('read default rp_filter failed: %s' % str(e))
+        return None
+    return value if value else None
+
+
+def _sync_vf_rp_filter(nic_names, default_value):
+    if not nic_names or default_value is None:
+        return
+    updated = []
+    for nic_name in set([n for n in nic_names if n]):
+        if not _bond_has_slaves(nic_name) and not _is_vf_nic(nic_name):
+            continue
+        rp_filter_path = '/proc/sys/net/ipv4/conf/{0}/rp_filter'.format(nic_name)
+        if not os.path.exists(rp_filter_path):
+            continue
+        try:
+            with open(rp_filter_path, 'w') as fd:
+                fd.write(default_value)
+            updated.append(nic_name)
+        except Exception as e:
+            logger.warn('sync rp_filter for %s failed: %s' % (nic_name, str(e)))
+    if updated:
+        logger.info('synced rp_filter=%s for nics: %s' %
+                    (default_value, ','.join(sorted(updated))))
+
 ############################################################################
 
 NwConfigFuncTableRecordFileds = [
@@ -2312,6 +2384,10 @@ def _config_nics_with_enable_ha(nics):
     net_service = netconfig.get_system_network_service()
     service_type = net_service['type']
     service_config_path = net_service['path']
+    is_euler_2203 = _is_euler_2203()
+    rp_filter_default = _get_default_rp_filter() if is_euler_2203 else None
+    if is_euler_2203 and rp_filter_default is None:
+        logger.debug('skip vf rp_filter sync: default value not found')
 
     # For Reconnecting state, determine NIC names by MAC suffix
     config_based_nic_names = {}
@@ -2526,6 +2602,8 @@ def _config_nics_with_enable_ha(nics):
                     nic_config.add_route_config(route.get('prefix'), route.get('nexthop'), dev=None, version=ip.get('version'))
 
         nic_config.common_config_network(ha_state=nic.get('haState'))
+        if rp_filter_default is not None:
+            _sync_vf_rp_filter([target_name] + bond_slaves, rp_filter_default)
         shell.run('ip addr show')
         shell.run('ip r show')
 
