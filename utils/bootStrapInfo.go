@@ -74,7 +74,7 @@ func GetBootStrapInfoPath() string {
 	return filepath.Join(GetZvrRootPath(), BOOTSTRAP_INFO_FILE)
 }
 
-func getHaDefaultRouteScript() string {
+func GetHaDefaultRouteScript() string {
 	return filepath.Join(GetZvrRootPath(), HA_DEFAULT_ROUTE_SCRIPT)
 }
 
@@ -228,6 +228,11 @@ func GetMnNodeIps() map[string]string {
 }
 
 func WriteDefaultHaScript(defaultNic *Nic) {
+	if IsEuler2203() {
+		// euler 2203 use frr manage static router, frr will auto config default route when it change to master
+		return
+	}
+
 	defaultNicName, err := GetNicNameByMac(defaultNic.Mac)
 	PanicOnError(err)
 	conent := ""
@@ -239,9 +244,9 @@ func WriteDefaultHaScript(defaultNic *Nic) {
 		conent += fmt.Sprintln(fmt.Sprintf("ip -6 route add default via %s dev %s || true", defaultNic.Gateway6, defaultNicName))
 	}
 
-	err = os.WriteFile(getHaDefaultRouteScript(), []byte(conent), 0755)
+	err = os.WriteFile(GetHaDefaultRouteScript(), []byte(conent), 0755)
 	PanicOnError(err)
-	SetFileOwner(getHaDefaultRouteScript(), GetZvrUser(), GetZvrUser())
+	SetFileOwner(GetHaDefaultRouteScript(), GetZvrUser(), GetZvrUser())
 }
 
 func IsSLB() bool {
