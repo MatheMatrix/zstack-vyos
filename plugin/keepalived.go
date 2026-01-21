@@ -1131,4 +1131,7 @@ func InitKeepalived() {
 	os.Mkdir(GetKeepalivedScriptPath(), os.ModePerm)
 	os.Remove(getKeepalivedScriptNotifyMaster())
 	os.Remove(getKeepalivedScriptNotifyBackup())
+	if utils.IsEuler2203() {
+		os.Remove(utils.GetHaDefaultRouteScript())
+	}
 }
