@@ -471,7 +471,7 @@ func parseListenerPrameter(lb LbInfo) (map[string]interface{}, error) {
 			}
 			rule.RedirectPort = redirectPort
 			FinalRedirectRules = append(FinalRedirectRules, rule)
-			key := fmt.Sprintf("%s%d", rule.ServerGroupUuid, redirectPort)
+			key := fmt.Sprintf("%s-%d", rule.ServerGroupUuid, redirectPort)
 			if _, exists := tmpMap[key]; !exists {
 				rGroup := RedirectServerGroup{
 					ServerGroupUuid: rule.ServerGroupUuid,
@@ -729,10 +729,36 @@ backend {{.ServerGroupUuid}}-{{.RedirectPort}}
 	balance {{ $.BalancerAlgorithm}}
 	timeout server {{$.ConnectionIdleTimeout}}s
 	timeout connect 60s
+{{- if eq $.SessionPersistence "insert"}}
+    cookie  zstack_cookie  insert  nocache  maxidle {{$.SessionIdleTimeout}}s
+{{- else }}
+{{- if eq $.SessionPersistence "rewrite"}}
+    cookie  {{$.CookieName}}  rewrite
+{{- end }}
+{{- end }}
+{{- if eq $.HealthCheckProtocol "http" }}
+    option httpchk {{$.HttpChkMethod}} {{$.HttpChkUri}}
+{{- if ne $.HttpChkExpect "http_2xx" }}
+    http-check expect rstatus {{$.HttpChkExpect}}
+{{- end }}
+{{- end }}
+
 	{{$redirectPort := .RedirectPort}}
 	{{- with .BackendServers }}
 	{{- range . }}
-	server nic-{{.Ip}} {{.Ip}}:{{$redirectPort}} check port {{$redirectPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}}
+{{- if eq $.BalancerAlgorithm "static-rr" }}
+{{- if eq $.SessionPersistence "insert" "rewrite"}}
+	server nic-{{.Ip}} {{.Ip}}:{{$redirectPort}} cookie {{.Ip}} weight {{.Weight}} check port {{$redirectPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
+{{- else }}
+	server nic-{{.Ip}} {{.Ip}}:{{$redirectPort}} weight {{.Weight}} check port {{$redirectPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
+{{- end }}
+{{- else }}
+{{- if eq $.SessionPersistence "insert" "rewrite"}}
+	server nic-{{.Ip}} {{.Ip}}:{{$redirectPort}} cookie {{.Ip}} check port {{$redirectPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
+{{- else }}
+	server nic-{{.Ip}} {{.Ip}}:{{$redirectPort}} check port {{$redirectPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
+{{- end }}
+{{- end }}
 	{{- end }}
 	{{- end }}
 
