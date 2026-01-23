@@ -77,7 +77,21 @@ func renameNic() {
 		// Step 1: Rename all to temporary names
 		for i, devname := range devNames {
 			devnum := 1000 + i
-			devname.swap = fmt.Sprintf("eth%v", devnum)
+			// Check if the temporary name already exists, if so, find an available one
+			for {
+				tmpName := fmt.Sprintf("eth%v", devnum)
+				_, err := utils.IpLinkShowAttrs(tmpName)
+				if err != nil {
+					// Network interface does not exist, we can use this name
+					devname.swap = tmpName
+					break
+				}
+				// Name already exists, try next number
+				devnum++
+				if devnum > 9999 {
+					return fmt.Errorf("cannot find available temporary interface name for %s", devname.actual)
+				}
+			}
 
 			err := utils.IpLinkSetDown(devname.actual)
 			if err != nil {
