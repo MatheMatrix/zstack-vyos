@@ -127,6 +127,7 @@ type RedirectRuleInfo struct {
 	AclUuid          string `json:"aclUuid"`
 	RedirectRule     string `json:"redirectRule"`
 	ServerGroupUuid  string `json:"serverGroupUuid"`
+	RedirectPort	 int    `json:"redirectPort"`
 }
 
 type LbInfo struct {
@@ -159,6 +160,14 @@ type certificatesCmd struct {
 
 type deleteCertificateCmd struct {
 	Uuid string `json:"uuid"`
+}
+
+/* RedirectServerGroup just for redirect acl rules */
+type RedirectServerGroup struct {
+	InternalName   string
+	ServerGroupUuid string
+	RedirectPort int
+	BackendServers  []BackendServerInfo
 }
 
 type LbParams struct {
@@ -441,7 +450,6 @@ func parseListenerPrameter(lb LbInfo) (map[string]interface{}, error) {
 	m["SocketPath"] = makeLbSocketPath(lb)
 	m["Weight"] = weight
 
-	var combinedServerGroups []ServerGroupInfo
 	var isAclRedirect bool
 	var defaultServerGroup ServerGroupInfo
 
@@ -453,12 +461,39 @@ func parseListenerPrameter(lb LbInfo) (map[string]interface{}, error) {
 	}
 
 	if isAclRedirect {
-		m["RedirectRules"] = lb.RedirectRules
+		FinalRedirectRules := make([]RedirectRuleInfo, 0)
+		tmpMap := make(map[string]string)
+		redirectServerGroups := make([]RedirectServerGroup, 0)
+		for _, rule := range lb.RedirectRules {
+			redirectPort := rule.RedirectPort
+			if redirectPort == 0 {
+				redirectPort = lb.InstancePort
+			}
+			rule.RedirectPort = redirectPort
+			FinalRedirectRules = append(FinalRedirectRules, rule)
+			key := fmt.Sprintf("%s-%d", rule.ServerGroupUuid, redirectPort)
+			if _, exists := tmpMap[key]; !exists {
+				rGroup := RedirectServerGroup{
+					ServerGroupUuid: rule.ServerGroupUuid,
+					RedirectPort:    redirectPort,
+					BackendServers:  []BackendServerInfo{},
+				}
+				for _, sGroup := range lb.ServerGroups {
+					if sGroup.ServerGroupUuid == rule.ServerGroupUuid {
+						rGroup.BackendServers = append(rGroup.BackendServers, sGroup.BackendServers...)
+						break
+					}
+				}
+				redirectServerGroups = append(redirectServerGroups, rGroup)
+				tmpMap[key] = rule.ServerGroupUuid
+			}
+		}
+		m["RedirectRules"] = FinalRedirectRules
+		m["RedirectServerGroups"] = redirectServerGroups
+
 		for _, sGroup := range lb.ServerGroups {
 			if sGroup.IsDefault {
 				defaultServerGroup.BackendServers = append(defaultServerGroup.BackendServers, sGroup.BackendServers...)
-			} else {
-				combinedServerGroups = append(combinedServerGroups, sGroup)
 			}
 		}
 	} else {
@@ -473,16 +508,11 @@ func parseListenerPrameter(lb LbInfo) (map[string]interface{}, error) {
 		defaultServerGroup.IsDefault = true
 		log.Debugf("defaultServerGroupUuid change to %s", defaultServerGroup.ServerGroupUuid)
 		m["DefaultServerGroupUuid"] = defaultServerGroup.ServerGroupUuid
-		combinedServerGroups = append(combinedServerGroups, defaultServerGroup)
+		m["ServerGroups"] = []ServerGroupInfo{defaultServerGroup}
 	} else {
 		m["DefaultServerGroupUuid"] = ""
-		log.Debugf("defaultServerGroupUuid is null")
-	}
-
-	if len(combinedServerGroups) > 0 {
-		m["ServerGroups"] = combinedServerGroups
-	} else {
 		m["ServerGroups"] = []ServerGroupInfo{}
+		log.Debugf("defaultServerGroupUuid is null")
 	}
 
 	if m["TcpProxyProtocol"] == "v1" {
@@ -681,7 +711,7 @@ frontend {{.ListenerUuid}}
 {{with .RedirectRules }}
 {{- range . }}
     acl {{.RedirectRuleUuid}} {{ .RedirectRule }}
-    use_backend {{ .ServerGroupUuid }} if {{.RedirectRuleUuid }}
+    use_backend {{.ServerGroupUuid}}-{{.RedirectPort}} if {{.RedirectRuleUuid }}
 {{- end }}
 {{- end }}
 
@@ -690,6 +720,51 @@ frontend {{.ListenerUuid}}
 {{- if ne .DefaultServerGroupUuid "" }}
     default_backend {{ .DefaultServerGroupUuid }}
 {{ end }}
+
+{{- if eq .IsAclRedirect "enable" }}
+{{- with .RedirectServerGroups }}
+{{- range . }}
+backend {{.ServerGroupUuid}}-{{.RedirectPort}}
+	mode http
+	balance {{ $.BalancerAlgorithm}}
+	timeout server {{$.ConnectionIdleTimeout}}s
+	timeout connect 60s
+{{- if eq $.SessionPersistence "insert"}}
+    cookie  zstack_cookie  insert  nocache  maxidle {{$.SessionIdleTimeout}}s
+{{- else }}
+{{- if eq $.SessionPersistence "rewrite"}}
+    cookie  {{$.CookieName}}  rewrite
+{{- end }}
+{{- end }}
+{{- if eq $.HealthCheckProtocol "http" }}
+    option httpchk {{$.HttpChkMethod}} {{$.HttpChkUri}}
+{{- if ne $.HttpChkExpect "http_2xx" }}
+    http-check expect rstatus {{$.HttpChkExpect}}
+{{- end }}
+{{- end }}
+
+	{{$redirectPort := .RedirectPort}}
+	{{- with .BackendServers }}
+	{{- range . }}
+{{- if eq $.BalancerAlgorithm "static-rr" }}
+{{- if eq $.SessionPersistence "insert" "rewrite"}}
+	server nic-{{.Ip}} {{.Ip}}:{{$redirectPort}} cookie {{.Ip}} weight {{.Weight}} check port {{$redirectPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
+{{- else }}
+	server nic-{{.Ip}} {{.Ip}}:{{$redirectPort}} weight {{.Weight}} check port {{$redirectPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
+{{- end }}
+{{- else }}
+{{- if eq $.SessionPersistence "insert" "rewrite"}}
+	server nic-{{.Ip}} {{.Ip}}:{{$redirectPort}} cookie {{.Ip}} check port {{$redirectPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
+{{- else }}
+	server nic-{{.Ip}} {{.Ip}}:{{$redirectPort}} check port {{$redirectPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
+{{- end }}
+{{- end }}
+	{{- end }}
+	{{- end }}
+
+{{- end }}
+{{- end }}
+{{- end}}
 
 {{- with .ServerGroups }}
 {{- range . }}
