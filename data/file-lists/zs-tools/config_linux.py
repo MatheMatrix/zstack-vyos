@@ -2588,6 +2588,7 @@ def _config_nics_with_enable_ha(nics):
                                          bond_slave_macs=bond_slave_macs)
         nic_config.mtu = nic.get('mtu')
         nic_config.mac = nic.get('mac')
+        nic_config.is_default = nic.get('isDefault', False)
 
         for ip in nic['vmIps']:
             if not ip.get('ip') or ip.get('ip').lower() == 'none':
