@@ -337,9 +337,6 @@ class NetConfig(object):
                 if not is_exist:
                     ip4_addr = '%s/%s' % (ip_config.ip, ip_config.netmask)
                     execute_command('ip -%s addr add %s dev %s brd +', NET_CONFIG_IPV4, ip4_addr, self.name)
-                if ip_config.gateway:
-                    execute_command('ip -%s route add default via %s dev %s%s',
-                                    NET_CONFIG_IPV4, ip_config.gateway, self.name, self._route_metric_clause())
             else:
                 is_exist = False
                 for item in ipv6_info:
@@ -350,9 +347,6 @@ class NetConfig(object):
                 if not is_exist:
                     ip6_addr = '%s/%s' % (ip_config.ip, ip_config.netmask)
                     execute_command('ip -%s addr add %s dev %s', NET_CONFIG_IPV6, ip6_addr, self.name)
-                if ip_config.gateway:
-                    execute_command('ip -%s route add default via %s dev %s%s',
-                                    NET_CONFIG_IPV6, ip_config.gateway, self.name, self._route_metric_clause())
 
         # config direct route
         if not is_ignore_linkdown_route:
@@ -396,7 +390,7 @@ class NetConfig(object):
         return slaves
 
     def _route_metric_clause(self):
-        return ' metric 181' if not self.is_bond() else ''
+        return ' metric 181'
 
     def bond_option_string(self):
         if not self._is_bond_enabled():
