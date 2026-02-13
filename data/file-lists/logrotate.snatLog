@@ -1,0 +1,16 @@
+/var/log/snat_conntrack.log {
+    rotate 50
+    missingok
+    notifempty
+    size 100M
+    compress
+    delaycompress
+    compresscmd /usr/bin/xz
+    compressext .xz
+    nodateext
+    create 0640 root root
+    postrotate
+        PID=$(systemctl show -p MainPID --value snatLogCollector 2>/dev/null) || exit 0
+        [ -n "$PID" ] && [ "$PID" -gt 0 ] 2>/dev/null && kill -HUP "$PID" 2>/dev/null || true
+    endscript
+}
