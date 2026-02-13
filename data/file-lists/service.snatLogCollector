@@ -1,0 +1,14 @@
+[Unit]
+Description=SNAT conntrack log collector
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/zstack/snat-log.env
+ExecStartPre=/usr/sbin/sysctl -w net.netfilter.nf_conntrack_acct=1
+ExecStart=/usr/local/bin/snat-log-collector.py
+Restart=always
+RestartSec=2s
+
+[Install]
+WantedBy=multi-user.target
