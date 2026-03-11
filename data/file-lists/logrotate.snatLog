@@ -1,0 +1,14 @@
+/var/log/snat_conntrack.log {
+    rotate 50
+    missingok
+    notifempty
+    size 100M
+    compress
+    delaycompress
+    compresscmd /usr/bin/xz
+    compressext .xz
+    create 0640 root root
+    postrotate
+        /bin/systemctl kill --kill-whom=main -s HUP snatLogCollector 2>/dev/null || true
+    endscript
+}
