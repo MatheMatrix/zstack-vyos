@@ -7,8 +7,10 @@
     delaycompress
     compresscmd /usr/bin/xz
     compressext .xz
+    nodateext
     create 0640 root root
     postrotate
-        /bin/systemctl kill --kill-whom=main -s HUP snatLogCollector 2>/dev/null || true
+        PID=$(systemctl show -p MainPID --value snatLogCollector 2>/dev/null) || exit 0
+        [ -n "$PID" ] && [ "$PID" -gt 0 ] 2>/dev/null && kill -HUP "$PID" 2>/dev/null || true
     endscript
 }
