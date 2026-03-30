@@ -1876,6 +1876,9 @@ func (c *vipCollector) updateCountersByConntrack() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	startTime := time.Now()
+	var totalSessions, newSessions, staleSessions, matchedSessions int
+
 	file, err := os.Open("/proc/net/nf_conntrack")
 	if err != nil {
 		log.Warnf("Failed to open /proc/net/nf_conntrack: %v", err)
@@ -1890,7 +1893,6 @@ func (c *vipCollector) updateCountersByConntrack() {
 		line := scanner.Text()
 		stat, ok := parseConntrackLine(line)
 		if !ok {
-			log.Debugf("failed to parse conntrack line: %s", line)
 			continue
 		}
 		stat.LastUpdate = currentTime
@@ -1903,6 +1905,10 @@ func (c *vipCollector) updateCountersByConntrack() {
 
 	for key, current := range currentStats {
 		previous, exists := c.previousStats[key]
+		totalSessions++
+		if !exists {
+			newSessions++
+		}
 
 		var pktIn, bytesIn, pktOut, bytesOut uint64
 
@@ -1921,15 +1927,13 @@ func (c *vipCollector) updateCountersByConntrack() {
 		}
 
 		if counter, ok := c.counters[current.DstIp]; ok {
-			log.Debugf("update incoming counter, vip: %s:%s, pktIn: %d, bytesIn: %d, pktOut: %d, bytesOut: %d",
-				counter.VipUuid, current.DstIp, pktIn, bytesIn, pktOut, bytesOut)
+			matchedSessions++
 			counter.InPackets += pktIn
 			counter.InBytes += bytesIn
 			counter.OutPackets += pktOut
 			counter.OutBytes += bytesOut
 		} else if counter, ok := c.counters[current.ReplyDstIp]; ok {
-			log.Debugf("update out counter, vip: %s:%s, pktIn: %d, bytesIn: %d, pktOut: %d, bytesOut: %d",
-				counter.VipUuid, current.ReplyDstIp, pktIn, bytesIn, pktOut, bytesOut)
+			matchedSessions++
 			counter.OutPackets += pktIn
 			counter.OutBytes += bytesIn
 			counter.InPackets += pktOut
@@ -1943,10 +1947,13 @@ func (c *vipCollector) updateCountersByConntrack() {
 	// Clean up sessions older than 300 seconds from previousStats
 	for key, previous := range c.previousStats {
 		if currentTime-previous.LastUpdate > 300 {
-			log.Debugf("Removing stale session from previousStats: %s, age: %d seconds", key, currentTime-previous.LastUpdate)
+			staleSessions++
 			delete(c.previousStats, key)
 		}
 	}
+
+	log.Debugf("updateCountersByConntrack completed: duration=%v, totalSessions=%d, newSessions=%d, matchedSessions=%d, staleSessions=%d",
+		time.Since(startTime), totalSessions, newSessions, matchedSessions, staleSessions)
 }
 
 func (c *vipCollector) Update(ch chan<- prom.Metric) error {

@@ -1708,6 +1708,16 @@ func addRuleForTcpListenerByVyos(lbs []Listener) error {
 			"action accept",
 		)
 
+		localICMPDes := makeLbFirewallLocalICMPRuleDescription(info)
+		if r := tree.FindFirewallRuleByDescription(nicname, "local", localICMPDes); r == nil {
+			tree.SetFirewallOnInterface(nicname, "local",
+				fmt.Sprintf("description %v", localICMPDes),
+				fmt.Sprintf("destination address %v", info.Vip),
+				"protocol icmp",
+				"action accept",
+			)
+		}
+
 		tree.AttachFirewallToInterface(nicname, "local")
 	}
 
@@ -1746,6 +1756,8 @@ func addRuleForTcpListenerByLinux(lbs []Listener) error {
 			}
 		}
 
+		icmpRules, _ := lb.getIcmpIptablesRule()
+		table.AddIpTableRules(icmpRules)
 	}
 
 	if changed {
@@ -1794,6 +1806,16 @@ func addRuleForUdpListenerByVyos(lbs []Listener) error {
 			"action accept",
 		)
 
+		localICMPDes := makeLbFirewallLocalICMPRuleDescription(info)
+		if r := tree.FindFirewallRuleByDescription(nicname, "local", localICMPDes); r == nil {
+			tree.SetFirewallOnInterface(nicname, "local",
+				fmt.Sprintf("description %v", localICMPDes),
+				fmt.Sprintf("destination address %v", info.Vip),
+				"protocol icmp",
+				"action accept",
+			)
+		}
+
 		tree.AttachFirewallToInterface(nicname, "local")
 	}
 
@@ -1831,6 +1853,9 @@ func addRuleForUdpListenerByLinux(lbs []Listener) error {
 				table.AddIpTableRules([]*utils.IpTableRule{newRule})
 			}
 		}
+
+		icmpRules, _ := lb.getIcmpIptablesRule()
+		table.AddIpTableRules(icmpRules)
 	}
 
 	if changed {
