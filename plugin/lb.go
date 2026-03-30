@@ -1388,6 +1388,36 @@ func makeLbFirewallLocalICMPRuleDescription(lb LbInfo) string {
 	return fmt.Sprintf("LBICMP-%v", lb.LbUuid)
 }
 
+func hasIcmpAcceptRuleOnVyos(tree *server.VyosConfigTree, nicname, vip string) bool {
+	rs := tree.Getf("firewall name %v.local rule", nicname)
+	if rs == nil {
+		return false
+	}
+
+	for _, r := range rs.Children() {
+		proto := r.Get("protocol")
+		dst := r.Get("destination address")
+		action := r.Get("action")
+		if proto != nil && proto.Value() == "icmp" &&
+			dst != nil && dst.Value() == vip &&
+			action != nil && action.Value() == "accept" {
+			return true
+		}
+	}
+
+	return false
+}
+
+func hasIcmpRuleOnIptables(table *utils.IpTables, rule *utils.IpTableRule) bool {
+	if table.Check(rule) {
+		return true
+	}
+
+	vipIcmpRule := rule.Copy()
+	vipIcmpRule.SetAction(utils.IPTABLES_ACTION_ACCEPT)
+	return table.Check(vipIcmpRule)
+}
+
 func setLb(lb LbInfo) bool {
 	listener := GetListener(lb)
 	if listener == nil {
@@ -1625,12 +1655,32 @@ func addRuleForTcpListenerByVyos(lbs []Listener) error {
 				fmt.Sprintf("protocol tcp"),
 				"action accept",
 			)
-			configureInternalFirewallRule(tree, des, fmt.Sprintf("description %v", des),
+		}
+		configureInternalFirewallRule(tree, des, fmt.Sprintf("description %v", des),
+			fmt.Sprintf("destination address %v", info.Vip),
+			fmt.Sprintf("destination port %v", info.LoadBalancerPort),
+			fmt.Sprintf("protocol tcp"),
+			"action accept",
+		)
+
+		localICMPDes := makeLbFirewallLocalICMPRuleDescription(info)
+		if !hasIcmpAcceptRuleOnVyos(tree, nicname, info.Vip) && tree.FindFirewallRuleByDescription(nicname, "local", localICMPDes) == nil {
+			tree.SetFirewallOnInterface(nicname, "local",
+				fmt.Sprintf("description %v", localICMPDes),
 				fmt.Sprintf("destination address %v", info.Vip),
-				fmt.Sprintf("destination port %v", info.LoadBalancerPort),
-				fmt.Sprintf("protocol tcp"),
+				"protocol icmp",
 				"action accept",
 			)
+		}
+		for _, priNic := range utils.GetPrivteInterface() {
+			if !hasIcmpAcceptRuleOnVyos(tree, priNic, info.Vip) && tree.FindFirewallRuleByDescription(priNic, "local", localICMPDes) == nil {
+				tree.SetFirewallOnInterface(priNic, "local",
+					fmt.Sprintf("description %v", localICMPDes),
+					fmt.Sprintf("destination address %v", info.Vip),
+					"protocol icmp",
+					"action accept",
+				)
+			}
 		}
 
 		tree.AttachFirewallToInterface(nicname, "local")
@@ -1671,6 +1721,22 @@ func addRuleForTcpListenerByLinux(lbs []Listener) error {
 			}
 		}
 
+		icmpRules, _ := lb.getIcmpIptablesRule()
+		for _, r := range icmpRules {
+			if !hasIcmpRuleOnIptables(table, r) {
+				table.AddIpTableRules([]*utils.IpTableRule{r})
+			}
+		}
+
+		for _, priNic := range priNics {
+			for _, r := range icmpRules {
+				newRule := r.Copy()
+				newRule.SetChainName(utils.GetRuleSetName(priNic, utils.RULESET_LOCAL))
+				if !hasIcmpRuleOnIptables(table, newRule) {
+					table.AddIpTableRules([]*utils.IpTableRule{newRule})
+				}
+			}
+		}
 	}
 
 	if changed {
@@ -1710,14 +1776,33 @@ func addRuleForUdpListenerByVyos(lbs []Listener) error {
 				fmt.Sprintf("protocol udp"),
 				"action accept",
 			)
+		}
+		configureInternalFirewallRule(tree, des,
+			fmt.Sprintf("description %v", des),
+			fmt.Sprintf("destination address %v", info.Vip),
+			fmt.Sprintf("destination port %v", info.LoadBalancerPort),
+			fmt.Sprintf("protocol udp"),
+			"action accept",
+		)
 
-			configureInternalFirewallRule(tree, des,
-				fmt.Sprintf("description %v", des),
+		localICMPDes := makeLbFirewallLocalICMPRuleDescription(info)
+		if !hasIcmpAcceptRuleOnVyos(tree, nicname, info.Vip) && tree.FindFirewallRuleByDescription(nicname, "local", localICMPDes) == nil {
+			tree.SetFirewallOnInterface(nicname, "local",
+				fmt.Sprintf("description %v", localICMPDes),
 				fmt.Sprintf("destination address %v", info.Vip),
-				fmt.Sprintf("destination port %v", info.LoadBalancerPort),
-				fmt.Sprintf("protocol udp"),
+				"protocol icmp",
 				"action accept",
 			)
+		}
+		for _, priNic := range utils.GetPrivteInterface() {
+			if !hasIcmpAcceptRuleOnVyos(tree, priNic, info.Vip) && tree.FindFirewallRuleByDescription(priNic, "local", localICMPDes) == nil {
+				tree.SetFirewallOnInterface(priNic, "local",
+					fmt.Sprintf("description %v", localICMPDes),
+					fmt.Sprintf("destination address %v", info.Vip),
+					"protocol icmp",
+					"action accept",
+				)
+			}
 		}
 
 		tree.AttachFirewallToInterface(nicname, "local")
@@ -1757,6 +1842,23 @@ func addRuleForUdpListenerByLinux(lbs []Listener) error {
 				table.AddIpTableRules([]*utils.IpTableRule{newRule})
 			}
 		}
+
+		icmpRules, _ := lb.getIcmpIptablesRule()
+		for _, r := range icmpRules {
+			if !hasIcmpRuleOnIptables(table, r) {
+				table.AddIpTableRules([]*utils.IpTableRule{r})
+			}
+		}
+
+		for _, priNic := range priNics {
+			for _, r := range icmpRules {
+				newRule := r.Copy()
+				newRule.SetChainName(utils.GetRuleSetName(priNic, utils.RULESET_LOCAL))
+				if !hasIcmpRuleOnIptables(table, newRule) {
+					table.AddIpTableRules([]*utils.IpTableRule{newRule})
+				}
+			}
+		}
 	}
 
 	if changed {
@@ -1767,6 +1869,10 @@ func addRuleForUdpListenerByLinux(lbs []Listener) error {
 
 func delRuleForTcpListenerByVyos(lbs []Listener) error {
 	tree := server.NewParserFromShowConfiguration().Tree
+	excludeSet := make(map[string]struct{}, len(lbs))
+	for _, lb := range lbs {
+		excludeSet[lb.getLbInfo().ListenerUuid] = struct{}{}
+	}
 
 	changed := false
 	for _, lb := range lbs {
@@ -1783,10 +1889,13 @@ func delRuleForTcpListenerByVyos(lbs []Listener) error {
 		if r := tree.FindFirewallRuleByDescription(nicname, "local", des); r != nil {
 			r.Delete()
 		}
-		if r := tree.FindFirewallRuleByDescription(nicname, "local", localICMPDes); (r != nil) && (getListenerCountInLB(info) == 0) {
+		if r := tree.FindFirewallRuleByDescription(nicname, "local", localICMPDes); (r != nil) && (getListenerCountInLB(info, excludeSet) == 0) {
 			r.Delete()
 		}
 		cleanInternalFirewallRule(tree, des)
+		if getListenerCountInLB(info, excludeSet) == 0 {
+			cleanInternalFirewallRule(tree, localICMPDes)
+		}
 	}
 
 	if changed {
@@ -1798,6 +1907,10 @@ func delRuleForTcpListenerByVyos(lbs []Listener) error {
 
 func delRuleForTcpListenerByLinux(lbs []Listener) error {
 	table := utils.NewIpTables(utils.FirewallTable)
+	excludeSet := make(map[string]struct{}, len(lbs))
+	for _, lb := range lbs {
+		excludeSet[lb.getLbInfo().ListenerUuid] = struct{}{}
+	}
 
 	changed := false
 	for _, lb := range lbs {
@@ -1812,43 +1925,51 @@ func delRuleForTcpListenerByLinux(lbs []Listener) error {
 		}
 
 		changed = true
-		var rules []*utils.IpTableRule
 		nicname, err := utils.GetNicNameByMac(info.PublicNic)
 		utils.PanicOnError(err)
 
-		r, _ := lb.getIptablesRule()
-		rules = append(rules, r...)
+		rules, _ := lb.getIptablesRule()
+		table.RemoveIpTableRule(rules)
 
-		rules, _ = lb.getIcmpIptablesRule()
-		rules = append(rules, r...)
-
-		var tempRules []*utils.IpTableRule
 		priNics := utils.GetPrivteInterface()
 		for _, priNic := range priNics {
 			if priNic != nicname {
 				for _, r := range rules {
 					tmp := r.Copy()
 					tmp.SetChainName(utils.GetRuleSetName(priNic, utils.RULESET_LOCAL))
-					tempRules = append(tempRules, tmp)
+					table.RemoveIpTableRule([]*utils.IpTableRule{tmp})
 				}
 			}
 		}
-		if len(tempRules) > 0 {
-			rules = append(rules, tempRules...)
-		}
 
-		table.RemoveIpTableRule(rules)
+		if getListenerCountInLB(info, excludeSet) == 0 {
+			icmpRules, _ := lb.getIcmpIptablesRule()
+			table.RemoveIpTableRule(icmpRules)
+
+			for _, priNic := range priNics {
+				if priNic != nicname {
+					for _, r := range icmpRules {
+						tmp := r.Copy()
+						tmp.SetChainName(utils.GetRuleSetName(priNic, utils.RULESET_LOCAL))
+						table.RemoveIpTableRule([]*utils.IpTableRule{tmp})
+					}
+				}
+			}
+		}
 	}
 
 	if changed {
 		return table.Apply()
-	} else {
-		return nil
 	}
+	return nil
 }
 
 func delRuleForUdpListenerByVyos(lbs []Listener) error {
 	tree := server.NewParserFromShowConfiguration().Tree
+	excludeSet := make(map[string]struct{}, len(lbs))
+	for _, lb := range lbs {
+		excludeSet[lb.getLbInfo().ListenerUuid] = struct{}{}
+	}
 
 	changed := false
 	for _, lb := range lbs {
@@ -1869,10 +1990,13 @@ func delRuleForUdpListenerByVyos(lbs []Listener) error {
 			r.Delete()
 			r = tree.FindFirewallRuleByDescription(nicname, "local", firewallDes)
 		}
-		if r := tree.FindFirewallRuleByDescription(nicname, "local", localICMPDes); (r != nil) && (getListenerCountInLB(info) == 0) {
+		if r := tree.FindFirewallRuleByDescription(nicname, "local", localICMPDes); (r != nil) && (getListenerCountInLB(info, excludeSet) == 0) {
 			r.Delete()
 		}
 		cleanInternalFirewallRule(tree, firewallDes)
+		if getListenerCountInLB(info, excludeSet) == 0 {
+			cleanInternalFirewallRule(tree, localICMPDes)
+		}
 	}
 
 	if changed {
@@ -1884,6 +2008,10 @@ func delRuleForUdpListenerByVyos(lbs []Listener) error {
 
 func delRuleForUdpListenerByLinux(lbs []Listener) error {
 	table := utils.NewIpTables(utils.FirewallTable)
+	excludeSet := make(map[string]struct{}, len(lbs))
+	for _, lb := range lbs {
+		excludeSet[lb.getLbInfo().ListenerUuid] = struct{}{}
+	}
 
 	changed := false
 	for _, lb := range lbs {
@@ -1898,20 +2026,37 @@ func delRuleForUdpListenerByLinux(lbs []Listener) error {
 		}
 
 		changed = true
+		nicname, err := utils.GetNicNameByMac(info.PublicNic)
+		utils.PanicOnError(err)
+
 		rules, _ := lb.getIptablesRule()
 		table.RemoveIpTableRule(rules)
 
 		priNics := utils.GetPrivteInterface()
 		for _, priNic := range priNics {
-			for _, r := range rules {
-				newRule := r.Copy()
-				newRule.SetChainName(utils.GetRuleSetName(priNic, utils.RULESET_LOCAL))
-				table.RemoveIpTableRule([]*utils.IpTableRule{newRule})
+			if priNic != nicname {
+				for _, r := range rules {
+					newRule := r.Copy()
+					newRule.SetChainName(utils.GetRuleSetName(priNic, utils.RULESET_LOCAL))
+					table.RemoveIpTableRule([]*utils.IpTableRule{newRule})
+				}
 			}
 		}
 
-		rules, _ = lb.getIcmpIptablesRule()
-		table.RemoveIpTableRule(rules)
+		if getListenerCountInLB(info, excludeSet) == 0 {
+			icmpRules, _ := lb.getIcmpIptablesRule()
+			table.RemoveIpTableRule(icmpRules)
+
+			for _, priNic := range priNics {
+				if priNic != nicname {
+					for _, r := range icmpRules {
+						newRule := r.Copy()
+						newRule.SetChainName(utils.GetRuleSetName(priNic, utils.RULESET_LOCAL))
+						table.RemoveIpTableRule([]*utils.IpTableRule{newRule})
+					}
+				}
+			}
+		}
 	}
 
 	if changed {
@@ -2030,6 +2175,11 @@ func delLbs(lbs []Listener) error {
 		err := delRuleForTcpListenerByVyos(lbs)
 		utils.PanicOnError(err)
 		err = delRuleForUdpListenerByVyos(lbs)
+		utils.PanicOnError(err)
+	}
+
+	for _, lb := range lbs {
+		_, err := lb.postActionListenerServiceStop()
 		utils.PanicOnError(err)
 	}
 
@@ -2483,25 +2633,36 @@ var goBetweenClient = &http.Client{
 	Timeout: time.Second * 5,
 }
 
-func getListenerCountInLB(lb LbInfo) (counter int) {
+// getListenerCountInLB counts active listeners sharing the same LbUuid,
+// excluding listeners whose ListenerUuid is in excludeSet.
+// Pass an excludeSet containing the UUIDs of listeners being deleted,
+// so the count reflects the post-deletion state even before LbListeners
+// has been updated. Listeners without backend NIC IPs are being stopped by
+// the current refresh cycle and must not keep the shared ICMP rule alive.
+func getListenerCountInLB(lb LbInfo, excludeSet map[string]struct{}) (counter int) {
 	counter = 0
 	for _, listener := range LbListeners {
 		var lbtmp LbInfo
 		switch v := listener.(type) {
 		case *HaproxyListener:
 			lbtmp = v.getLbInfo()
-			break
 		case *GBListener:
 			lbtmp = v.getLbInfo()
-			break
 		default:
 			continue
 		}
-		if lb.LbUuid == lbtmp.LbUuid {
-			counter++
+		if lb.LbUuid != lbtmp.LbUuid {
+			continue
 		}
+		if _, excluded := excludeSet[lbtmp.ListenerUuid]; excluded {
+			continue
+		}
+		if len(lbtmp.NicIps) == 0 {
+			continue
+		}
+		counter++
 	}
-	log.Debugf("lb-%s contains %d listener", lb.LbUuid, counter)
+	log.Debugf("lb-%s contains %d listener (excluding %d)", lb.LbUuid, counter, len(excludeSet))
 	return
 }
 
