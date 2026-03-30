@@ -1765,10 +1765,39 @@ type SessionStat struct {
 
 func (s *SessionStat) Key() string {
 	if s.Protocol == "icmp" {
-		return fmt.Sprintf("%s-%s-%s-%s-%s", s.Protocol, s.SrcIp, s.DstIp, s.IcmpType, s.IcmpCode)
-	} else {
-		return fmt.Sprintf("%s-%s-%s-%s-%s", s.Protocol, s.SrcIp, s.SrcPort, s.DstIp, s.DstPort)
+		return s.Protocol + "-" + s.SrcIp + "-" + s.DstIp + "-" + s.IcmpType + "-" + s.IcmpCode
 	}
+	return s.Protocol + "-" + s.SrcIp + "-" + s.SrcPort + "-" + s.DstIp + "-" + s.DstPort
+}
+
+// extractDstIps extracts the two dst= IP addresses from a conntrack line.
+// A conntrack line contains two tuples: the original direction and the reply direction.
+// Example: ipv4 2 tcp 6 86390 ESTABLISHED src=10.0.0.1 dst=192.168.1.100 sport=12345 dport=80 packets=10 bytes=600 src=192.168.1.100 dst=10.0.0.1 sport=80 dport=12345 packets=8 bytes=480 mark=0 zone=0 use=2
+// Returns (original-dst, reply-dst), i.e. ("192.168.1.100", "10.0.0.1") in the example above.
+func extractDstIps(line string) (string, string) {
+	var first, second string
+	searchFrom := 0
+	for i := 0; i < 2; i++ {
+		idx := strings.Index(line[searchFrom:], "dst=")
+		if idx < 0 {
+			break
+		}
+
+		start := searchFrom + idx + 4
+		end := start
+		for end < len(line) && line[end] != ' ' && line[end] != '\t' {
+			end++
+		}
+
+		if i == 0 {
+			first = line[start:end]
+		} else {
+			second = line[start:end]
+		}
+		searchFrom = end
+	}
+
+	return first, second
 }
 
 // parseConntrackLine parses a single line from /proc/net/nf_conntrack.
@@ -1876,6 +1905,9 @@ func (c *vipCollector) updateCountersByConntrack() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	startTime := time.Now()
+	var totalSessions, parsedSessions, skippedSessions, newSessions, staleSessions, matchedSessions int
+
 	file, err := os.Open("/proc/net/nf_conntrack")
 	if err != nil {
 		log.Warnf("Failed to open /proc/net/nf_conntrack: %v", err)
@@ -1888,11 +1920,21 @@ func (c *vipCollector) updateCountersByConntrack() {
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := scanner.Text()
-		stat, ok := parseConntrackLine(line)
-		if !ok {
-			log.Debugf("failed to parse conntrack line: %s", line)
+		totalSessions++
+
+		firstDst, secondDst := extractDstIps(line)
+		_, matchFirst := c.counters[firstDst]
+		_, matchSecond := c.counters[secondDst]
+		if !matchFirst && !matchSecond {
+			skippedSessions++
 			continue
 		}
+
+		stat, ok := parseConntrackLine(line)
+		if !ok {
+			continue
+		}
+		parsedSessions++
 		stat.LastUpdate = currentTime
 		currentStats[stat.Key()] = stat
 	}
@@ -1903,6 +1945,9 @@ func (c *vipCollector) updateCountersByConntrack() {
 
 	for key, current := range currentStats {
 		previous, exists := c.previousStats[key]
+		if !exists {
+			newSessions++
+		}
 
 		var pktIn, bytesIn, pktOut, bytesOut uint64
 
@@ -1921,15 +1966,13 @@ func (c *vipCollector) updateCountersByConntrack() {
 		}
 
 		if counter, ok := c.counters[current.DstIp]; ok {
-			log.Debugf("update incoming counter, vip: %s:%s, pktIn: %d, bytesIn: %d, pktOut: %d, bytesOut: %d",
-				counter.VipUuid, current.DstIp, pktIn, bytesIn, pktOut, bytesOut)
+			matchedSessions++
 			counter.InPackets += pktIn
 			counter.InBytes += bytesIn
 			counter.OutPackets += pktOut
 			counter.OutBytes += bytesOut
 		} else if counter, ok := c.counters[current.ReplyDstIp]; ok {
-			log.Debugf("update out counter, vip: %s:%s, pktIn: %d, bytesIn: %d, pktOut: %d, bytesOut: %d",
-				counter.VipUuid, current.ReplyDstIp, pktIn, bytesIn, pktOut, bytesOut)
+			matchedSessions++
 			counter.OutPackets += pktIn
 			counter.OutBytes += bytesIn
 			counter.InPackets += pktOut
@@ -1943,10 +1986,13 @@ func (c *vipCollector) updateCountersByConntrack() {
 	// Clean up sessions older than 300 seconds from previousStats
 	for key, previous := range c.previousStats {
 		if currentTime-previous.LastUpdate > 300 {
-			log.Debugf("Removing stale session from previousStats: %s, age: %d seconds", key, currentTime-previous.LastUpdate)
+			staleSessions++
 			delete(c.previousStats, key)
 		}
 	}
+
+	log.Debugf("updateCountersByConntrack completed: duration=%v, totalSessions=%d, skippedSessions=%d, parsedSessions=%d, newSessions=%d, matchedSessions=%d, staleSessions=%d",
+		time.Since(startTime), totalSessions, skippedSessions, parsedSessions, newSessions, matchedSessions, staleSessions)
 }
 
 func (c *vipCollector) Update(ch chan<- prom.Metric) error {
