@@ -127,7 +127,7 @@ type RedirectRuleInfo struct {
 	AclUuid          string `json:"aclUuid"`
 	RedirectRule     string `json:"redirectRule"`
 	ServerGroupUuid  string `json:"serverGroupUuid"`
-	RedirectPort	 int    `json:"redirectPort"`
+	RedirectPort     int    `json:"redirectPort"`
 }
 
 type LbInfo struct {
@@ -164,9 +164,9 @@ type deleteCertificateCmd struct {
 
 /* RedirectServerGroup just for redirect acl rules */
 type RedirectServerGroup struct {
-	InternalName   string
+	InternalName    string
 	ServerGroupUuid string
-	RedirectPort int
+	RedirectPort    int
 	BackendServers  []BackendServerInfo
 }
 
@@ -1717,6 +1717,12 @@ func addRuleForTcpListenerByVyos(lbs []Listener) error {
 				"action accept",
 			)
 		}
+		configureInternalFirewallRule(tree, localICMPDes,
+			fmt.Sprintf("description %v", localICMPDes),
+			fmt.Sprintf("destination address %v", info.Vip),
+			"protocol icmp",
+			"action accept",
+		)
 
 		tree.AttachFirewallToInterface(nicname, "local")
 	}
@@ -1758,6 +1764,14 @@ func addRuleForTcpListenerByLinux(lbs []Listener) error {
 
 		icmpRules, _ := lb.getIcmpIptablesRule()
 		table.AddIpTableRules(icmpRules)
+
+		for _, priNic := range priNics {
+			for _, r := range icmpRules {
+				newRule := r.Copy()
+				newRule.SetChainName(utils.GetRuleSetName(priNic, utils.RULESET_LOCAL))
+				table.AddIpTableRules([]*utils.IpTableRule{newRule})
+			}
+		}
 	}
 
 	if changed {
@@ -1815,6 +1829,12 @@ func addRuleForUdpListenerByVyos(lbs []Listener) error {
 				"action accept",
 			)
 		}
+		configureInternalFirewallRule(tree, localICMPDes,
+			fmt.Sprintf("description %v", localICMPDes),
+			fmt.Sprintf("destination address %v", info.Vip),
+			"protocol icmp",
+			"action accept",
+		)
 
 		tree.AttachFirewallToInterface(nicname, "local")
 	}
@@ -1856,6 +1876,14 @@ func addRuleForUdpListenerByLinux(lbs []Listener) error {
 
 		icmpRules, _ := lb.getIcmpIptablesRule()
 		table.AddIpTableRules(icmpRules)
+
+		for _, priNic := range priNics {
+			for _, r := range icmpRules {
+				newRule := r.Copy()
+				newRule.SetChainName(utils.GetRuleSetName(priNic, utils.RULESET_LOCAL))
+				table.AddIpTableRules([]*utils.IpTableRule{newRule})
+			}
+		}
 	}
 
 	if changed {
@@ -1886,6 +1914,9 @@ func delRuleForTcpListenerByVyos(lbs []Listener) error {
 			r.Delete()
 		}
 		cleanInternalFirewallRule(tree, des)
+		if getListenerCountInLB(info) == 0 {
+			cleanInternalFirewallRule(tree, localICMPDes)
+		}
 	}
 
 	if changed {
@@ -1911,39 +1942,41 @@ func delRuleForTcpListenerByLinux(lbs []Listener) error {
 		}
 
 		changed = true
-		var rules []*utils.IpTableRule
 		nicname, err := utils.GetNicNameByMac(info.PublicNic)
 		utils.PanicOnError(err)
 
-		r, _ := lb.getIptablesRule()
-		rules = append(rules, r...)
+		rules, _ := lb.getIptablesRule()
+		table.RemoveIpTableRule(rules)
 
-		rules, _ = lb.getIcmpIptablesRule()
-		rules = append(rules, r...)
-
-		var tempRules []*utils.IpTableRule
 		priNics := utils.GetPrivteInterface()
 		for _, priNic := range priNics {
 			if priNic != nicname {
 				for _, r := range rules {
 					tmp := r.Copy()
 					tmp.SetChainName(utils.GetRuleSetName(priNic, utils.RULESET_LOCAL))
-					tempRules = append(tempRules, tmp)
+					table.RemoveIpTableRule([]*utils.IpTableRule{tmp})
 				}
 			}
 		}
-		if len(tempRules) > 0 {
-			rules = append(rules, tempRules...)
-		}
 
-		table.RemoveIpTableRule(rules)
+		icmpRules, _ := lb.getIcmpIptablesRule()
+		table.RemoveIpTableRule(icmpRules)
+
+		for _, priNic := range priNics {
+			if priNic != nicname {
+				for _, r := range icmpRules {
+					tmp := r.Copy()
+					tmp.SetChainName(utils.GetRuleSetName(priNic, utils.RULESET_LOCAL))
+					table.RemoveIpTableRule([]*utils.IpTableRule{tmp})
+				}
+			}
+		}
 	}
 
 	if changed {
 		return table.Apply()
-	} else {
-		return nil
 	}
+	return nil
 }
 
 func delRuleForUdpListenerByVyos(lbs []Listener) error {
@@ -1972,6 +2005,9 @@ func delRuleForUdpListenerByVyos(lbs []Listener) error {
 			r.Delete()
 		}
 		cleanInternalFirewallRule(tree, firewallDes)
+		if getListenerCountInLB(info) == 0 {
+			cleanInternalFirewallRule(tree, localICMPDes)
+		}
 	}
 
 	if changed {
@@ -2009,8 +2045,16 @@ func delRuleForUdpListenerByLinux(lbs []Listener) error {
 			}
 		}
 
-		rules, _ = lb.getIcmpIptablesRule()
-		table.RemoveIpTableRule(rules)
+		icmpRules, _ := lb.getIcmpIptablesRule()
+		table.RemoveIpTableRule(icmpRules)
+
+		for _, priNic := range priNics {
+			for _, r := range icmpRules {
+				newRule := r.Copy()
+				newRule.SetChainName(utils.GetRuleSetName(priNic, utils.RULESET_LOCAL))
+				table.RemoveIpTableRule([]*utils.IpTableRule{newRule})
+			}
+		}
 	}
 
 	if changed {
