@@ -30,6 +30,7 @@ type ConfigSnatLogRsp struct {
 type snatLogRuntimeConfig struct {
 	VpcUUID      string
 	VpcDefaultIP string
+	MnVip        string
 	MnIP         string
 	MnPeerIP     string
 	MgmtIP       string
@@ -50,6 +51,11 @@ func getBootstrapStringValue(key string) string {
 }
 
 func getSnatLogTargetMnIp() string {
+	mnNodeVip := getBootstrapStringValue("managementNodeVip")
+	if mnNodeVip != "" {
+		return mnNodeVip
+	}
+
 	mnNodeIp := getBootstrapStringValue("managementNodeIp")
 	if mnNodeIp != "" {
 		return mnNodeIp
@@ -78,7 +84,8 @@ func getSnatLogRuntimeConfig() snatLogRuntimeConfig {
 	conf := snatLogRuntimeConfig{}
 	conf.VpcUUID = utils.GetVirtualRouterUuid()
 	conf.VpcDefaultIP = getVpcDefaultPublicIp()
-	conf.MnIP = getSnatLogTargetMnIp()
+	conf.MnVip = getBootstrapStringValue("managementNodeVip")
+	conf.MnIP = getBootstrapStringValue("managementNodeIp")
 	conf.MnPeerIP = getBootstrapStringValue("managementPeerNodeIp")
 
 	if mgmtNic, ok := utils.BootstrapInfo["managementNic"].(map[string]interface{}); ok {
@@ -151,8 +158,8 @@ func getVpcDefaultPublicIp() string {
 }
 
 func buildSnatLogRuntimeEnv(conf snatLogRuntimeConfig) string {
-	return fmt.Sprintf("VPC_UUID=%s\nVPC_DEFAULT_IP=%s\nMN_IP=%s\nMN_PEER_IP=%s\nMGMT_IP=%s\n",
-		conf.VpcUUID, conf.VpcDefaultIP, conf.MnIP, conf.MnPeerIP, conf.MgmtIP)
+	return fmt.Sprintf("VPC_UUID=%s\nVPC_DEFAULT_IP=%s\nMN_VIP=%s\nMN_IP=%s\nMN_PEER_IP=%s\nMGMT_IP=%s\n",
+		conf.VpcUUID, conf.VpcDefaultIP, conf.MnVip, conf.MnIP, conf.MnPeerIP, conf.MgmtIP)
 }
 
 func configureSnatLogRuntimeEnv(conf snatLogRuntimeConfig) error {
@@ -195,7 +202,7 @@ if ($syslogtag contains "snat.raw") then {
     action(type="omfwd"
            target="%s"
            port="%s"
-           protocol="udp"
+           protocol="tcp"
            template="RSYSLOG_SyslogProtocol23Format"
            action.resumeRetryCount="-1"
            queue.type="LinkedList"

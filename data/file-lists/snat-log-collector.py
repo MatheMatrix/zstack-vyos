@@ -178,6 +178,7 @@ def run():
     mgmt_ips = set(
         x
         for x in [
+            runtime_env.get("MN_VIP", "").strip(),
             runtime_env.get("MN_IP", "").strip(),
             runtime_env.get("MN_PEER_IP", "").strip(),
             runtime_env.get("MGMT_IP", "").strip(),
