@@ -133,24 +133,44 @@ func syncDnat(cmd *syncDnatCmd) interface{} {
 		tree := server.NewParserFromShowConfiguration().Tree
 		dnatRegex := ".*(\\w.){3}\\w-\\w{1,}-\\w{1,}-(\\w{2}:){5}\\w{2}-\\w{1,}-\\w{1,}-\\w{1,}"
 
-		// delete all portforwarding related rules
-		for {
-			if r := tree.FindDnatRuleDescriptionRegex(dnatRegex, utils.StringRegCompareFn); r != nil {
-				r.Delete()
-			} else {
-				break
+		desiredDescs := make(map[string]bool)
+		pubNicNames := make(map[string]bool)
+		for _, r := range cmd.Rules {
+			desiredDescs[makeDnatDescription(r)] = true
+			desiredDescs[makeAllowCidrRejectDescription(r)] = true
+			desiredDescs[makeOrphanDnatDescription(r)] = true
+
+			pubNicName, err := utils.GetNicNameByMac(r.PublicMac)
+			utils.PanicOnError(err)
+			pubNicNames[pubNicName] = true
+		}
+
+		if rs := tree.Get("nat destination rule"); rs != nil {
+			for _, r := range rs.Children() {
+				d := r.Get("description")
+				if d == nil {
+					continue
+				}
+
+				des := d.Value()
+				if utils.StringRegCompareFn(dnatRegex, des) && !desiredDescs[des] {
+					r.Delete()
+				}
 			}
 		}
 
-		if len(cmd.Rules) > 1 {
-			pubNicName, err := utils.GetNicNameByMac(cmd.Rules[0].PublicMac)
-			utils.PanicOnError(err)
-			for {
-				if r := tree.FindFirewallRuleByDescriptionRegex(
-					pubNicName, "in", dnatRegex, utils.StringRegCompareFn); r != nil {
-					r.Delete()
-				} else {
-					break
+		for pubNicName := range pubNicNames {
+			if rs := tree.Getf("firewall name %v.in rule", pubNicName); rs != nil {
+				for _, r := range rs.Children() {
+					d := r.Get("description")
+					if d == nil {
+						continue
+					}
+
+					des := d.Value()
+					if utils.StringRegCompareFn(dnatRegex, des) && !desiredDescs[des] {
+						r.Delete()
+					}
 				}
 			}
 		}

@@ -579,11 +579,17 @@ func syncEip(cmd *syncEipCmd) interface{} {
 		utils.PanicOnError(err)
 	} else {
 		tree := server.NewParserFromShowConfiguration().Tree
+		desiredDescs := make(map[string]bool, len(cmd.Eips)*3)
+		for _, eip := range cmd.Eips {
+			desiredDescs[makeEipDescription(eip)] = true
+			if eip.SnatInboundTraffic {
+				desiredDescs[makeEipDescriptionForGw(eip)] = true
+			}
+		}
 
-		// delete all EIP related rules
 		if rs := tree.Get("nat destination rule"); rs != nil {
 			for _, r := range rs.Children() {
-				if d := r.Get("description"); d != nil && strings.HasPrefix(d.Value(), "EIP") {
+				if d := r.Get("description"); d != nil && strings.HasPrefix(d.Value(), "EIP") && !desiredDescs[d.Value()] {
 					r.Delete()
 				}
 			}
@@ -591,7 +597,7 @@ func syncEip(cmd *syncEipCmd) interface{} {
 
 		if rs := tree.Getf("nat source rule"); rs != nil {
 			for _, r := range rs.Children() {
-				if d := r.Get("description"); d != nil && strings.HasPrefix(d.Value(), "EIP") {
+				if d := r.Get("description"); d != nil && strings.HasPrefix(d.Value(), "EIP") && !desiredDescs[d.Value()] {
 					r.Delete()
 				}
 			}
@@ -601,7 +607,7 @@ func syncEip(cmd *syncEipCmd) interface{} {
 			for _, r := range rs.Children() {
 				if rss := r.Get("rule"); rss != nil {
 					for _, rr := range rss.Children() {
-						if d := rr.Get("description"); d != nil && strings.HasPrefix(d.Value(), "EIP") {
+						if d := rr.Get("description"); d != nil && strings.HasPrefix(d.Value(), "EIP") && !desiredDescs[d.Value()] {
 							rr.Delete()
 						}
 					}
