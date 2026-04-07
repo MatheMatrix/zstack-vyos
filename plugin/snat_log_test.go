@@ -14,15 +14,28 @@ func TestGetSnatLogTargetMnIp(t *testing.T) {
 	}()
 
 	utils.BootstrapInfo = map[string]interface{}{
-		"managementNodeIp": "172.25.116.181",
+		"managementNodeVip": "172.25.116.180",
+		"managementNodeIp":  "172.25.116.181",
 	}
 
 	ip := getSnatLogTargetMnIp()
-	if ip != "172.25.116.181" {
-		t.Fatalf("expect managementNodeIp to be preferred, got %s", ip)
+	if ip != "172.25.116.180" {
+		t.Fatalf("expect managementNodeVip to be preferred, got %s", ip)
 	}
 
 	utils.BootstrapInfo = map[string]interface{}{
+		"managementNodeVip":    "",
+		"managementNodeIp":     "172.25.116.181",
+		"managementPeerNodeIp": "172.25.116.182",
+	}
+
+	ip = getSnatLogTargetMnIp()
+	if ip != "172.25.116.181" {
+		t.Fatalf("expect fallback to managementNodeIp, got %s", ip)
+	}
+
+	utils.BootstrapInfo = map[string]interface{}{
+		"managementNodeVip":    "",
 		"managementPeerNodeIp": "172.25.116.182",
 		"managementNodeIp":     "",
 	}
@@ -54,6 +67,7 @@ func TestBuildSnatLogRuntimeEnv(t *testing.T) {
 	content := buildSnatLogRuntimeEnv(snatLogRuntimeConfig{
 		VpcUUID:      "vpc-uuid-1",
 		VpcDefaultIP: "10.0.0.10",
+		MnVip:        "172.25.116.180",
 		MnIP:         "172.25.116.181",
 		MnPeerIP:     "172.25.116.182",
 		MgmtIP:       "192.168.100.10",
@@ -62,6 +76,7 @@ func TestBuildSnatLogRuntimeEnv(t *testing.T) {
 	checks := []string{
 		"VPC_UUID=vpc-uuid-1",
 		"VPC_DEFAULT_IP=10.0.0.10",
+		"MN_VIP=172.25.116.180",
 		"MN_IP=172.25.116.181",
 		"MN_PEER_IP=172.25.116.182",
 		"MGMT_IP=192.168.100.10",
