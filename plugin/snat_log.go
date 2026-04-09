@@ -2,7 +2,6 @@ package plugin
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"zstack-vyos/server"
@@ -20,7 +19,9 @@ const (
 )
 
 type ConfigSnatLogCmd struct {
-	Enable bool `json:"enable"`
+	Enable            bool    `json:"enable"`
+	ManagementNodeIp  *string `json:"managementNodeIp"`
+	ManagementNodeVip *string `json:"managementNodeVip"`
 }
 
 type ConfigSnatLogRsp struct {
@@ -50,34 +51,50 @@ func getBootstrapStringValue(key string) string {
 	return strings.TrimSpace(s)
 }
 
-func getSnatLogTargetMnIp() string {
-	mnNodeVip := getBootstrapStringValue("managementNodeVip")
-	if mnNodeVip != "" {
-		return mnNodeVip
-	}
-
-	mnNodeIp := getBootstrapStringValue("managementNodeIp")
-	if mnNodeIp != "" {
-		return mnNodeIp
-	}
-
-	mnNodeIps := utils.GetMnNodeIps()
-	if len(mnNodeIps) == 0 {
+func getOptionalCommandStringValue(v *string) string {
+	if v == nil {
 		return ""
 	}
 
-	ips := make([]string, 0, len(mnNodeIps))
-	for ip := range mnNodeIps {
-		if ip != "" {
-			ips = append(ips, ip)
-		}
-	}
-	if len(ips) == 0 {
-		return ""
+	return strings.TrimSpace(*v)
+}
+
+func applySnatLogMnOverrides(conf snatLogRuntimeConfig, cmd *ConfigSnatLogCmd) snatLogRuntimeConfig {
+	if cmd == nil {
+		return conf
 	}
 
-	sort.Strings(ips)
-	return ips[0]
+	// When management node addresses are provided by MN, treat them as the
+	// source of truth for this refresh, including clearing a stale VIP.
+	if cmd.ManagementNodeIp == nil && cmd.ManagementNodeVip == nil {
+		return conf
+	}
+
+	if cmd.ManagementNodeIp != nil {
+		conf.MnIP = getOptionalCommandStringValue(cmd.ManagementNodeIp)
+		conf.MnVip = ""
+	}
+	if cmd.ManagementNodeVip != nil {
+		conf.MnVip = getOptionalCommandStringValue(cmd.ManagementNodeVip)
+	}
+
+	return conf
+}
+
+func getSnatLogTargetMnIp(conf snatLogRuntimeConfig) string {
+	if conf.MnVip != "" {
+		return conf.MnVip
+	}
+
+	if conf.MnIP != "" {
+		return conf.MnIP
+	}
+
+	if conf.MnPeerIP != "" {
+		return conf.MnPeerIP
+	}
+
+	return ""
 }
 
 func getSnatLogRuntimeConfig() snatLogRuntimeConfig {
@@ -271,8 +288,8 @@ func disableSnatLog() error {
 	return nil
 }
 
-func enableSnatLog() (err error) {
-	runtimeConf := getSnatLogRuntimeConfig()
+func enableSnatLog(cmd *ConfigSnatLogCmd) (err error) {
+	runtimeConf := applySnatLogMnOverrides(getSnatLogRuntimeConfig(), cmd)
 	if err = configureSnatLogRuntimeEnv(runtimeConf); err != nil {
 		return err
 	}
@@ -288,7 +305,7 @@ func enableSnatLog() (err error) {
 		}
 	}()
 
-	mnIp := getSnatLogTargetMnIp()
+	mnIp := getSnatLogTargetMnIp(runtimeConf)
 	if err = configureSnatRsyslog(true, mnIp); err != nil {
 		return err
 	}
@@ -342,7 +359,7 @@ func configSnatLogHandler(ctx *server.CommandContext) interface{} {
 	}
 
 	if cmd.Enable {
-		err := enableSnatLog()
+		err := enableSnatLog(cmd)
 		utils.PanicOnError(err)
 
 		return ConfigSnatLogRsp{ServiceStatus: "enable"}

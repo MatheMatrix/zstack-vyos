@@ -8,41 +8,70 @@ import (
 )
 
 func TestGetSnatLogTargetMnIp(t *testing.T) {
-	original := utils.BootstrapInfo
-	defer func() {
-		utils.BootstrapInfo = original
-	}()
-
-	utils.BootstrapInfo = map[string]interface{}{
-		"managementNodeVip": "172.25.116.180",
-		"managementNodeIp":  "172.25.116.181",
-	}
-
-	ip := getSnatLogTargetMnIp()
+	ip := getSnatLogTargetMnIp(snatLogRuntimeConfig{
+		MnVip:    "172.25.116.180",
+		MnIP:     "172.25.116.181",
+		MnPeerIP: "172.25.116.182",
+	})
 	if ip != "172.25.116.180" {
-		t.Fatalf("expect managementNodeVip to be preferred, got %s", ip)
+		t.Fatalf("expect management node vip to be preferred, got %s", ip)
 	}
 
-	utils.BootstrapInfo = map[string]interface{}{
-		"managementNodeVip":    "",
-		"managementNodeIp":     "172.25.116.181",
-		"managementPeerNodeIp": "172.25.116.182",
-	}
-
-	ip = getSnatLogTargetMnIp()
+	ip = getSnatLogTargetMnIp(snatLogRuntimeConfig{
+		MnIP:     "172.25.116.181",
+		MnPeerIP: "172.25.116.182",
+	})
 	if ip != "172.25.116.181" {
-		t.Fatalf("expect fallback to managementNodeIp, got %s", ip)
+		t.Fatalf("expect fallback to management node ip, got %s", ip)
 	}
 
-	utils.BootstrapInfo = map[string]interface{}{
-		"managementNodeVip":    "",
-		"managementPeerNodeIp": "172.25.116.182",
-		"managementNodeIp":     "",
-	}
-
-	ip = getSnatLogTargetMnIp()
+	ip = getSnatLogTargetMnIp(snatLogRuntimeConfig{
+		MnPeerIP: "172.25.116.182",
+	})
 	if ip != "172.25.116.182" {
 		t.Fatalf("expect fallback to peer ip, got %s", ip)
+	}
+}
+
+func TestApplySnatLogMnOverrides(t *testing.T) {
+	base := snatLogRuntimeConfig{
+		MnVip:    "172.25.116.180",
+		MnIP:     "172.25.116.181",
+		MnPeerIP: "172.25.116.182",
+	}
+
+	conf := applySnatLogMnOverrides(base, &ConfigSnatLogCmd{})
+	if conf != base {
+		t.Fatalf("expect empty command to keep bootstrap values, got %+v", conf)
+	}
+
+	newIP := "172.25.116.200"
+	conf = applySnatLogMnOverrides(base, &ConfigSnatLogCmd{
+		ManagementNodeIp: &newIP,
+	})
+	if conf.MnVip != "" {
+		t.Fatalf("expect stale vip to be cleared when mn override is provided, got %s", conf.MnVip)
+	}
+	if conf.MnIP != newIP {
+		t.Fatalf("expect mn ip override to be applied, got %s", conf.MnIP)
+	}
+	if ip := getSnatLogTargetMnIp(conf); ip != newIP {
+		t.Fatalf("expect target ip to use overridden mn ip, got %s", ip)
+	}
+
+	newVip := "172.25.116.210"
+	conf = applySnatLogMnOverrides(base, &ConfigSnatLogCmd{
+		ManagementNodeIp:  &newIP,
+		ManagementNodeVip: &newVip,
+	})
+	if conf.MnVip != newVip {
+		t.Fatalf("expect mn vip override to be applied, got %s", conf.MnVip)
+	}
+	if conf.MnIP != newIP {
+		t.Fatalf("expect mn ip override to be preserved, got %s", conf.MnIP)
+	}
+	if ip := getSnatLogTargetMnIp(conf); ip != newVip {
+		t.Fatalf("expect target ip to prefer overridden vip, got %s", ip)
 	}
 }
 
