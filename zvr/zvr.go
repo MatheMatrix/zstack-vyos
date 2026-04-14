@@ -25,6 +25,7 @@ func loadPlugins() {
 	plugin.DhcpEntryPoint()
 	plugin.DnsEntryPoint()
 	plugin.SnatEntryPoint()
+	plugin.SnatLogEntryPoint()
 	plugin.DnatEntryPoint()
 	plugin.VipEntryPoint()
 	plugin.EipEntryPoint()

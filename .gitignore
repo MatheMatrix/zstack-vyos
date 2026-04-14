@@ -38,3 +38,5 @@ vendor/
 # Go build cache
 .gocache/
 go.work.sum
+
+.gitlab-output
