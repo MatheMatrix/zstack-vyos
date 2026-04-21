@@ -74,7 +74,17 @@ checkFileSize() {
 }
 
 reportToManagementNode() {
-    (echo "curl -H \"Content-Type: application/json\" -H \"commandpath: /appliancevm/abnormalfiles/report\" -X POST -d '$retToMn' http://$managementNodeIp:8080/zstack/asyncrest/sendcommand" |sh) &
+    local url="http://$managementNodeIp:8080/zstack/asyncrest/sendcommand"
+    local http_code
+    http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+        -A "ZStack-VRouter" \
+        -H "Content-Type: application/json" \
+        -H "commandpath: /appliancevm/abnormalfiles/report" \
+        -X POST -d "$retToMn" \
+        "$url")
+    if [ "$http_code" != "200" ]; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') report abnormal files failed, http_code: $http_code" >> $LOGFILE
+    fi
 }
 
 getDiskInfo() {
