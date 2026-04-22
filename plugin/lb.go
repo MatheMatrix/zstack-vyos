@@ -83,6 +83,12 @@ const (
 	LBSecurityPolicyCommonCiphers      = "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA384:ECDHE-RSA-AES128-SHA:ECDHE-RSA-AES256-SHA"
 	LBSecurityPolicy1_2_3CommonCiphers = "AES128-GCM-SHA256:AES128-SHA256:AES256-SHA256:AES128-SHA:AES256-SHA"
 	LBSecurityPolicystrict3OnlyCiphers = "TLS_AES_256_GCM_SHA384:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-SHA256:ECDHE-ECDSA-AES256-SHA384:ECDHE-ECDSA-AES128-SHA:ECDHE-ECDSA-AES256-SHA"
+
+	// Strict policies must not contain SHA1 cipher suites (e.g. ECDHE-RSA-AES128-SHA / ECDHE-RSA-AES256-SHA
+	// and their ECDSA equivalents) to satisfy security audits and align with Aliyun CLB's
+	// tls_cipher_policy_1_2_strict definition.
+	LBSecurityPolicyStrictCommonCiphers   = "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA384"
+	LBSecurityPolicyStrict3OnlyNoSHA1Ciphers = "TLS_AES_256_GCM_SHA384:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-SHA256:ECDHE-ECDSA-AES256-SHA384"
 )
 
 type backendServerInfo struct {
@@ -304,9 +310,10 @@ func parseListenerPrameter(lb lbInfo) (map[string]interface{}, error) {
 	} else if lb.SecurityPolicyType == TLS_CIPHER_POLICY_1_2 {
 		m["SecurityOptions"] = fmt.Sprintf(LBSecurityPolicyConfiguration, LBSecurityPolicyCommonCiphers+":"+LBSecurityPolicy1_2_3CommonCiphers, "no-sslv3 no-tlsv10 no-tlsv11 no-tlsv13 no-tls-tickets")
 	} else if lb.SecurityPolicyType == TLS_CIPHER_POLICY_1_2_STRICT {
-		m["SecurityOptions"] = fmt.Sprintf(LBSecurityPolicyConfiguration, LBSecurityPolicyCommonCiphers, "no-sslv3 no-tlsv10 no-tlsv11 no-tlsv13 no-tls-tickets")
+		m["SecurityOptions"] = fmt.Sprintf(LBSecurityPolicyConfiguration, LBSecurityPolicyStrictCommonCiphers, "no-sslv3 no-tlsv10 no-tlsv11 no-tlsv13 no-tls-tickets")
 	} else if lb.SecurityPolicyType == TLS_CIPHER_POLICY_1_2_STRICT_WITH_1_3 {
-		m["SecurityOptions"] = fmt.Sprintf(LBSecurityPolicyConfiguration, LBSecurityPolicyCommonCiphers+":"+LBSecurityPolicystrict3OnlyCiphers, "no-sslv3 no-tlsv10 no-tlsv11 no-tlsv12 no-tls-tickets")
+		// Policy name and UI description state "TLS 1.2 and 1.3"; do NOT disable tlsv12.
+		m["SecurityOptions"] = fmt.Sprintf(LBSecurityPolicyConfiguration, LBSecurityPolicyStrictCommonCiphers+":"+LBSecurityPolicyStrict3OnlyNoSHA1Ciphers, "no-sslv3 no-tlsv10 no-tlsv11 no-tls-tickets")
 	}
 
 	m["CertificatePath"] = makeCertificatePath(lb.CertificateUuid)
