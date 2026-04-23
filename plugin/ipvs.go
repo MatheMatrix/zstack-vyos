@@ -21,6 +21,48 @@ const (
 	IpvsConnectionTypeTUNNEL
 )
 
+// IpvsProtoTCP / IpvsProtoUDP are the canonical internal forms of
+// IpvsFrontendService.ProtocolType / IpvsBackendServer.ProtocolType
+// (F-016 normalization).  Code that shells out to ipvsadm should call
+// IpvsadmProtoFlag to translate to the CLI flag form.
+const (
+	IpvsProtoTCP    = "tcp"
+	IpvsProtoUDP    = "udp"
+	IpvsProtoFwmark = "fwmark"
+)
+
+// IpvsadmProtoFlag returns the ipvsadm CLI flag ("-t" / "-u" / "-f")
+// corresponding to a normalized internal protocol string.  Unknown protocols
+// return "" so callers fail loudly instead of silently building wrong
+// command lines.
+func IpvsadmProtoFlag(proto string) string {
+	switch strings.ToLower(proto) {
+	case IpvsProtoTCP, "-t":
+		return "-t"
+	case IpvsProtoUDP, "-u":
+		return "-u"
+	case IpvsProtoFwmark, "-f":
+		return "-f"
+	}
+	return ""
+}
+
+// NormalizeIpvsProto migrates legacy ipvsadm-flag form ("-t"/"-u") and
+// uppercase form ("TCP"/"UDP") to the canonical lowercase internal form
+// ("tcp"/"udp").  Used both at construction time and when loading persisted
+// JSON written by older builds.
+func NormalizeIpvsProto(proto string) string {
+	switch strings.ToLower(proto) {
+	case "-t", IpvsProtoTCP:
+		return IpvsProtoTCP
+	case "-u", IpvsProtoUDP:
+		return IpvsProtoUDP
+	case "-f", IpvsProtoFwmark:
+		return IpvsProtoFwmark
+	}
+	return strings.ToLower(proto)
+}
+
 const (
 	IPVS_LOG_CHAIN_NAME      = "ipvs-log"
 	IPVS_FULL_NAT_CHAIN_NAME = "ipvs-full-nat"
@@ -211,6 +253,7 @@ type IpvsHealthCheckConf struct {
 }
 
 func (hcConf *IpvsHealthCheckConf) FromIpvsConf(conf *IpvsConf) *IpvsHealthCheckConf {
+	hcConf.Services = nil
 	for _, fs := range conf.Services {
 		hcFs := IpvsHealthCheckFrontService{
 			LbUuid:       fs.LbInfo.LbUuid,
@@ -381,9 +424,9 @@ func NewIpvsBackendServer(serverIp, serverPort, weight string, frontService *Ipv
 
 func NewIpvsFrontService(info LbInfo, param LbParams, frontIp string, servers map[string]*IpvsBackendServer) *IpvsFrontendService {
 	connectionType := IpvsConnectionTypeNAT.String()
-	protocolType := "-u"
+	protocolType := IpvsProtoUDP
 	if info.Mode == LB_MODE_HTTPS || info.Mode == LB_MODE_HTTP || info.Mode == LB_MODE_TCP {
-		protocolType = "-t"
+		protocolType = IpvsProtoTCP
 	}
 	scheduler := GetIpvsSchedulerTypeFromString(param.balancerAlgorithm)
 	return &IpvsFrontendService{
@@ -415,9 +458,9 @@ func (fs *IpvsFrontendService) EnableIpvsLog() (err error) {
 
 	ipset := utils.GetIpSet(IPVS_LOG_IPSET_NAME)
 	ipset.Member = []string{}
-	protol := "udp"
-	if fs.ProtocolType == "-t" {
-		protol = "tcp"
+	protol := IpvsProtoUDP
+	if fs.ProtocolType == IpvsProtoTCP {
+		protol = IpvsProtoTCP
 	}
 
 	frontIp := fs.FrontIp
@@ -437,9 +480,9 @@ func (fs *IpvsFrontendService) EnableIpvsLog() (err error) {
 func (fs *IpvsFrontendService) DisableIpvsLog() (err error) {
 	ipset := utils.GetIpSet(IPVS_LOG_IPSET_NAME)
 	ipset.Member = []string{}
-	protol := "udp"
-	if fs.ProtocolType == "-t" {
-		protol = "tcp"
+	protol := IpvsProtoUDP
+	if fs.ProtocolType == IpvsProtoTCP {
+		protol = IpvsProtoTCP
 	}
 
 	frontIp := fs.FrontIp
@@ -484,7 +527,7 @@ func refreshIpvsFirewallRuleByVyos(services map[string]*IpvsFrontendService) err
 		nicname, err := utils.GetNicNameByMac(fs.PublicNic)
 		utils.PanicOnError(err)
 		proto := utils.IPTABLES_PROTO_UDP
-		if fs.ProtocolType == "-t" || fs.ProtocolType == "tcp" {
+		if fs.ProtocolType == IpvsProtoTCP {
 			proto = utils.IPTABLES_PROTO_TCP
 		}
 
@@ -548,7 +591,7 @@ func refreshIpvsFullNatRules(services map[string]*IpvsFrontendService) {
 	for _, fs := range services {
 		log.Debugf("refreshIpvsFullNatRules service %+v", fs)
 		proto := utils.IPTABLES_PROTO_UDP
-		if fs.ProtocolType == "-t" || fs.ProtocolType == "tcp" {
+		if fs.ProtocolType == IpvsProtoTCP {
 			proto = utils.IPTABLES_PROTO_TCP
 		}
 
@@ -595,7 +638,7 @@ func refreshIpvsFirewallRuleByIptables(services map[string]*IpvsFrontendService)
 		utils.PanicOnError(err)
 
 		proto := utils.IPTABLES_PROTO_UDP
-		if fs.ProtocolType == "-t" || fs.ProtocolType == "tcp" {
+		if fs.ProtocolType == IpvsProtoTCP {
 			proto = utils.IPTABLES_PROTO_TCP
 		}
 
@@ -689,6 +732,9 @@ func addAclRules(table *utils.IpTables, fs *IpvsFrontendService, nicname string,
 }
 
 func RefreshIpvsBackend() error {
+	// Capture the current conf so we can detect scheduler changes below.
+	oldConf := gIpvsConf
+
 	services := map[string]*IpvsFrontendService{}
 	for _, lb := range gIpvsLbInfoMap {
 		for _, listener := range lb {
@@ -764,8 +810,29 @@ func RefreshIpvsBackend() error {
 		}
 	}
 
+	// F-013: detect runtime scheduler changes and apply them to the kernel
+	// immediately.  This is the correct path for "change listener scheduler"
+	// operations; the daemon's EditFrontService is a no-op by design.
+	if oldConf != nil && ipvsAdmin != nil {
+		for key, newFs := range services {
+			if oldFs, ok := oldConf.Services[key]; ok {
+				if oldFs.Scheduler != newFs.Scheduler {
+					if err := ipvsAdmin.EditService(*newFs); err != nil {
+						log.Warnf("[ipvs] EditService scheduler %s→%s for %s: %v",
+							oldFs.Scheduler, newFs.Scheduler, key, err)
+					}
+				}
+			}
+		}
+	}
+
 	gIpvsConf = &IpvsConf{Services: services}
 	gIpvsConf.ReloadIpvsHealthCheckConfig()
+
+	// F-013: notify connected daemons of the new authoritative state.
+	// Snapshot is the source of truth; any rs_event in flight against
+	// the prior seq is naturally superseded.
+	PushIpvsSnapshot()
 
 	if utils.IsSkipVyosIptables() {
 		err := refreshIpvsFirewallRuleByIptables(services)
@@ -844,9 +911,9 @@ func DelIpvsService(lbs map[string]LbInfo) {
 }
 
 func (bs *IpvsBackendServer) GetBackendKey() string {
-	proto := "udp"
-	if strings.ToLower(bs.ProtocolType) == "tcp" || strings.ToLower(bs.ProtocolType) == "-t" {
-		proto = "tcp"
+	proto := IpvsProtoUDP
+	if NormalizeIpvsProto(bs.ProtocolType) == IpvsProtoTCP {
+		proto = IpvsProtoTCP
 	}
 
 	return proto + "-" + bs.FrontIp + "-" + bs.FrontPort + "-" + bs.BackendIp + "-" + bs.BackendPort
@@ -917,6 +984,77 @@ func UpdateIpvsMetrics(c *loadBalancerCollector, ch chan<- prom.Metric) (err err
 	return nil
 }
 
+// IpvsTabularRecord is one parsed "->" backend row from an `ipvsadm` tabular
+// listing.  Proto is normalized to "tcp"/"udp" (F-016) so that the resulting
+// keys feed directly into getIpvsBackend without further translation.
+// Items is the raw `strings.Fields` split of the original "->" line.
+type IpvsTabularRecord struct {
+	Proto       string
+	FrontIp     string
+	FrontPort   string
+	BackendIp   string
+	BackendPort string
+	Items       []string
+}
+
+// parseIpvsTabular parses output of either `ipvsadm -L -n --stats` or
+// `ipvsadm -Ln --thresholds`.  It tracks the current TCP/UDP front-service
+// and emits one record per "->" backend row.  Header / empty / unknown lines
+// reset the front-service context so a stray "->" row never false-matches
+// against an earlier service.  Fixes F-014: previously proto was hard-coded
+// to "-u", causing every TCP backend lookup to miss; loop also `break`ed on
+// first miss, dropping all subsequent backends.
+func parseIpvsTabular(output string) []IpvsTabularRecord {
+	var records []IpvsTabularRecord
+	var proto, frontIp, frontPort string
+
+	lines := strings.Split(output, "\n")
+	if len(lines) > 3 {
+		lines = lines[3:] // ignore the first 3 header lines
+	} else {
+		lines = nil
+	}
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		items := strings.Fields(line)
+		if items[0] == "TCP" || items[0] == "UDP" {
+			if items[0] == "TCP" {
+				proto = IpvsProtoTCP
+			} else {
+				proto = IpvsProtoUDP
+			}
+			ipports := strings.Split(items[1], ":")
+			frontIp = strings.Join(ipports[0:len(ipports)-1], ":")
+			frontIp = strings.Trim(frontIp, "[")
+			frontIp = strings.Trim(frontIp, "]")
+			frontPort = ipports[len(ipports)-1]
+		} else if items[0] == "->" {
+			if proto == "" {
+				continue
+			}
+			ipports := strings.Split(items[1], ":")
+			backendIp := strings.Join(ipports[0:len(ipports)-1], ":")
+			backendIp = strings.Trim(backendIp, "[")
+			backendIp = strings.Trim(backendIp, "]")
+			backendPort := ipports[len(ipports)-1]
+			records = append(records, IpvsTabularRecord{
+				Proto:       proto,
+				FrontIp:     frontIp,
+				FrontPort:   frontPort,
+				BackendIp:   backendIp,
+				BackendPort: backendPort,
+				Items:       items,
+			})
+		} else {
+			frontIp, frontPort, proto = "", "", ""
+		}
+	}
+	return records
+}
+
 func UpdateIpvsCounters() {
 	for _, fs := range gIpvsConf.Services {
 		for _, bs := range fs.BackendServers {
@@ -949,47 +1087,17 @@ func UpdateIpvsCounters() {
 		return
 	}
 
-	frontIp := ""
-	frontPort := ""
-	proto := "-u"
-	backendIp := ""
-	backendPort := ""
-	lines := strings.Split(o, "\n")
-	lines = lines[3:] //ignore the first 3 lines
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" || len(line) == 0 {
+	for _, r := range parseIpvsTabular(o) {
+		bs := getIpvsBackend(r.Proto, r.FrontIp, r.FrontPort, r.BackendIp, r.BackendPort)
+		if bs == nil {
+			log.Debugf("GetIpvsCounters backend server for key:%s:%s:%s:%s:%s not found",
+				r.Proto, r.FrontIp, r.FrontPort, r.BackendIp, r.BackendPort)
 			continue
 		}
-		items := strings.Fields(line)
-		if items[0] == "TCP" || items[0] == "UDP" {
-			ipports := strings.Split(items[1], ":")
-			frontIp = strings.Join(ipports[0:len(ipports)-1], ":")
-			frontIp = strings.Trim(frontIp, "[")
-			frontIp = strings.Trim(frontIp, "]")
-			frontPort = ipports[len(ipports)-1]
-		} else if items[0] == "->" {
-			ipports := strings.Split(items[1], ":")
-			backendIp = strings.Join(ipports[0:len(ipports)-1], ":")
-			backendIp = strings.Trim(backendIp, "[")
-			backendIp = strings.Trim(backendIp, "]")
-			backendPort = ipports[len(ipports)-1]
-
-			bs := getIpvsBackend(proto, frontIp, frontPort, backendIp, backendPort)
-			if bs == nil {
-				log.Debugf("GetIpvsCounters backend server for key:%s:%s:%s:%s:%s not found",
-					proto, frontIp, frontPort, backendIp, backendPort)
-				break
-			}
-
-			bs.Counter.ip = backendIp
-			bs.Counter.Status = 1
-			bs.Counter.bytesIn, _ = strconv.ParseUint(strings.Trim(items[5], " "), 10, 64)
-			bs.Counter.bytesOut, _ = strconv.ParseUint(strings.Trim(items[6], " "), 10, 64)
-		} else {
-			frontIp = ""
-			frontPort = ""
-		}
+		bs.Counter.ip = r.BackendIp
+		bs.Counter.Status = 1
+		bs.Counter.bytesIn, _ = strconv.ParseUint(strings.Trim(r.Items[5], " "), 10, 64)
+		bs.Counter.bytesOut, _ = strconv.ParseUint(strings.Trim(r.Items[6], " "), 10, 64)
 	}
 
 	b = utils.Bash{
@@ -1012,42 +1120,17 @@ func UpdateIpvsCounters() {
 	if ret != 0 || err != nil {
 		return
 	}
-	lines = strings.Split(o, "\n")
-	lines = lines[3:] //ignore the first 3 lines
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" || len(line) == 0 {
+	for _, r := range parseIpvsTabular(o) {
+		bs := getIpvsBackend(r.Proto, r.FrontIp, r.FrontPort, r.BackendIp, r.BackendPort)
+		if bs == nil {
+			log.Debugf("GetIpvsCounters backend server for key:%s:%s:%s:%s:%s not found",
+				r.Proto, r.FrontIp, r.FrontPort, r.BackendIp, r.BackendPort)
 			continue
 		}
-		items := strings.Fields(line)
-		if items[0] == "TCP" || items[0] == "UDP" {
-			ipports := strings.Split(items[1], ":")
-			frontIp = strings.Join(ipports[0:len(ipports)-1], ":")
-			frontIp = strings.Trim(frontIp, "[")
-			frontIp = strings.Trim(frontIp, "]")
-			frontPort = ipports[len(ipports)-1]
-		} else if items[0] == "->" {
-			ipports := strings.Split(items[1], ":")
-			backendIp = strings.Join(ipports[0:len(ipports)-1], ":")
-			backendIp = strings.Trim(backendIp, "[")
-			backendIp = strings.Trim(backendIp, "]")
-			backendPort = ipports[len(ipports)-1]
-
-			bs := getIpvsBackend(proto, frontIp, frontPort, backendIp, backendPort)
-			if bs == nil {
-				log.Debugf("GetIpvsCounters backend server for key:%s:%s:%s:%s:%s not found",
-					proto, frontIp, frontPort, backendIp, backendPort)
-				break
-			}
-
-			bs.Counter.sessionNumber, _ = strconv.ParseUint(strings.Trim(items[4], " "), 10, 64)
-			bs.Counter.concurrentSessionNumber = bs.Counter.sessionNumber
-			bs.Counter.refusedSessionNumber, _ = strconv.ParseUint(strings.Trim(items[5], " "), 10, 64)
-			bs.Counter.totalSessionNumber = bs.Counter.sessionNumber + bs.Counter.refusedSessionNumber
-		} else {
-			frontIp = ""
-			frontPort = ""
-		}
+		bs.Counter.sessionNumber, _ = strconv.ParseUint(strings.Trim(r.Items[4], " "), 10, 64)
+		bs.Counter.concurrentSessionNumber = bs.Counter.sessionNumber
+		bs.Counter.refusedSessionNumber, _ = strconv.ParseUint(strings.Trim(r.Items[5], " "), 10, 64)
+		bs.Counter.totalSessionNumber = bs.Counter.sessionNumber + bs.Counter.refusedSessionNumber
 	}
 }
 
@@ -1117,6 +1200,10 @@ func InitIpvs() {
 	gIpvsConf = &IpvsConf{}
 	gIpvsLbInfoMap = make(map[string]map[string]LbInfo)
 
+	// F-013: start the UDS server before health-check daemon so the
+	// daemon's hello succeeds on first attempt.
+	StartIpvsUdsServer()
+
 	// add ipvs-log, ipvs-full-nat to nat table postrouting chain,
 	// ipvs log must be ahead of ipvs-full-nat
 	table := utils.NewIpTables(utils.NatTable)
@@ -1149,3 +1236,137 @@ func InitIpvs() {
 	bash.Run()
 	bash.PanicIfError()
 }
+
+// ----- F-012: Listener wrappers for IPVS dispatch ------------------------------
+//
+// IpvsModeDR / IpvsModeFullNat are the values transported in LbInfo.IpvsMode
+// from the management server.  An empty IpvsMode means "use legacy default":
+//   - protocol udp -> IpvsFullNatListener (gobetween retired by Story S-002)
+//   - protocol tcp/http/https -> HaproxyListener
+//
+// IpvsDRListener and IpvsFullNatListener satisfy the Listener interface but
+// most operations are no-ops because the actual ipvsadm/iptables work is
+// driven by the batch RefreshIpvsBackend() invoked once per refresh wave by
+// commitIpvsListeners().  This preserves the O(1) full-state-rebuild
+// semantics of the existing data plane while routing dispatch through the
+// uniform Listener entry point.
+const (
+IpvsModeDR      = "dr"
+IpvsModeFullNat = "fullnat"
+)
+
+func isIpvsListenerType(l Listener) bool {
+switch l.(type) {
+case *IpvsDRListener, *IpvsFullNatListener:
+return true
+}
+return false
+}
+
+// commitIpvsListeners rebuilds the global IPVS state from the supplied
+// listeners.  It replaces the former direct call to RefreshIpvsService.
+// Callers MUST pass the complete set of IPVS listeners present in the wave,
+// or use removeIpvsListeners separately for ones being torn down.
+func commitIpvsListeners(listeners []Listener, enableLog bool) {
+if len(listeners) == 0 {
+return
+}
+lbs := make(map[string]LbInfo, len(listeners))
+for _, l := range listeners {
+info := l.getLbInfo()
+lbs[info.ListenerUuid] = info
+}
+if err := RefreshIpvsService(lbs, enableLog); err != nil {
+utils.PanicOnError(err)
+}
+}
+
+// removeIpvsListeners tears down the IPVS state for the supplied listeners.
+func removeIpvsListeners(listeners []Listener) {
+if len(listeners) == 0 {
+return
+}
+lbs := make(map[string]LbInfo, len(listeners))
+for _, l := range listeners {
+info := l.getLbInfo()
+lbs[info.ListenerUuid] = info
+}
+DelIpvsService(lbs)
+}
+
+// IpvsFullNatListener is the Listener wrapper for IPVS FullNAT mode.
+type IpvsFullNatListener struct {
+lb           LbInfo
+lastCounters *CachedCounters
+}
+
+func (l *IpvsFullNatListener) createListenerServiceConfigure(lb LbInfo) (err error) {
+return nil
+}
+func (l *IpvsFullNatListener) checkIfListenerServiceUpdate(orig, curr string) (bool, error) {
+return true, nil
+}
+func (l *IpvsFullNatListener) startListenerService() (int, error) { return 0, nil }
+func (l *IpvsFullNatListener) stopListenerService() error         { return nil }
+func (l *IpvsFullNatListener) postActionListenerServiceStop() (int, error) {
+return 0, nil
+}
+func (l *IpvsFullNatListener) getLbCounters(listenerUuid string, _ Listener) <-chan CounterChanData {
+ch := make(chan CounterChanData, 1)
+close(ch)
+return ch
+}
+func (l *IpvsFullNatListener) getLastCounters() *CachedCounters { return l.lastCounters }
+func (l *IpvsFullNatListener) getIptablesRule() ([]*utils.IpTableRule, string) {
+return nil, ""
+}
+func (l *IpvsFullNatListener) getIcmpIptablesRule() ([]*utils.IpTableRule, string) {
+return nil, ""
+}
+func (l *IpvsFullNatListener) getSynIptablesRule() (*utils.IpTableRule, string) {
+return nil, ""
+}
+func (l *IpvsFullNatListener) getLbInfo() LbInfo { return l.lb }
+func (l *IpvsFullNatListener) startPidMonitor()  {}
+func (l *IpvsFullNatListener) stopPidMonitor()   {}
+func (l *IpvsFullNatListener) getMaxSession() int { return 0 }
+
+// IpvsDRListener is the Listener wrapper for IPVS Direct-Routing mode.
+// It behaves identically to IpvsFullNatListener at this layer; the actual
+// ipvsadm rule shape is selected inside RefreshIpvsBackend based on the
+// listener's IpvsMode.
+type IpvsDRListener struct {
+lb           LbInfo
+lastCounters *CachedCounters
+}
+
+func (l *IpvsDRListener) createListenerServiceConfigure(lb LbInfo) (err error) {
+return nil
+}
+func (l *IpvsDRListener) checkIfListenerServiceUpdate(orig, curr string) (bool, error) {
+return true, nil
+}
+func (l *IpvsDRListener) startListenerService() (int, error) { return 0, nil }
+func (l *IpvsDRListener) stopListenerService() error         { return nil }
+func (l *IpvsDRListener) postActionListenerServiceStop() (int, error) {
+return 0, nil
+}
+func (l *IpvsDRListener) getLbCounters(listenerUuid string, _ Listener) <-chan CounterChanData {
+ch := make(chan CounterChanData, 1)
+close(ch)
+return ch
+}
+func (l *IpvsDRListener) getLastCounters() *CachedCounters { return l.lastCounters }
+func (l *IpvsDRListener) getIptablesRule() ([]*utils.IpTableRule, string) {
+return nil, ""
+}
+func (l *IpvsDRListener) getIcmpIptablesRule() ([]*utils.IpTableRule, string) {
+return nil, ""
+}
+func (l *IpvsDRListener) getSynIptablesRule() (*utils.IpTableRule, string) {
+return nil, ""
+}
+func (l *IpvsDRListener) getLbInfo() LbInfo  { return l.lb }
+func (l *IpvsDRListener) startPidMonitor()   {}
+func (l *IpvsDRListener) stopPidMonitor()    {}
+func (l *IpvsDRListener) getMaxSession() int { return 0 }

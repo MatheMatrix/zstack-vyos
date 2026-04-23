@@ -147,6 +147,12 @@ type LbInfo struct {
 	SecurityPolicyType string             `json:"securityPolicyType"`
 	ServerGroups       []ServerGroupInfo  `json:"serverGroups"`
 	RedirectRules      []RedirectRuleInfo `json:"redirectRules"`
+	// IpvsMode selects the data-plane engine for tcp/udp listeners:
+	//   "dr"      -> IPVS Direct Routing  (IpvsDRListener)
+	//   "fullnat" -> IPVS FullNAT         (IpvsFullNatListener)
+	//   ""        -> legacy default: haproxy for tcp/http/https, IPVS-fullnat for udp
+	IpvsMode  string `json:"ipvsMode"`
+	Scheduler string `json:"scheduler"`
 }
 
 type CertificateInfo struct {
@@ -351,25 +357,30 @@ func getGBApiPort(confPath string, pidPath string) (port string) {
 }
 
 func GetListener(lb LbInfo) Listener {
-	pidPath := makeLbPidFilePath(lb)
-	confPath := makeLbConfFilePath(lb)
-	sockPath := makeLbSocketPath(lb)
-	aclPath := makeLbAclConfFilePath(lb)
-	des := makeLbFirewallRuleDescription(lb)
-	localICMPDes := makeLbFirewallLocalICMPRuleDescription(lb)
+	switch lb.IpvsMode {
+	case IpvsModeDR:
+		return &IpvsDRListener{lb: lb, lastCounters: &CachedCounters{}}
+	case IpvsModeFullNat:
+		return &IpvsFullNatListener{lb: lb, lastCounters: &CachedCounters{}}
+	case "":
+		// fall through to legacy default dispatch by protocol
+	default:
+		utils.PanicOnError(fmt.Errorf("unknown ipvsMode %q for listener %s", lb.IpvsMode, lb.ListenerUuid))
+	}
 
 	switch lb.Mode {
-	case "udp":
-		port := getGBApiPort(confPath, pidPath)
-		if port == "" {
-			log.Errorf("there is no free port for rest api for listener: %v \n", lb.ListenerUuid)
-			return nil
-		}
-		lastCounters := &CachedCounters{}
-		return &GBListener{lb: lb, confPath: confPath, pidPath: pidPath, firewallDes: des, firewallLocalICMPDes: localICMPDes, apiPort: port, aclPath: aclPath, lastCounters: lastCounters}
-	case "tcp", "https", "http":
-		lastCounters := &CachedCounters{}
-		return &HaproxyListener{lb: lb, confPath: confPath, pidPath: pidPath, firewallDes: des, firewallLocalICMPDes: localICMPDes, sockPath: sockPath, aclPath: aclPath, lastCounters: lastCounters}
+	case LB_MODE_UDP:
+		// UDP listeners are migrated to IPVS-fullnat (gobetween retired)
+		log.Debugf("listener %s has empty ipvsMode and protocol=udp, defaulting to IPVS-fullnat", lb.ListenerUuid)
+		return &IpvsFullNatListener{lb: lb, lastCounters: &CachedCounters{}}
+	case LB_MODE_TCP, LB_MODE_HTTPS, LB_MODE_HTTP:
+		pidPath := makeLbPidFilePath(lb)
+		confPath := makeLbConfFilePath(lb)
+		sockPath := makeLbSocketPath(lb)
+		aclPath := makeLbAclConfFilePath(lb)
+		des := makeLbFirewallRuleDescription(lb)
+		localICMPDes := makeLbFirewallLocalICMPRuleDescription(lb)
+		return &HaproxyListener{lb: lb, confPath: confPath, pidPath: pidPath, firewallDes: des, firewallLocalICMPDes: localICMPDes, sockPath: sockPath, aclPath: aclPath, lastCounters: &CachedCounters{}}
 	default:
 		utils.PanicOnError(fmt.Errorf("No such listener %v", lb.Mode))
 	}
@@ -2170,35 +2181,20 @@ func AddLbs(lbs []Listener) error {
 	return nil
 }
 
-func isIpvsListener(info LbInfo) bool {
-	if info.Mode != LB_MODE_UDP {
-		return false
-	}
-
-	confPath := makeLbConfFilePath(info)
-	_, err := utils.FindFirstPIDByPSExtern(true, confPath)
-	if err == nil {
-		// gobetween is running for listener
-		return false
-	}
-
-	return true
-}
-
 func RefreshLbInternal(cmd *RefreshLbCmd) {
 	var toDeleted []Listener
 	var toAdded []Listener
-	ipvsAdded := map[string]LbInfo{}
+	var ipvsListeners []Listener
 
 	EnableHaproxyLog = cmd.EnableHaproxyLog
 	for _, lb := range cmd.Lbs {
-		if isIpvsListener(lb) {
-			ipvsAdded[lb.ListenerUuid] = lb
+		listener := GetListener(lb)
+		if listener == nil {
 			continue
 		}
 
-		listener := GetListener(lb)
-		if listener == nil {
+		if isIpvsListenerType(listener) {
+			ipvsListeners = append(ipvsListeners, listener)
 			continue
 		}
 
@@ -2219,10 +2215,7 @@ func RefreshLbInternal(cmd *RefreshLbCmd) {
 		AddLbs(toAdded)
 	}
 
-	if len(ipvsAdded) > 0 {
-		RefreshIpvsService(ipvsAdded, cmd.EnableHaproxyLog)
-	}
-
+	commitIpvsListeners(ipvsListeners, cmd.EnableHaproxyLog)
 }
 
 func refreshLb(ctx *server.CommandContext) interface{} {
@@ -2258,16 +2251,15 @@ func delLbs(lbs []Listener) error {
 
 func DeleteLbInternal(cmd *deleteLbCmd) {
 	toDeleted := []Listener{}
-	ipvs := map[string]LbInfo{}
+	var ipvsListeners []Listener
 	if len(cmd.Lbs) > 0 {
 		for _, lb := range cmd.Lbs {
-			if isIpvsListener(lb) {
-				ipvs[lb.ListenerUuid] = lb
-				continue
-			}
-
 			listener := GetListener(lb)
 			if listener == nil {
+				continue
+			}
+			if isIpvsListenerType(listener) {
+				ipvsListeners = append(ipvsListeners, listener)
 				continue
 			}
 			toDeleted = append(toDeleted, listener)
@@ -2278,8 +2270,8 @@ func DeleteLbInternal(cmd *deleteLbCmd) {
 		delLbs(toDeleted)
 	}
 
-	if len(ipvs) >= 0 {
-		DelIpvsService(ipvs)
+	if len(ipvsListeners) > 0 {
+		removeIpvsListeners(ipvsListeners)
 	}
 }
 
