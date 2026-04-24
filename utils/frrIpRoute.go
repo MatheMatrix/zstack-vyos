@@ -611,21 +611,33 @@ func getRouteEntryForIp(ip string) (*ZStackRouteEntry, error) {
 }
 
 func AddRouteForMgmtEuler2203(mgtIp, mgtNic, gw string) error {
-	entry, err := getRouteEntryForIp(mgtIp)
-	if err != nil {
-		return err
+	isIpv6 := IsIpv6Address(mgtIp)
+
+	// getRouteEntryForIp 使用 vtysh 的 "show ip route"，暂不支持 IPv6
+	if !isIpv6 {
+		entry, err := getRouteEntryForIp(mgtIp)
+		if err != nil {
+			return err
+		}
+
+		if entry != nil && entry.NicName == mgtNic {
+			log.Debugf("no need to add mgtip route")
+			return nil
+		}
 	}
 
-	if entry != nil && entry.NicName == mgtNic {
-		log.Debugf("no need to add mgtip route")
-		return nil
+	destCidr := mgtIp
+	// IPv6 主机路由需要显式指定 /128
+	if isIpv6 && !strings.Contains(mgtIp, "/") {
+		destCidr = mgtIp + "/128"
 	}
 
 	mgtEntry := ZStackRouteEntry{
-		DestinationCidr: mgtIp,
+		DestinationCidr: destCidr,
 		NicName:         mgtNic,
 		NextHopIp:       gw,
 		TableId:         ROUTETABLE_ID_MAIN,
+		Ipv6:            isIpv6,
 	}
 	return addRouteEntries([]ZStackRouteEntry{mgtEntry})
 }

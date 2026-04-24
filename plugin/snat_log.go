@@ -205,6 +205,10 @@ func configureSnatLogRuntimeEnv(conf snatLogRuntimeConfig) error {
 }
 
 func buildSnatRsyslogConf(targetIp string) string {
+	target := targetIp
+	if utils.IsIpv6Address(targetIp) {
+		target = fmt.Sprintf("[%s]", targetIp)
+	}
 	return fmt.Sprintf(`module(load="imfile")
 
 input(type="imfile"
@@ -228,7 +232,7 @@ if ($syslogtag contains "snat.raw") then {
            queue.saveonshutdown="on")
     stop
 }
-`, snatLogLocalFilePath, targetIp, snatLogRsyslogPort)
+`, snatLogLocalFilePath, target, snatLogRsyslogPort)
 }
 
 func configureSnatRsyslog(enable bool, targetIp string) error {
