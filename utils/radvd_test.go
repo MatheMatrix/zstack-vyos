@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io/ioutil"
+	"path/filepath"
 	"reflect"
 	"text/template"
 
@@ -12,14 +13,14 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-func GetRadvdJsonFile() {
+func GetRadvdJsonFile() string {
 	return filepath.Join(GetZvrRootPath(), ".zstack_config/radvd")
 }
 
 var _ = Describe("radvd_test", func() {
 	var globalMap RadvdAttrsMap
 	It("[RADVD]: test pre env", func() {
-		InitLog(GetVyosUtLogDir()+"radvd_test.log", utils.IsRuingUT())
+		InitLog(GetVyosUtLogDir()+"radvd_test.log", IsRuingUT())
 		globalMap = make(RadvdAttrsMap)
 		cleanUpConfig()
 	})
@@ -104,7 +105,7 @@ var _ = Describe("radvd_test", func() {
 
 func cleanUpConfig() {
 	bash := Bash{
-		Command: fmt.Sprintf("rm -f %s; sudo pkill -9 radvd", GetRadvdJsonFile())
+		Command: fmt.Sprintf("rm -f %s; sudo pkill -9 radvd", GetRadvdJsonFile()),
 		Sudo:    true,
 	}
 	bash.Run()
