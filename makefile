@@ -1,10 +1,10 @@
-GO_118_PATH := /usr/lib/golang1.18
-ifneq ($(wildcard $(GO_118_PATH)),)
-    GOROOT := $(GO_118_PATH)
+GO_121_PATH := /usr/lib/golang1.21
+ifneq ($(wildcard $(GO_121_PATH)),)
+    GOROOT := $(GO_121_PATH)
 endif
 
 ifndef GOROOT
-    $(error GOROOT is not set)
+    $(error GOROOT is not set, please install Go 1.21+ at $(GO_121_PATH))
 endif
 
 ARCH?=amd64 arm64
@@ -12,6 +12,13 @@ ARCH?=amd64 arm64
 # Support for loongarch64 abi1.0 cross-compilation requires specific go and is currently only supported.
 # download page for specific go: http://www.loongnix.cn/zh/toolchain/Golang/
 # Loongarch64 abi2.0 cross-compilation is supported after go1.19.
+#
+# NOTE: cilium/ebpf v0.16.0 requires Go 1.21+ (uses maps/slices stdlib packages).
+# The loong64 toolchain (go1.19_la_abi1) cannot compile it, so plugin/vip_ebpf.go
+# is excluded on loong64 via the build tag "linux && !loong64".  VIP traffic
+# counters fall back to conntrack mode on LoongArch at runtime.
+# If cilium/ebpf is imported by any OTHER binary that must build on loong64,
+# that binary's build environment must be upgraded to Go 1.21+.
 ifeq ($(findstring loong64,$(ARCH)),loong64)
     ifndef GOROOT_LA
         $(error GOROOT for loong64 is not set)
@@ -23,10 +30,14 @@ GO_BUILD=$(shell echo 'GOOS=$${GOOS} GOARCH=$${GOARCH} $(GO) build')
 #export GOPATH=$(shell pwd)
 export GOPROXY=https://goproxy.cn,direct
 export GO111MODULE=on
+# Prevent Go from auto-downloading a newer toolchain when go.work/go.mod specifies
+# a version higher than what is installed (e.g. after running go work sync on a
+# developer machine with a newer Go).  The build server must use the local toolchain.
+export GOTOOLCHAIN=local
 # GOROOT has not set to environment variable before target, so use $(GOROOT) instead
 SUPPORT_GO_WORKSPACE := $(shell $(GOROOT)/bin/go work help >/dev/null 2>&1 ; echo $$?)
 ifneq ($(SUPPORT_GO_WORKSPACE), 0)
-    $(error workspace mode is not supported, and requires go version greater than 1.18)
+    $(error workspace mode is not supported, requires Go 1.21 or later)
 endif
 
 export TestEnv=devTestEnv.json

@@ -3,6 +3,7 @@ package plugin
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -482,16 +483,29 @@ func (rules *interfaceQosRules) InterfaceQosRuleInit(direct direction) interface
 				utils.PanicOnError(err)
 			}
 			_ = utils.IpLinkSetUp(rules.ifbName)
-			bash := utils.Bash{
-				Command: fmt.Sprintf("tc qdisc add dev %s handle ffff: ingress;"+
-					"tc filter add dev %s parent ffff: protocol ip u32 match u32 0 0 action mirred egress redirect dev %s;"+
-					"tc filter add dev %s parent ffff: protocol ipv6 u32 match u32 0 0 action mirred egress redirect dev %s",
-					rules.name,
-					rules.name, rules.ifbName,
-					rules.name, rules.ifbName),
-				Sudo: true,
+			if HasClsact(rules.name) {
+				// clsact qdisc is owned by eBPF; add mirred redirect on its ingress hook.
+				bash := utils.Bash{
+					Command: fmt.Sprintf(
+						"tc filter replace dev %s ingress prio 49152 protocol ip u32 match u32 0 0 action mirred egress redirect dev %s;"+
+							"tc filter replace dev %s ingress prio 49151 protocol ipv6 u32 match u32 0 0 action mirred egress redirect dev %s",
+						rules.name, rules.ifbName,
+						rules.name, rules.ifbName),
+					Sudo: true,
+				}
+				bash.Run()
+			} else {
+				bash := utils.Bash{
+					Command: fmt.Sprintf("tc qdisc add dev %s handle ffff: ingress;"+
+						"tc filter add dev %s parent ffff: protocol ip u32 match u32 0 0 action mirred egress redirect dev %s;"+
+						"tc filter add dev %s parent ffff: protocol ipv6 u32 match u32 0 0 action mirred egress redirect dev %s",
+						rules.name,
+						rules.name, rules.ifbName,
+						rules.name, rules.ifbName),
+					Sudo: true,
+				}
+				bash.Run()
 			}
-			bash.Run()
 			name = rules.ifbName
 
 			mtu, _ := utils.IpLinkGetMTU(rules.name)
@@ -567,16 +581,28 @@ func (rules *interfaceQosRules) InterfaceQosRuleCleanUp() interface{} {
 
 	if rules.direct == INGRESS {
 		if !utils.IsEnableVyosCmd() {
-			bash := utils.Bash{
-				Command: fmt.Sprintf("tc qdisc del dev %s handle ffff: ingress;"+
-					"tc filter del dev %s parent ffff: protocol ip u32 match u32 0 0 action mirred egress redirect dev %s;"+
-					"tc filter del dev %s parent ffff: protocol ipv6 u32 match u32 0 0 action mirred egress redirect dev %s",
-					rules.name,
-					rules.ifbName, rules.ifbName,
-					rules.name, rules.ifbName),
-				Sudo: true,
+			if HasClsact(rules.name) {
+				// clsact is managed by eBPF; only remove mirred filters, leave clsact intact.
+				bash := utils.Bash{
+					Command: fmt.Sprintf(
+						"tc filter del dev %s ingress prio 49152 protocol ip || true;"+
+							"tc filter del dev %s ingress prio 49151 protocol ipv6 || true",
+						rules.name, rules.name),
+					Sudo: true,
+				}
+				bash.Run()
+			} else {
+				bash := utils.Bash{
+					Command: fmt.Sprintf("tc qdisc del dev %s handle ffff: ingress;"+
+						"tc filter del dev %s parent ffff: protocol ip u32 match u32 0 0 action mirred egress redirect dev %s;"+
+						"tc filter del dev %s parent ffff: protocol ipv6 u32 match u32 0 0 action mirred egress redirect dev %s",
+						rules.name,
+						rules.name, rules.ifbName,
+						rules.name, rules.ifbName),
+					Sudo: true,
+				}
+				bash.Run()
 			}
-			bash.Run()
 			if utils.IpLinkIsExist(rules.ifbName) {
 				err := utils.IpLinkDel(rules.ifbName)
 				utils.PanicOnError(err)
@@ -1083,8 +1109,22 @@ func initVipCounterChains() error {
 		Command: "sysctl -w net.netfilter.nf_conntrack_acct=1",
 		Sudo:    true,
 	}
-
 	bash.Run()
+
+	if utils.IsEuler2203() {
+		log.Infof("VIP counter: OpenEuler 22.03 detected, attempting eBPF mode")
+		if err := initEbpfVipCounter(); err != nil {
+			if errors.Is(err, ErrEbpfArchUnsupported) {
+				log.Infof("VIP counter: eBPF not supported on this architecture, using conntrack mode")
+			} else {
+				log.Warnf("VIP counter: eBPF init failed, falling back to conntrack mode: %v", err)
+			}
+		} else {
+			log.Infof("VIP counter: eBPF mode active")
+		}
+	} else {
+		log.Infof("VIP counter: non-OpenEuler platform, using conntrack mode")
+	}
 	return nil
 }
 
@@ -1110,6 +1150,24 @@ func SetVip(cmd *setVipCmd) interface{} {
 				}
 			}
 			vipPromCollector.mu.Unlock()
+		}
+
+		if ebpfObjs != nil {
+			nicName, err := utils.GetNicNameByMac(vip.OwnerEthernetMac)
+			if err != nil || nicName == "" {
+				log.Warnf("VIP eBPF: cannot resolve NIC for VIP %s (mac=%s): %v — TC filter may not cover this VIP", vip.Ip, vip.OwnerEthernetMac, err)
+			} else {
+				log.Debugf("VIP eBPF: resolved NIC %s for VIP %s (mac=%s), ensuring TC filters", nicName, vip.Ip, vip.OwnerEthernetMac)
+				ensureEbpfOnInterface(nicName)
+			}
+			if vip.Ip != "" {
+				log.Debugf("VIP eBPF: registering IPv4 VIP %s (uuid=%s) in eBPF map", vip.Ip, vip.VipUuid)
+				ebpfAddVip(net.ParseIP(vip.Ip))
+			}
+			if vip.Ip6 != "" {
+				log.Debugf("VIP eBPF: registering IPv6 VIP %s (uuid=%s) in eBPF map", vip.Ip6, vip.VipUuid)
+				ebpfAddVip(net.ParseIP(vip.Ip6))
+			}
 		}
 	}
 
@@ -1438,6 +1496,15 @@ func RemoveVip(cmd *removeVipCmd) interface{} {
 				delete(vipPromCollector.counters, vip.Ip6)
 			}
 			vipPromCollector.mu.Unlock()
+		}
+
+		if ebpfObjs != nil {
+			if vip.Ip != "" {
+				ebpfDelVip(net.ParseIP(vip.Ip))
+			}
+			if vip.Ip6 != "" {
+				ebpfDelVip(net.ParseIP(vip.Ip6))
+			}
 		}
 	}
 
@@ -1990,9 +2057,16 @@ func (c *vipCollector) Update(ch chan<- prom.Metric) error {
 		return nil
 	}
 
-	c.updateCountersByConntrack()
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	if ebpfObjs != nil {
+		log.Debugf("VIP metrics: eBPF mode — collecting stats for %d VIPs", len(c.counters))
+		updateCountersByEbpf(c.counters)
+	} else {
+		log.Debugf("VIP metrics: conntrack mode — collecting stats for %d VIPs", len(c.counters))
+		c.updateCountersByConntrack()
+	}
 
 	for _, rule := range c.counters {
 		vipUuid := rule.VipUuid
