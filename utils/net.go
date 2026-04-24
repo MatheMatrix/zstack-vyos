@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -245,9 +246,12 @@ func GetIpByNicName(nic string) (string, error) {
 	return os[0], nil
 }
 
-func GetIpFromUrl(url string) (string, error) {
-	ip := strings.Split(strings.Split(url, "/")[2], ":")[0]
-	return ip, nil
+func GetIpFromUrl(rawUrl string) (string, error) {
+	u, err := url.Parse(rawUrl)
+	if err != nil {
+		return "", fmt.Errorf("invalid url: %s", rawUrl)
+	}
+	return u.Hostname(), nil // 自动去除 IPv6 括号：[2001:db8::1] → 2001:db8::1
 }
 
 func CheckIpDuplicate(nicname, ip string) bool {
@@ -257,9 +261,13 @@ func CheckIpDuplicate(nicname, ip string) bool {
 }
 
 func CheckZStackRouteExists(ip string) bool {
-	bash := Bash{
-		Command: fmt.Sprintf("ip r list %s/32 proto zstack", ip),
+	var cmd string
+	if IsIpv6Address(ip) {
+		cmd = fmt.Sprintf("ip -6 r list %s/128 proto zstack", ip)
+	} else {
+		cmd = fmt.Sprintf("ip r list %s/32 proto zstack", ip)
 	}
+	bash := Bash{Command: cmd}
 	_, o, _, _ := bash.RunWithReturn()
 	if o == "" {
 		return false
@@ -269,12 +277,24 @@ func CheckZStackRouteExists(ip string) bool {
 
 func DeleteRouteIfExists(ip string) error {
 	if CheckZStackRouteExists(ip) == true {
-		bash := Bash{
-			Command: fmt.Sprintf("sudo ip route del %s/32", ip),
-		}
-		if IsEuler2203() {
+		var bash Bash
+		if IsIpv6Address(ip) {
 			bash = Bash{
-				Command: fmt.Sprintf("sudo vtysh -c 'configure terminal' -c 'no ip route %s/32'", ip),
+				Command: fmt.Sprintf("sudo ip -6 route del %s/128", ip),
+			}
+			if IsEuler2203() {
+				bash = Bash{
+					Command: fmt.Sprintf("sudo vtysh -c 'configure terminal' -c 'no ipv6 route %s/128'", ip),
+				}
+			}
+		} else {
+			bash = Bash{
+				Command: fmt.Sprintf("sudo ip route del %s/32", ip),
+			}
+			if IsEuler2203() {
+				bash = Bash{
+					Command: fmt.Sprintf("sudo vtysh -c 'configure terminal' -c 'no ip route %s/32'", ip),
+				}
 			}
 		}
 		_, _, _, err := bash.RunWithReturn()
@@ -292,7 +312,17 @@ func SetZStackRoute(ip string, nic string, gw string) error {
 	DeleteRouteIfExists(ip)
 
 	var bash Bash
-	if gw == "" {
+	if IsIpv6Address(ip) {
+		if gw == "" {
+			bash = Bash{
+				Command: fmt.Sprintf("sudo ip -6 route add %s/128 dev %s proto %s", ip, nic, ZSTACK_ROUTE_PROTO),
+			}
+		} else {
+			bash = Bash{
+				Command: fmt.Sprintf("sudo ip -6 route add %s/128 via %s dev %s proto %s", ip, gw, nic, ZSTACK_ROUTE_PROTO),
+			}
+		}
+	} else if gw == "" {
 		bash = Bash{
 			Command: fmt.Sprintf("sudo ip route add %s/32 dev %s proto %s", ip, nic, ZSTACK_ROUTE_PROTO),
 		}
@@ -308,7 +338,11 @@ func SetZStackRoute(ip string, nic string, gw string) error {
 	}
 	// NOTE(WeiW): It will return 2 if exists
 	if ret != 0 && ret != 2 {
-		return errors.New(fmt.Sprintf("add route to %s/32 via %s dev %s failed", ip, gw, nic))
+		prefix := "/32"
+		if IsIpv6Address(ip) {
+			prefix = "/128"
+		}
+		return errors.New(fmt.Sprintf("add route to %s%s via %s dev %s failed", ip, prefix, gw, nic))
 	}
 
 	return nil
@@ -471,12 +505,33 @@ func GetNicNumber(nic string) (int, error) {
 }
 
 func CheckMgmtCidrContainsIp(ip string, mgmtNic map[string]interface{}) bool {
+	parsedIp := net.ParseIP(ip)
+	if parsedIp == nil {
+		return false
+	}
+
+	if IsIpv6Address(ip) {
+		ip6, ok := mgmtNic["ip6"].(string)
+		if !ok || ip6 == "" {
+			return false
+		}
+		prefixLength, ok := mgmtNic["prefixLength"].(float64)
+		if !ok {
+			return false
+		}
+		_, mgmtNet6, err := net.ParseCIDR(fmt.Sprintf("%s/%d", ip6, int(prefixLength)))
+		if err != nil {
+			return false
+		}
+		return mgmtNet6.Contains(parsedIp)
+	}
+
 	maskCidr, err := NetmaskToCIDR(mgmtNic["netmask"].(string))
 	PanicOnError(err)
 	_, mgmtNet, err := net.ParseCIDR(fmt.Sprintf("%s/%d", mgmtNic["ip"], maskCidr))
 	PanicOnError(err)
 
-	return mgmtNet.Contains(net.ParseIP(ip))
+	return mgmtNet.Contains(parsedIp)
 }
 
 func GetPrivteInterface() []string {
@@ -688,6 +743,10 @@ func IsIpv4Address(address string) bool {
 	}
 
 	return false
+}
+
+func IsIpv6Address(address string) bool {
+	return net.ParseIP(address) != nil && strings.Contains(address, ":")
 }
 
 func IsMgtNic(name string) bool {

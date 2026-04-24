@@ -198,6 +198,26 @@ func GetVirtualRouterUuid() string {
 
 func IsInManagementCidr(vipStr string) bool {
 	mgmtNic := BootstrapInfo["managementNic"].(map[string]interface{})
+
+	vip := net.ParseIP(vipStr)
+	if vip == nil {
+		return false
+	}
+
+	// IPv6 路径
+	if strings.Contains(vipStr, ":") {
+		ip6, ok4 := mgmtNic["ip6"].(string)
+		prefixLength, ok5 := mgmtNic["prefixLength"].(float64)
+		if ok4 && ok5 && ip6 != "" {
+			_, ipNet6, err := net.ParseCIDR(fmt.Sprintf("%s/%d", ip6, int(prefixLength)))
+			if err == nil && ipNet6.Contains(vip) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// IPv4 路径
 	ipStr, _ := mgmtNic["ip"].(string)
 	netmaskStr, _ := mgmtNic["netmask"].(string)
 
@@ -206,7 +226,6 @@ func IsInManagementCidr(vipStr string) bool {
 
 	cidr := net.IPNet{IP: ip, Mask: netmask}
 
-	vip := net.ParseIP(vipStr)
 	return cidr.Contains(vip)
 }
 

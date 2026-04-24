@@ -592,6 +592,13 @@ func InitNicFirewall(nic string, ip string, pubNic bool, defaultAction string) e
 			rule.SetComment(SystemTopRule).SetDstIp(ip + "/32").SetProto(IPTABLES_PROTO_TCP).SetDstPort(strconv.FormatFloat(sshPort, 'f', 0, 64))
 			rules = append(rules, rule)
 		}
+	} else if IsIpv6Address(ip) && IsMgtNic(nic) {
+		// IPv6 管理网：直接添加 ip6tables 规则放行 SSH 和 zvr 端口
+		sshPortStr := strconv.FormatFloat(sshPort, 'f', 0, 64)
+		b := Bash{Command: fmt.Sprintf("sudo ip6tables -I INPUT -d %s/128 -p tcp --dport %s -j ACCEPT", ip, sshPortStr)}
+		b.Run()
+		b = Bash{Command: fmt.Sprintf("sudo ip6tables -I INPUT -d %s/128 -p tcp --dport 7272 -j ACCEPT", ip)}
+		b.Run()
 	}
 
 	rule = NewDefaultIpTableRule(localChain, IPTABLES_RULENUMBER_MAX)
