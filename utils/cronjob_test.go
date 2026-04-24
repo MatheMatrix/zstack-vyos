@@ -99,7 +99,7 @@ func checkCrondProcess() bool {
 
 func checkCrondConfig(c CronjobMap) {
 	testMap := make(CronjobMap)
-	err := JsonLoadConfig(CROND_JSON_FILE, &testMap)
+	err := JsonLoadConfig(getCrondJsonFile(), &testMap)
 	Expect(err).To(BeNil(), fmt.Sprintf("load crond json error: %+v", err))
 
 	ret := reflect.DeepEqual(c, testMap)
