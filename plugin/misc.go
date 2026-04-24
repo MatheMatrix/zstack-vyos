@@ -427,9 +427,11 @@ func addRouteIfCallbackIpChanged(init bool) {
 
 		mgmtNic := utils.GetMgmtInfoFromBootInfo()
 		if utils.IsEuler2203() {
-			gw := mgmtNic["gateway"].(string)
+			var gw string
 			if utils.IsIpv6Address(server.CALLBACK_IP) {
 				gw, _ = mgmtNic["gateway6"].(string)
+			} else {
+				gw, _ = mgmtNic["gateway"].(string)
 			}
 			_ = utils.AddRouteForMgmtEuler2203(server.CALLBACK_IP, "eth0", gw)
 			server.CURRENT_CALLBACK_IP = server.CALLBACK_IP
@@ -442,9 +444,11 @@ func addRouteIfCallbackIpChanged(init bool) {
 			utils.PanicOnError(err)
 		}
 		if mgmtNic != nil && utils.CheckMgmtCidrContainsIp(server.CALLBACK_IP, mgmtNic) == false {
-			gw := mgmtNic["gateway"].(string)
+			var gw string
 			if utils.IsIpv6Address(server.CALLBACK_IP) {
 				gw, _ = mgmtNic["gateway6"].(string)
+			} else {
+				gw, _ = mgmtNic["gateway"].(string)
 			}
 			err := utils.SetZStackRoute(server.CALLBACK_IP, "eth0", gw)
 			utils.PanicOnError(err)

@@ -593,12 +593,30 @@ func InitNicFirewall(nic string, ip string, pubNic bool, defaultAction string) e
 			rules = append(rules, rule)
 		}
 	} else if IsIpv6Address(ip) && IsMgtNic(nic) {
-		// IPv6 管理网：直接添加 ip6tables 规则放行 SSH 和 zvr 端口
+		// IPv6 管理网：使用独立的 ip6tables 表和规则集，保证幂等性
+		table6 := NewIpTablesByIpVersion(FirewallTable, IP_VERSION_6)
+		table6.AddChain(localChain)
+
+		var rules6 []*IpTableRule
+		rule6 := NewIpTableRule(VYOS_INPUT_ROOT_CHAIN)
+		rule6.SetAction(localChain).SetInNic(nic)
+		rules6 = append(rules6, rule6)
+
 		sshPortStr := strconv.FormatFloat(sshPort, 'f', 0, 64)
-		b := Bash{Command: fmt.Sprintf("sudo ip6tables -I INPUT -d %s/128 -p tcp --dport %s -j ACCEPT", ip, sshPortStr)}
-		b.Run()
-		b = Bash{Command: fmt.Sprintf("sudo ip6tables -I INPUT -d %s/128 -p tcp --dport 7272 -j ACCEPT", ip)}
-		b.Run()
+		rule6 = NewIpTableRule(localChain)
+		rule6.SetAction(IPTABLES_ACTION_RETURN).SetComment(SystemTopRule)
+		rule6.SetDstIp(ip+"/128").SetProto(IPTABLES_PROTO_TCP).SetDstPort(sshPortStr)
+		rules6 = append(rules6, rule6)
+
+		rule6 = NewIpTableRule(localChain)
+		rule6.SetAction(IPTABLES_ACTION_RETURN).SetComment(SystemTopRule)
+		rule6.SetDstIp(ip+"/128").SetProto(IPTABLES_PROTO_TCP).SetDstPort("7272")
+		rules6 = append(rules6, rule6)
+
+		table6.AddIpTableRules(rules6)
+		if err6 := table6.Apply(); err6 != nil {
+			return err6
+		}
 	}
 
 	rule = NewDefaultIpTableRule(localChain, IPTABLES_RULENUMBER_MAX)
