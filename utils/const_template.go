@@ -125,7 +125,7 @@ Include /etc/ssh/sshd_config.d/*.conf
 #Port 22
 #AddressFamily any
 ListenAddress {{.ListenAddress}}:{{.Port}}
-ListenAddress ::
+ListenAddress [::]:{{.Port}}
 
 HostKey /etc/ssh/ssh_host_rsa_key
 #HostKey /etc/ssh/ssh_host_ecdsa_key
