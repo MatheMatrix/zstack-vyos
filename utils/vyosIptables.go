@@ -613,6 +613,10 @@ func InitNicFirewall(nic string, ip string, pubNic bool, defaultAction string) e
 		rule6.SetDstIp(ip+"/128").SetProto(IPTABLES_PROTO_TCP).SetDstPort("7272")
 		rules6 = append(rules6, rule6)
 
+		rule6Default := NewDefaultIpTableRule(localChain, IPTABLES_RULENUMBER_MAX)
+		rule6Default.SetAction(defaultAction)
+		rules6 = append(rules6, rule6Default)
+
 		table6.AddIpTableRules(rules6)
 		if err6 := table6.Apply(); err6 != nil {
 			return err6
