@@ -627,9 +627,11 @@ func AddRouteForMgmtEuler2203(mgtIp, mgtNic, gw string) error {
 	}
 
 	destCidr := mgtIp
-	// IPv6 主机路由需要显式指定 /128
-	if isIpv6 && !strings.Contains(mgtIp, "/") {
-		destCidr = mgtIp + "/128"
+	// IPv6 host route requires an explicit /128 prefix.
+	// Strip any existing CIDR notation (e.g. from zstack.properties) before appending /128.
+	if isIpv6 {
+		bare := strings.SplitN(mgtIp, "/", 2)[0]
+		destCidr = bare + "/128"
 	}
 
 	mgtEntry := ZStackRouteEntry{
