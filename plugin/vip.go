@@ -1968,10 +1968,13 @@ func parseConntrackLine(line string) (*SessionStat, bool) {
 	return stat, true
 }
 
+// updateCountersByConntrack assumes the caller already holds c.mu.
+// Its only caller, Update(), locks c.mu before dispatching to the eBPF
+// or conntrack path; locking again here would self-deadlock since
+// sync.Mutex is non-reentrant, leaving c.mu held forever. Subsequent
+// SetVip / RemoveVip handlers block on vipPromCollector.mu.Lock() and
+// async commands never invoke their callback URL.
 func (c *vipCollector) updateCountersByConntrack() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	startTime := time.Now()
 	var totalSessions, parsedSessions, skippedSessions, newSessions, staleSessions, matchedSessions int
 
