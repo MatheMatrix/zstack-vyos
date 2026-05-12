@@ -297,6 +297,10 @@ func readCurrentUserRules(tree *server.VyosConfigTree, ruleSetName string) []rul
 	return rules
 }
 
+// resolveRuleIPValue converts a rule address-group reference back to the API value.
+// Example: source group "eth5.in-1105-source" with members
+// ["10.130.145.0/24", "10.240.3.0/24"] becomes
+// "10.130.145.0/24,10.240.3.0/24". Plain IP/CIDR values are returned as-is.
 func resolveRuleIPValue(tree *server.VyosConfigTree, ruleSetName string, ruleNumber int, suffix, value string) string {
 	if !isLikelyRuleGroupName(ruleSetName, ruleNumber, suffix, value) {
 		return value
@@ -315,6 +319,10 @@ func resolveRuleIPValue(tree *server.VyosConfigTree, ruleSetName string, ruleNum
 	return strings.Join(members, IP_SPLIT)
 }
 
+// isLikelyRuleGroupName tells whether a rule field points to an address-group
+// instead of a literal IP/CIDR. For rule 1105 in eth5.in, the expected source
+// group name is "eth5.in-1105-source". Older configs may only preserve the
+// "-source"/"-dest" suffix, so the suffix fallback keeps them readable.
 func isLikelyRuleGroupName(ruleSetName string, ruleNumber int, suffix, value string) bool {
 	if value == "" || strings.Contains(value, "/") || strings.Contains(value, IP_SPLIT) {
 		return false
@@ -338,6 +346,10 @@ func isLikelyRuleGroupName(ruleSetName string, ruleNumber int, suffix, value str
 	return false
 }
 
+// normalizeCSV makes order-insensitive CSV fields comparable.
+// Example: "new,established,related" and "related,new,established" both become
+// "established,new,related"; the same normalization is used for address-group
+// members so an unchanged rule is not deleted/recreated during reconnect.
 func normalizeCSV(value string) string {
 	if strings.TrimSpace(value) == "" {
 		return ""
@@ -948,6 +960,12 @@ func applyUserRules(cmd *applyUserRuleCmd) interface{} {
 
 	tree := server.NewParserFromShowConfiguration().Tree
 
+	// Reconcile desired firewall refs with current VyOS config:
+	// 1. read current rules for each requested nic/direction;
+	// 2. diff current and desired rules by rule number and normalized content;
+	// 3. apply only add/update/delete operations, preserving unchanged rules.
+	// This avoids the old reconnect flow that deleted all user rules before
+	// recreating them, which could interrupt traffic when commit failed midway.
 	type desiredRuleSetCtx struct {
 		nicName     string
 		ruleSetName string
