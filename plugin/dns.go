@@ -12,6 +12,10 @@ const (
 	REMOVE_DNS_PATH = "/removedns"
 	SET_DNS_PATH    = "/setdns"
 	SET_VPNDNS_PATH = "/setvpcdns"
+
+	SET_DNS_RECORD_PATH    = "/setdnsrecord"
+	REMOVE_DNS_RECORD_PATH = "/removednsrecord"
+	SYNC_DNS_RECORDS_PATH  = "/syncdnsrecord"
 )
 
 type dnsInfo struct {
@@ -32,8 +36,18 @@ type setVpcDnsCmd struct {
 	NicMac []string `json:"nicMac"`
 }
 
+type dnsRecordInfo struct {
+	Domain string `json:"domain"`
+	Ip     string `json:"ip"`
+}
+
+type dnsRecordCmd struct {
+	DnsRecords []dnsRecordInfo `json:"dnsRecords"`
+}
+
 var dnsServers map[string]string
 var nicNames map[string]string
+var dnsRecords = map[string]string{}
 
 func makeDnsFirewallRuleDescription(nicname string) string {
 	return fmt.Sprintf("DNS-for-%s", nicname)
@@ -131,7 +145,7 @@ func setDns(cmd *setDnsCmd) interface{} {
 		}
 	}
 
-	dnsConf := NewDnsmasq(nicNames, dnsServers)
+	dnsConf := NewDnsmasq(nicNames, dnsServers, dnsRecords)
 	dnsConf.RestartDnsmasq()
 
 	return nil
@@ -149,7 +163,7 @@ func removeDns(cmd *removeDnsCmd) interface{} {
 		delete(dnsServers, info.DnsAddress)
 	}
 
-	dnsConf := NewDnsmasq(nicNames, dnsServers)
+	dnsConf := NewDnsmasq(nicNames, dnsServers, dnsRecords)
 	dnsConf.RestartDnsmasq()
 
 	return nil
@@ -223,7 +237,7 @@ func setVpcDns(cmd *setVpcDnsCmd) interface{} {
 		tree.Apply(false)
 	}
 
-	dnsConf := NewDnsmasq(nicNames, dnsServers)
+	dnsConf := NewDnsmasq(nicNames, dnsServers, dnsRecords)
 	dnsConf.RestartDnsmasq()
 
 	return nil
@@ -232,11 +246,66 @@ func addDnsNic(nicName string) {
 	if _, ok := nicNames[nicName]; !ok {
 		log.Debugf("add new dns nic [%s]", nicName)
 		nicNames[nicName] = nicName
-		dnsConf := NewDnsmasq(nicNames, dnsServers)
+		dnsConf := NewDnsmasq(nicNames, dnsServers, dnsRecords)
 		dnsConf.RestartDnsmasq()
 	} else {
 		log.Debugf("dns nic [%s] already added", nicName)
 	}
+}
+
+func setDnsRecordHandler(ctx *server.CommandContext) interface{} {
+	cmd := &dnsRecordCmd{}
+	ctx.GetCommand(cmd)
+
+	return setDnsRecord(cmd)
+}
+
+func setDnsRecord(cmd *dnsRecordCmd) interface{} {
+	for _, record := range cmd.DnsRecords {
+		dnsRecords[record.Domain] = record.Ip
+	}
+
+	dnsConf := NewDnsmasq(nicNames, dnsServers, dnsRecords)
+	dnsConf.RestartDnsmasq()
+
+	return nil
+}
+
+func removeDnsRecordHandler(ctx *server.CommandContext) interface{} {
+	cmd := &dnsRecordCmd{}
+	ctx.GetCommand(cmd)
+
+	return removeDnsRecord(cmd)
+}
+
+func removeDnsRecord(cmd *dnsRecordCmd) interface{} {
+	for _, record := range cmd.DnsRecords {
+		delete(dnsRecords, record.Domain)
+	}
+
+	dnsConf := NewDnsmasq(nicNames, dnsServers, dnsRecords)
+	dnsConf.RestartDnsmasq()
+
+	return nil
+}
+
+func syncDnsRecordsHandler(ctx *server.CommandContext) interface{} {
+	cmd := &dnsRecordCmd{}
+	ctx.GetCommand(cmd)
+
+	return syncDnsRecords(cmd)
+}
+
+func syncDnsRecords(cmd *dnsRecordCmd) interface{} {
+	dnsRecords = map[string]string{}
+	for _, record := range cmd.DnsRecords {
+		dnsRecords[record.Domain] = record.Ip
+	}
+
+	dnsConf := NewDnsmasq(nicNames, dnsServers, dnsRecords)
+	dnsConf.RestartDnsmasq()
+
+	return nil
 }
 
 func init() {
@@ -248,4 +317,7 @@ func DnsEntryPoint() {
 	server.RegisterAsyncCommandHandler(SET_DNS_PATH, server.VyosLock(setDnsHandler))
 	server.RegisterAsyncCommandHandler(REMOVE_DNS_PATH, server.VyosLock(removeDnsHandler))
 	server.RegisterAsyncCommandHandler(SET_VPNDNS_PATH, server.VyosLock(setVpcDnsHandler))
+	server.RegisterAsyncCommandHandler(SET_DNS_RECORD_PATH, server.VyosLock(setDnsRecordHandler))
+	server.RegisterAsyncCommandHandler(REMOVE_DNS_RECORD_PATH, server.VyosLock(removeDnsRecordHandler))
+	server.RegisterAsyncCommandHandler(SYNC_DNS_RECORDS_PATH, server.VyosLock(syncDnsRecordsHandler))
 }
