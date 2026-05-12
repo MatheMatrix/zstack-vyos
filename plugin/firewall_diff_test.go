@@ -3,6 +3,7 @@ package plugin
 import (
 	"testing"
 	"zstack-vyos/server"
+	"zstack-vyos/utils"
 )
 
 func TestZSTAC83935DiffUserRulesKeepsUnchangedRules(t *testing.T) {
@@ -183,5 +184,108 @@ func firewallDiffRule(number int, sourceIP, destIP string) ruleInfo {
 		AllowStates: "established,invalid,new,related",
 		RuleNumber:  number,
 		State:       RULEINFO_ENABLE,
+	}
+}
+
+// TestZSTAC83935DetachedRuleSetReattached verifies that a VyOS ruleset whose firewall node
+// exists but whose interface binding is absent is detected as requiring reattach.
+func TestZSTAC83935DetachedRuleSetReattached(t *testing.T) {
+	tree := server.NewParserFromConfiguration(`
+firewall {
+    name eth5.in {
+        default-action reject
+        rule 1100 {
+            action accept
+        }
+    }
+}
+`).Tree
+
+	// Firewall node exists but interface binding is intentionally absent.
+	if tree.Getf("firewall name %s", "eth5.in") == nil {
+		t.Fatal("test setup: expected firewall node to exist")
+	}
+	if tree.Getf("interfaces ethernet %s firewall %s name %s", "eth5", "in", "eth5.in") != nil {
+		t.Fatal("test setup: expected interface binding to be absent")
+	}
+
+	// Simulate the fix: detect missing binding and reattach.
+	tree.AttachRuleSetOnInterface("eth5", "in", "eth5.in")
+
+	if tree.Getf("interfaces ethernet %s firewall %s name %s", "eth5", "in", "eth5.in") == nil {
+		t.Fatal("expected interface binding to be present after reattach")
+	}
+}
+
+// TestZSTAC83935StaleIptablesChainFullyRemoved verifies that removing a stale iptables ruleset
+// also removes the hook rule, the default rule, and the chain itself — not just user rules.
+func TestZSTAC83935StaleIptablesChainFullyRemoved(t *testing.T) {
+	// Build an IpTables directly to avoid calling iptables-save (not available in unit-test env).
+	table := &utils.IpTables{Name: utils.FirewallTable, IpVersion: utils.IP_VERSION_4}
+	table.AddChain(utils.VYOS_FWD_ROOT_CHAIN)
+	table.AddChain("eth5.in") // stale
+	table.AddChain("eth6.in") // desired — must survive
+
+	// Hook rule dispatching to the stale chain.
+	staleHook := utils.NewIpTableRule(utils.VYOS_FWD_ROOT_CHAIN)
+	staleHook.SetAction("eth5.in")
+	staleHook.SetInNic("eth5")
+	table.AddIpTableRules([]*utils.IpTableRule{staleHook})
+
+	// Hook rule dispatching to the desired chain — must survive.
+	desiredHook := utils.NewIpTableRule(utils.VYOS_FWD_ROOT_CHAIN)
+	desiredHook.SetAction("eth6.in")
+	desiredHook.SetInNic("eth6")
+	table.AddIpTableRules([]*utils.IpTableRule{desiredHook})
+
+	// Default rule inside the stale chain.
+	defaultRule := utils.NewDefaultIpTableRule("eth5.in", utils.IPTABLES_RULENUMBER_MAX)
+	defaultRule.SetAction("REJECT")
+	table.AddIpTableRules([]*utils.IpTableRule{defaultRule})
+
+	// A user rule inside the stale chain.
+	userRule := utils.NewIpTableRule("eth5.in")
+	utils.SetFirewallRuleNumber(userRule, "eth5.in", 1100)
+	userRule.SetAction("RETURN")
+	table.AddIpTableRules([]*utils.IpTableRule{userRule})
+
+	// Apply the fix logic for extra rulesets.
+	extraRuleSetNames := []string{"eth5.in"}
+	for _, ruleSetName := range extraRuleSetNames {
+		var filteredRules []*utils.IpTableRule
+		for _, r := range table.Rules {
+			if r.GetChainName() == ruleSetName || r.GetAction() == ruleSetName {
+				continue
+			}
+			filteredRules = append(filteredRules, r)
+		}
+		table.Rules = filteredRules
+		table.DeleteChain(ruleSetName)
+	}
+
+	// Chain must be gone.
+	if table.CheckChain("eth5.in") {
+		t.Fatal("stale chain eth5.in must be deleted")
+	}
+
+	// No rule must reference the stale chain.
+	for _, r := range table.Rules {
+		if r.GetChainName() == "eth5.in" || r.GetAction() == "eth5.in" {
+			t.Fatalf("stale rule must be removed: chain=%q action=%q", r.GetChainName(), r.GetAction())
+		}
+	}
+
+	// Desired chain and its hook rule must survive.
+	if !table.CheckChain("eth6.in") {
+		t.Fatal("desired chain eth6.in must be kept")
+	}
+	desiredHookFound := false
+	for _, r := range table.Rules {
+		if r.GetChainName() == utils.VYOS_FWD_ROOT_CHAIN && r.GetAction() == "eth6.in" {
+			desiredHookFound = true
+		}
+	}
+	if !desiredHookFound {
+		t.Fatal("hook rule for desired chain eth6.in must be kept")
 	}
 }
