@@ -1005,6 +1005,10 @@ func applyUserRules(cmd *applyUserRuleCmd) interface{} {
 	currentRefs := make([]ethRuleSetRef, 0, len(cmd.Refs))
 	desiredRuleSetNames := make(map[string]struct{})
 	desiredByKey := make(map[string]desiredRuleSetCtx)
+	// Track rulesets whose VyOS firewall node exists but whose interface binding is absent.
+	// Config drift or a previous partial failure can leave the ruleset orphaned; these must
+	// be reattached even when no rule content has changed.
+	missingAttachments := make(map[string]bool)
 
 	for _, ref := range cmd.Refs {
 		nicName, err := utils.GetNicNameByMac(ref.Mac)
@@ -1015,6 +1019,10 @@ func applyUserRules(cmd *applyUserRuleCmd) interface{} {
 
 		if tree.Getf("firewall name %s", ruleSetName) == nil {
 			continue
+		}
+
+		if tree.Getf("interfaces ethernet %s firewall %s name %s", nicName, ref.Forward, ruleSetName) == nil {
+			missingAttachments[fmt.Sprintf("%s//%s", ref.Mac, ref.Forward)] = true
 		}
 
 		currentActionType := ""
@@ -1049,7 +1057,8 @@ func applyUserRules(cmd *applyUserRuleCmd) interface{} {
 	hasChanges := len(extraRuleSetNames) > 0
 	if !hasChanges {
 		for _, diff := range diffs {
-			if !diff.RuleSetExists || diff.ActionChanged || diff.LogChanged || len(diff.RulesToAdd) > 0 || len(diff.RulesToDelete) > 0 || len(diff.RulesToUpdate) > 0 {
+			key := fmt.Sprintf("%s//%s", diff.Mac, diff.Forward)
+			if !diff.RuleSetExists || diff.ActionChanged || diff.LogChanged || len(diff.RulesToAdd) > 0 || len(diff.RulesToDelete) > 0 || len(diff.RulesToUpdate) > 0 || missingAttachments[key] {
 				hasChanges = true
 				break
 			}
@@ -1076,6 +1085,11 @@ func applyUserRules(cmd *applyUserRuleCmd) interface{} {
 
 		if diff.RuleSetExists && diff.ActionChanged {
 			tree.SetFirewalRuleSetAction(ruleSetName, diff.DesiredRuleSet.ActionType)
+			tree.AttachRuleSetOnInterface(nicName, diff.Forward, ruleSetName)
+		}
+
+		// Reattach if the interface binding was lost due to config drift or a previous partial failure.
+		if diff.RuleSetExists && !diff.ActionChanged && missingAttachments[key] {
 			tree.AttachRuleSetOnInterface(nicName, diff.Forward, ruleSetName)
 		}
 

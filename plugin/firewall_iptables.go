@@ -754,13 +754,27 @@ func applyUserRulesByIpTables(cmd *applyUserRuleCmd) error {
 				dstSetName := rule.makeGroupName(ruleSetName, FIREWALL_RULE_DEST_GROUP_SUFFIX)
 				deleteIpsets[dstSetName] = utils.NewIPSet(dstSetName, utils.IPSET_TYPE_HASH_NET)
 			}
-
-			deleteRules = append(deleteRules, getIpTableRuleFromRule(ruleSetName, rule))
 		}
 	}
 
 	table = removeIptablesRulesByFirewallRuleNumber(table, deleteRules, true)
 	table.AddIpTableRules(addRules)
+
+	// Fully purge stale chains: the partial-rule pass above only removes user rules tagged with
+	// FirewallRule; the default rule (SystemLastRule comment) and the hook rule in
+	// VYATTA_FW_IN_HOOK / VYATTA_FW_OUT_HOOK are not covered by that pass and must be removed
+	// explicitly so the chain stops enforcing its default action after removal.
+	for _, ruleSetName := range extraRuleSetNames {
+		var filteredRules []*utils.IpTableRule
+		for _, r := range table.Rules {
+			if r.GetChainName() == ruleSetName || r.GetAction() == ruleSetName {
+				continue
+			}
+			filteredRules = append(filteredRules, r)
+		}
+		table.Rules = filteredRules
+		table.DeleteChain(ruleSetName)
+	}
 
 	if err := table.Apply(); err != nil {
 		deleteIpsetMap(newIpsets)
