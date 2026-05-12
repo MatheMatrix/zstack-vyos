@@ -2,6 +2,8 @@ package plugin
 
 import (
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 
 	log "github.com/sirupsen/logrus"
@@ -48,6 +50,7 @@ func getRuleSetFromIpTable(table *utils.IpTables) map[string]*ruleSetInfo {
 	   	-A eth2.in -m comment --comment "eth2.in-10000 default-action reject" -j REJECT --reject-with icmp-port-unreachable
 	*/
 	sets := make(map[string]*ruleSetInfo)
+	logRuleNumbers := make(map[string]map[int]bool)
 
 	for _, r := range table.Rules {
 		if isNicFilterChain(r.GetAction()) {
@@ -57,7 +60,14 @@ func getRuleSetFromIpTable(table *utils.IpTables) map[string]*ruleSetInfo {
 
 		if _, ok := sets[r.GetChainName()]; ok {
 			if r.GetAction() == utils.IPTABLES_ACTION_LOG {
-				sets[r.GetChainName()].EnableDefaultLog = true
+				if strings.Contains(r.GetComment(), utils.FirewallRule) {
+					if _, exists := logRuleNumbers[r.GetChainName()]; !exists {
+						logRuleNumbers[r.GetChainName()] = make(map[int]bool)
+					}
+					logRuleNumbers[r.GetChainName()][r.GetRuleNumber()] = true
+				} else {
+					sets[r.GetChainName()].EnableDefaultLog = true
+				}
 			} else if utils.IsDefaultRule(r) {
 				if r.GetAction() == utils.IPTABLES_ACTION_RETURN {
 					r.SetAction(utils.IPTABLES_ACTION_ACCEPT)
@@ -65,6 +75,19 @@ func getRuleSetFromIpTable(table *utils.IpTables) map[string]*ruleSetInfo {
 				sets[r.GetChainName()].ActionType = strings.ToLower(r.GetAction())
 			} else {
 				sets[r.GetChainName()].Rules = append(sets[r.GetChainName()].Rules, getRuleFromIpTableRule(r))
+			}
+		}
+	}
+
+	for chainName, ruleNumbers := range logRuleNumbers {
+		ruleSet, ok := sets[chainName]
+		if !ok {
+			continue
+		}
+
+		for i := range ruleSet.Rules {
+			if ruleNumbers[ruleSet.Rules[i].RuleNumber] {
+				ruleSet.Rules[i].EnableLog = true
 			}
 		}
 	}
@@ -80,7 +103,7 @@ func getRuleFromIpTableRule(r *utils.IpTableRule) ruleInfo {
 	}
 	rule.Action = strings.ToLower(r.GetAction())
 	if r.GetDstIpset() != "" {
-		rule.DestIp = r.GetDstIpset()
+		rule.DestIp = resolveIpsetToCSV(r.GetDstIpset())
 	} else if r.GetDstIp() != "" {
 		rule.DestIp = getRuleIpInfoFromIpTableRule(r.GetDstIp())
 	} else if r.GetDstIpRange() != "" {
@@ -88,7 +111,7 @@ func getRuleFromIpTableRule(r *utils.IpTableRule) ruleInfo {
 	}
 
 	if r.GetSrcIpset() != "" {
-		rule.SourceIp = r.GetSrcIpset()
+		rule.SourceIp = resolveIpsetToCSV(r.GetSrcIpset())
 	} else if r.GetSrcIp() != "" {
 		rule.SourceIp = getRuleIpInfoFromIpTableRule(r.GetSrcIp())
 	} else if r.GetSrcIpRange() != "" {
@@ -96,9 +119,12 @@ func getRuleFromIpTableRule(r *utils.IpTableRule) ruleInfo {
 	}
 
 	if utils.IsEuler2203() && r.GetProto() == "ipv4" {
-		rule.Protocol = strings.ToUpper("ipencap")
+		rule.Protocol = "ipencap"
 	} else {
-		rule.Protocol = strings.ToUpper(r.GetProto())
+		rule.Protocol = strings.ToLower(r.GetProto())
+	}
+	if rule.Protocol == "" {
+		rule.Protocol = "all"
 	}
 	rule.SourcePort = r.GetSrcPort()
 	rule.DestPort = r.GetDstPort()
@@ -107,7 +133,6 @@ func getRuleFromIpTableRule(r *utils.IpTableRule) ruleInfo {
 	rule.Tcp = strings.Join(r.GetTcpFlags(), ",")
 	rule.Icmp = r.GetIcmpType()
 	rule.RuleNumber = r.GetRuleNumber()
-	rule.EnableLog = false
 	rule.State = "enable"
 	rule.IsDefault = isDefaultRule(fmt.Sprintf("%d", rule.RuleNumber))
 
@@ -119,6 +144,29 @@ func getRuleIpInfoFromIpTableRule(ip string) string {
 		return strings.Split(ip, "/")[0]
 	}
 	return ip
+}
+
+func resolveIpsetToCSV(ipsetName string) string {
+	ipset := utils.GetIpSet(ipsetName)
+	if ipset == nil || len(ipset.Member) == 0 {
+		return ipsetName
+	}
+
+	members := make([]string, 0, len(ipset.Member))
+	for _, member := range ipset.Member {
+		normalized := strings.TrimSpace(member)
+		if normalized == "" {
+			continue
+		}
+		members = append(members, getRuleIpInfoFromIpTableRule(normalized))
+	}
+
+	if len(members) == 0 {
+		return ipsetName
+	}
+
+	sort.Strings(members)
+	return strings.Join(members, IP_SPLIT)
 }
 
 func getIpTableRuleFromRule(ruleSetName string, r ruleInfo) *utils.IpTableRule {
@@ -502,75 +550,245 @@ ERROR_OUT:
 }
 
 func applyUserRulesByIpTables(cmd *applyUserRuleCmd) error {
-	var rules []*utils.IpTableRule
-	table := utils.NewIpTables(utils.FirewallTable)
-	newIpsets := make(map[string]*utils.IpSet)
+	readTable := utils.NewIpTables(utils.FirewallTable)
+	currentRuleSets := getRuleSetFromIpTable(readTable)
+	currentRefs := make([]ethRuleSetRef, 0, len(cmd.Refs))
+	desiredRuleSetNames := make(map[string]struct{}, len(cmd.Refs))
 
-	//if apply firewall Rule, delete all firewall rule first
-	table = deleteFirewallUserRule(table)
 	for _, ref := range cmd.Refs {
 		nicName, err := utils.GetNicNameByMac(ref.Mac)
-		utils.PanicOnError(err)
+		if err != nil {
+			return err
+		}
 		ruleSetName := buildRuleSetName(nicName, ref.Forward)
-
-		//create ruleSet and add last rule
-		table.AddChain(ruleSetName)
-		rule := utils.NewDefaultIpTableRule(ruleSetName, utils.IPTABLES_RULENUMBER_MAX)
-		rule.SetAction(getIptablesRuleActionFromRuleAction(ref.RuleSetInfo.ActionType))
-		rules = append(rules, rule)
-
-		/* attach ruleset to interface */
-		if ref.Forward == FIREWALL_DIRECTION_OUT {
-			rule := utils.NewIpTableRule(utils.VYOS_FWD_OUT_ROOT_CHAIN)
-			rule.SetAction(ruleSetName)
-			rule.SetOutNic(nicName)
-			rules = append(rules, rule)
-		} else if ref.Forward == FIREWALL_DIRECTION_IN {
-			rule := utils.NewIpTableRule(utils.VYOS_FWD_ROOT_CHAIN)
-			rule.SetAction(ruleSetName)
-			rule.SetOutNic(nicName)
-			rules = append(rules, rule)
-		} // local will not be updated
-
-		// if ruleInfo state is disable, not create iptables rule
-		ref.RuleSetInfo.Rules = deleteDisableRuleInfo(ref.RuleSetInfo.Rules)
-		for _, r := range ref.RuleSetInfo.Rules {
-			if r.SourceIp != "" && strings.ContainsAny(r.SourceIp, IP_SPLIT) {
-				srcSetName := r.makeGroupName(ruleSetName, FIREWALL_RULE_SOURCE_GROUP_SUFFIX)
-				newIpSet := createIpsetAndSetNet(srcSetName, r.SourceIp)
-				if newIpSet == nil {
-					goto ERROR_OUT
-				}
-				newIpsets[newIpSet.Name] = newIpSet
-			}
-			if r.DestIp != "" && strings.ContainsAny(r.DestIp, IP_SPLIT) {
-				dstSetName := r.makeGroupName(ruleSetName, FIREWALL_RULE_DEST_GROUP_SUFFIX)
-				newIpSet := createIpsetAndSetNet(dstSetName, r.DestIp)
-				if newIpSet == nil {
-					goto ERROR_OUT
-				}
-				newIpsets[newIpSet.Name] = newIpSet
-			}
-
-			rule := getIpTableRuleFromRule(ruleSetName, r)
-			if r.EnableLog {
-				rule1 := rule.Copy()
-				rule1.SetAction(utils.IPTABLES_ACTION_LOG)
-				rules = append(rules, rule1)
-			}
-			rules = append(rules, rule)
+		desiredRuleSetNames[ruleSetName] = struct{}{}
+		if currentRuleSet, ok := currentRuleSets[ruleSetName]; ok {
+			currentRefs = append(currentRefs, ethRuleSetRef{Mac: ref.Mac, Forward: ref.Forward, RuleSetInfo: *currentRuleSet})
 		}
 	}
 
-	table.AddIpTableRules(rules)
+	extraRuleSetNames := make([]string, 0)
+	for ruleSetName := range currentRuleSets {
+		if _, ok := desiredRuleSetNames[ruleSetName]; !ok {
+			extraRuleSetNames = append(extraRuleSetNames, ruleSetName)
+		}
+	}
+
+	diffs := diffUserRules(currentRefs, cmd.Refs)
+	hasChange := len(extraRuleSetNames) > 0
+	if !hasChange {
+		for _, diff := range diffs {
+			if !diff.RuleSetExists || diff.ActionChanged || diff.LogChanged || len(diff.RulesToAdd) > 0 || len(diff.RulesToDelete) > 0 || len(diff.RulesToUpdate) > 0 {
+				hasChange = true
+				break
+			}
+		}
+	}
+	if !hasChange {
+		return nil
+	}
+
+	// Create a fresh table for the write/Apply path. The readTable was mutated by
+	// getRuleSetFromIpTable which converts RETURN actions to ACCEPT for comparison;
+	// reusing it would write those mutations back via iptables-restore.
+	table := utils.NewIpTables(utils.FirewallTable)
+
+	var addRules []*utils.IpTableRule
+	var deleteRules []*utils.IpTableRule
+	deleteIpsets := make(map[string]*utils.IpSet)
+	newIpsets := make(map[string]*utils.IpSet)
+
+	for _, diff := range diffs {
+		nicName, err := utils.GetNicNameByMac(diff.Mac)
+		if err != nil {
+			return err
+		}
+		ruleSetName := buildRuleSetName(nicName, diff.Forward)
+
+		rulesToAdd := deleteDisableRuleInfo(diff.RulesToAdd)
+		rulesToUpdate := deleteDisableRuleInfo(diff.RulesToUpdate)
+
+		for _, rule := range rulesToAdd {
+			if rule.SourceIp != "" && strings.ContainsAny(rule.SourceIp, IP_SPLIT) {
+				srcSetName := rule.makeGroupName(ruleSetName, FIREWALL_RULE_SOURCE_GROUP_SUFFIX)
+				newIpSet := createIpsetAndSetNet(srcSetName, rule.SourceIp)
+				if newIpSet == nil {
+					goto ERROR_OUT
+				}
+				newIpsets[newIpSet.Name] = newIpSet
+			}
+			if rule.DestIp != "" && strings.ContainsAny(rule.DestIp, IP_SPLIT) {
+				dstSetName := rule.makeGroupName(ruleSetName, FIREWALL_RULE_DEST_GROUP_SUFFIX)
+				newIpSet := createIpsetAndSetNet(dstSetName, rule.DestIp)
+				if newIpSet == nil {
+					goto ERROR_OUT
+				}
+				newIpsets[newIpSet.Name] = newIpSet
+			}
+		}
+
+		for _, rule := range rulesToUpdate {
+			if rule.SourceIp != "" && strings.ContainsAny(rule.SourceIp, IP_SPLIT) {
+				srcSetName := rule.makeGroupName(ruleSetName, FIREWALL_RULE_SOURCE_GROUP_SUFFIX)
+				newIpSet := createIpsetAndSetNet(srcSetName, rule.SourceIp)
+				if newIpSet == nil {
+					goto ERROR_OUT
+				}
+				newIpsets[newIpSet.Name] = newIpSet
+			}
+			if rule.DestIp != "" && strings.ContainsAny(rule.DestIp, IP_SPLIT) {
+				dstSetName := rule.makeGroupName(ruleSetName, FIREWALL_RULE_DEST_GROUP_SUFFIX)
+				newIpSet := createIpsetAndSetNet(dstSetName, rule.DestIp)
+				if newIpSet == nil {
+					goto ERROR_OUT
+				}
+				newIpsets[newIpSet.Name] = newIpSet
+			}
+		}
+
+		if !diff.RuleSetExists {
+			table.AddChain(ruleSetName)
+			defaultRule := utils.NewDefaultIpTableRule(ruleSetName, utils.IPTABLES_RULENUMBER_MAX)
+			defaultRule.SetAction(getIptablesRuleActionFromRuleAction(diff.DesiredRuleSet.ActionType))
+			addRules = append(addRules, defaultRule)
+
+			if diff.Forward == FIREWALL_DIRECTION_OUT {
+				hookRule := utils.NewIpTableRule(utils.VYOS_FWD_OUT_ROOT_CHAIN)
+				hookRule.SetAction(ruleSetName)
+				hookRule.SetOutNic(nicName)
+				addRules = append(addRules, hookRule)
+			} else if diff.Forward == FIREWALL_DIRECTION_IN {
+				hookRule := utils.NewIpTableRule(utils.VYOS_FWD_ROOT_CHAIN)
+				hookRule.SetAction(ruleSetName)
+				hookRule.SetInNic(nicName)
+				addRules = append(addRules, hookRule)
+			}
+		}
+
+		if diff.RuleSetExists && diff.ActionChanged {
+			for _, r := range table.Rules {
+				if r.GetChainName() == ruleSetName && utils.IsDefaultRule(r) {
+					r.SetAction(getIptablesRuleActionFromRuleAction(diff.DesiredRuleSet.ActionType))
+				}
+			}
+		}
+
+		if diff.RuleSetExists && diff.LogChanged {
+			if diff.DesiredRuleSet.EnableDefaultLog {
+				logRule := utils.NewDefaultIpTableRule(ruleSetName, utils.IPTABLES_RULENUMBER_MAX)
+				logRule.SetAction(utils.IPTABLES_ACTION_LOG)
+				addRules = append(addRules, logRule)
+			} else {
+				for _, r := range table.Rules {
+					if r.GetChainName() == ruleSetName && r.GetAction() == utils.IPTABLES_ACTION_LOG && !strings.Contains(r.GetComment(), utils.FirewallRule) {
+						deleteRules = append(deleteRules, r)
+					}
+				}
+			}
+		}
+
+		for _, rule := range diff.RulesToDelete {
+			if rule.SourceIp != "" && (strings.ContainsAny(rule.SourceIp, IP_SPLIT) || isLikelyRuleGroupName(ruleSetName, rule.RuleNumber, FIREWALL_RULE_SOURCE_GROUP_SUFFIX, rule.SourceIp)) {
+				srcSetName := rule.makeGroupName(ruleSetName, FIREWALL_RULE_SOURCE_GROUP_SUFFIX)
+				deleteIpsets[srcSetName] = utils.NewIPSet(srcSetName, utils.IPSET_TYPE_HASH_NET)
+			}
+			if rule.DestIp != "" && (strings.ContainsAny(rule.DestIp, IP_SPLIT) || isLikelyRuleGroupName(ruleSetName, rule.RuleNumber, FIREWALL_RULE_DEST_GROUP_SUFFIX, rule.DestIp)) {
+				dstSetName := rule.makeGroupName(ruleSetName, FIREWALL_RULE_DEST_GROUP_SUFFIX)
+				deleteIpsets[dstSetName] = utils.NewIPSet(dstSetName, utils.IPSET_TYPE_HASH_NET)
+			}
+
+			deleteRules = append(deleteRules, getIpTableRuleFromRule(ruleSetName, rule))
+		}
+
+		for _, rule := range diff.RulesToUpdate {
+			if existingRuleSet, ok := currentRuleSets[ruleSetName]; ok {
+				for _, oldRule := range existingRuleSet.Rules {
+					if oldRule.RuleNumber != rule.RuleNumber {
+						continue
+					}
+
+					if oldRule.SourceIp != "" && (strings.ContainsAny(oldRule.SourceIp, IP_SPLIT) || isLikelyRuleGroupName(ruleSetName, oldRule.RuleNumber, FIREWALL_RULE_SOURCE_GROUP_SUFFIX, oldRule.SourceIp)) {
+						srcSetName := oldRule.makeGroupName(ruleSetName, FIREWALL_RULE_SOURCE_GROUP_SUFFIX)
+						deleteIpsets[srcSetName] = utils.NewIPSet(srcSetName, utils.IPSET_TYPE_HASH_NET)
+					}
+					if oldRule.DestIp != "" && (strings.ContainsAny(oldRule.DestIp, IP_SPLIT) || isLikelyRuleGroupName(ruleSetName, oldRule.RuleNumber, FIREWALL_RULE_DEST_GROUP_SUFFIX, oldRule.DestIp)) {
+						dstSetName := oldRule.makeGroupName(ruleSetName, FIREWALL_RULE_DEST_GROUP_SUFFIX)
+						deleteIpsets[dstSetName] = utils.NewIPSet(dstSetName, utils.IPSET_TYPE_HASH_NET)
+					}
+
+					deleteRules = append(deleteRules, getIpTableRuleFromRule(ruleSetName, oldRule))
+					break
+				}
+			}
+		}
+
+		for _, rule := range rulesToUpdate {
+			newRule := getIpTableRuleFromRule(ruleSetName, rule)
+			if rule.EnableLog {
+				logRule := newRule.Copy()
+				logRule.SetAction(utils.IPTABLES_ACTION_LOG)
+				addRules = append(addRules, logRule)
+			}
+			addRules = append(addRules, newRule)
+		}
+
+		for _, rule := range rulesToAdd {
+			newRule := getIpTableRuleFromRule(ruleSetName, rule)
+			if rule.EnableLog {
+				logRule := newRule.Copy()
+				logRule.SetAction(utils.IPTABLES_ACTION_LOG)
+				addRules = append(addRules, logRule)
+			}
+			addRules = append(addRules, newRule)
+		}
+	}
+
+	for _, ruleSetName := range extraRuleSetNames {
+		ruleSet := currentRuleSets[ruleSetName]
+		for _, rule := range ruleSet.Rules {
+			if isDefaultRule(strconv.Itoa(rule.RuleNumber)) {
+				continue
+			}
+
+			if rule.SourceIp != "" && (strings.ContainsAny(rule.SourceIp, IP_SPLIT) || isLikelyRuleGroupName(ruleSetName, rule.RuleNumber, FIREWALL_RULE_SOURCE_GROUP_SUFFIX, rule.SourceIp)) {
+				srcSetName := rule.makeGroupName(ruleSetName, FIREWALL_RULE_SOURCE_GROUP_SUFFIX)
+				deleteIpsets[srcSetName] = utils.NewIPSet(srcSetName, utils.IPSET_TYPE_HASH_NET)
+			}
+			if rule.DestIp != "" && (strings.ContainsAny(rule.DestIp, IP_SPLIT) || isLikelyRuleGroupName(ruleSetName, rule.RuleNumber, FIREWALL_RULE_DEST_GROUP_SUFFIX, rule.DestIp)) {
+				dstSetName := rule.makeGroupName(ruleSetName, FIREWALL_RULE_DEST_GROUP_SUFFIX)
+				deleteIpsets[dstSetName] = utils.NewIPSet(dstSetName, utils.IPSET_TYPE_HASH_NET)
+			}
+		}
+	}
+
+	table = removeIptablesRulesByFirewallRuleNumber(table, deleteRules, true)
+	table.AddIpTableRules(addRules)
+
+	// Fully purge stale chains: the partial-rule pass above only removes user rules tagged with
+	// FirewallRule; the default rule (SystemLastRule comment) and the hook rule in
+	// VYATTA_FW_IN_HOOK / VYATTA_FW_OUT_HOOK are not covered by that pass and must be removed
+	// explicitly so the chain stops enforcing its default action after removal.
+	for _, ruleSetName := range extraRuleSetNames {
+		var filteredRules []*utils.IpTableRule
+		for _, r := range table.Rules {
+			if r.GetChainName() == ruleSetName || r.GetAction() == ruleSetName {
+				continue
+			}
+			filteredRules = append(filteredRules, r)
+		}
+		table.Rules = filteredRules
+		table.DeleteChain(ruleSetName)
+	}
 
 	if err := table.Apply(); err != nil {
 		deleteIpsetMap(newIpsets)
 		return err
 	}
+
 	if err := swapIpsetAndDeleteTmp(newIpsets); err != nil {
 		return err
 	}
+	deleteIpsetMap(deleteIpsets)
 
 	return nil
 
