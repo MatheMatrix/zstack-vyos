@@ -59,6 +59,28 @@ func TestZSTAC83935DiffUserRulesDeletesOnlyStaleRules(t *testing.T) {
 	}
 }
 
+func TestZSTAC83935DiffUserRulesCreatesMissingRuleSet(t *testing.T) {
+	desired := []ethRuleSetRef{firewallDiffRef("52:54:00:00:00:01", FIREWALL_DIRECTION_IN, []ruleInfo{
+		firewallDiffRule(1100, "10.130.145.0/24", "10.240.3.0/24"),
+		firewallDiffRule(1101, "10.130.145.0/24", "172.23.111.0/24"),
+	})}
+
+	diffs := diffUserRules(nil, desired)
+	if len(diffs) != 1 {
+		t.Fatalf("expected one ruleset diff, got %d", len(diffs))
+	}
+	diff := diffs[0]
+	if diff.RuleSetExists {
+		t.Fatal("missing ruleset must trigger create/attach path")
+	}
+	if len(diff.RulesToAdd) != 2 {
+		t.Fatalf("expected all desired rules to be added, got %#v", diff.RulesToAdd)
+	}
+	if len(diff.RulesToDelete) != 0 || len(diff.RulesToUpdate) != 0 {
+		t.Fatalf("missing ruleset must not delete or update rules, got deletes=%#v updates=%#v", diff.RulesToDelete, diff.RulesToUpdate)
+	}
+}
+
 func TestZSTAC83935RuleEqualNormalizesProtocolStateAndGroups(t *testing.T) {
 	current := firewallDiffRule(1100, "10.240.3.0/24,10.130.145.0/24", "172.23.0.0/16")
 	current.Protocol = ""
