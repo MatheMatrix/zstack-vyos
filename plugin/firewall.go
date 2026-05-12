@@ -981,6 +981,10 @@ func applyUserRules(cmd *applyUserRuleCmd) interface{} {
 		desiredRuleSetNames[ruleSetName] = struct{}{}
 		desiredByKey[fmt.Sprintf("%s//%s", ref.Mac, ref.Forward)] = desiredRuleSetCtx{nicName: nicName, ruleSetName: ruleSetName}
 
+		if tree.Getf("firewall name %s", ruleSetName) == nil {
+			continue
+		}
+
 		currentActionType := ""
 		if actionNode := tree.Getf("firewall name %s default-action", ruleSetName); actionNode != nil {
 			currentActionType = actionNode.Value()
