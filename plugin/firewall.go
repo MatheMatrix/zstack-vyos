@@ -488,6 +488,38 @@ func diffUserRules(current, desired []ethRuleSetRef) []ruleSetDiff {
 	return diffs
 }
 
+func deleteExtraRuleSet(tree *server.VyosConfigTree, ruleSetName string) {
+	for _, rule := range readCurrentUserRules(tree, ruleSetName) {
+		if sourceGroupNode := tree.FindGroupByName(rule.makeGroupName(ruleSetName, FIREWALL_RULE_SOURCE_GROUP_SUFFIX), "address"); sourceGroupNode != nil {
+			sourceGroupNode.Delete()
+		}
+		if destGroupNode := tree.FindGroupByName(rule.makeGroupName(ruleSetName, FIREWALL_RULE_DEST_GROUP_SUFFIX), "address"); destGroupNode != nil {
+			destGroupNode.Delete()
+		}
+	}
+	detachRuleSetFromInterfaces(tree, ruleSetName)
+	tree.Deletef("firewall name %s", ruleSetName)
+}
+
+func detachRuleSetFromInterfaces(tree *server.VyosConfigTree, ruleSetName string) {
+	interfacesNode := tree.Get("interfaces ethernet")
+	if interfacesNode == nil {
+		return
+	}
+
+	for _, nicNode := range interfacesNode.Children() {
+		firewallNode := nicNode.Get("firewall")
+		if firewallNode == nil {
+			continue
+		}
+		for _, directionNode := range firewallNode.Children() {
+			if directionNode.GetChildrenValue("name") == ruleSetName {
+				tree.Deletef("interfaces ethernet %s firewall %s name %s", nicNode.Name(), directionNode.Name(), ruleSetName)
+			}
+		}
+	}
+}
+
 func getRuleNumber(t *server.VyosConfigNode) int {
 	number, err := strconv.Atoi(t.Name())
 	if err == nil {
@@ -1099,18 +1131,7 @@ func applyUserRules(cmd *applyUserRuleCmd) interface{} {
 	}
 
 	for _, ruleSetName := range extraRuleSetNames {
-		for _, rule := range readCurrentUserRules(tree, ruleSetName) {
-			if isDefaultRule(strconv.Itoa(rule.RuleNumber)) {
-				continue
-			}
-			if sourceGroupNode := tree.FindGroupByName(rule.makeGroupName(ruleSetName, FIREWALL_RULE_SOURCE_GROUP_SUFFIX), "address"); sourceGroupNode != nil {
-				sourceGroupNode.Delete()
-			}
-			if destGroupNode := tree.FindGroupByName(rule.makeGroupName(ruleSetName, FIREWALL_RULE_DEST_GROUP_SUFFIX), "address"); destGroupNode != nil {
-				destGroupNode.Delete()
-			}
-			tree.Deletef("firewall name %s rule %v", ruleSetName, rule.RuleNumber)
-		}
+		deleteExtraRuleSet(tree, ruleSetName)
 	}
 
 	tree.Apply(false)

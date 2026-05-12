@@ -1,6 +1,9 @@
 package plugin
 
-import "testing"
+import (
+	"testing"
+	"zstack-vyos/server"
+)
 
 func TestZSTAC83935DiffUserRulesKeepsUnchangedRules(t *testing.T) {
 	current := []ethRuleSetRef{firewallDiffRef("52:54:00:00:00:01", FIREWALL_DIRECTION_IN, []ruleInfo{
@@ -78,6 +81,70 @@ func TestZSTAC83935DiffUserRulesCreatesMissingRuleSet(t *testing.T) {
 	}
 	if len(diff.RulesToDelete) != 0 || len(diff.RulesToUpdate) != 0 {
 		t.Fatalf("missing ruleset must not delete or update rules, got deletes=%#v updates=%#v", diff.RulesToDelete, diff.RulesToUpdate)
+	}
+}
+
+func TestZSTAC83935DeleteExtraRuleSetRemovesNodeAndAttachments(t *testing.T) {
+	tree := server.NewParserFromConfiguration(`
+interfaces {
+    ethernet eth5 {
+        firewall {
+            in {
+                name eth5.in
+            }
+            out {
+                name eth5.out
+            }
+        }
+    }
+    ethernet eth6 {
+        firewall {
+            in {
+                name eth5.in
+            }
+        }
+    }
+}
+firewall {
+    group {
+        address-group eth5.in-1100-source {
+            address 10.130.145.0/24
+        }
+    }
+    name eth5.in {
+        default-action reject
+        enable-default-log
+        rule 1100 {
+            action accept
+            source {
+                group {
+                    address-group eth5.in-1100-source
+                }
+            }
+        }
+    }
+    name eth5.out {
+        default-action accept
+    }
+}
+`).Tree
+
+	deleteExtraRuleSet(tree, "eth5.in")
+
+	if tree.Get("firewall name eth5.in") != nil {
+		t.Fatal("expected extra firewall ruleset node to be deleted")
+	}
+	if tree.Get("interfaces ethernet eth5 firewall in name eth5.in") != nil {
+		t.Fatal("expected eth5 in binding to extra ruleset to be detached")
+	}
+	if tree.Get("interfaces ethernet eth6 firewall in name eth5.in") != nil {
+		t.Fatal("expected eth6 in binding to extra ruleset to be detached")
+	}
+	if tree.Get("firewall group address-group eth5.in-1100-source") != nil {
+		t.Fatal("expected address group owned by extra ruleset to be deleted")
+	}
+	if tree.Get("firewall name eth5.out") == nil || tree.Get("interfaces ethernet eth5 firewall out name eth5.out") == nil {
+		t.Fatal("unrelated firewall ruleset and binding must be kept")
 	}
 }
 
