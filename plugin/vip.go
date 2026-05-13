@@ -5,12 +5,14 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -1491,9 +1493,11 @@ func RemoveVip(cmd *removeVipCmd) interface{} {
 			vipPromCollector.mu.Lock()
 			if vip.Ip != "" {
 				delete(vipPromCollector.counters, vip.Ip)
+				vipPromCollector.removePreviousStatsByVip(vip.Ip)
 			}
 			if vip.Ip6 != "" {
 				delete(vipPromCollector.counters, vip.Ip6)
+				vipPromCollector.removePreviousStatsByVip(vip.Ip6)
 			}
 			vipPromCollector.mu.Unlock()
 		}
@@ -1742,15 +1746,19 @@ type vipCollector struct {
 	outPktEntry  *prom.Desc
 
 	// Fields for conntrack-based monitoring
-	mu            sync.Mutex
-	previousStats map[string]*SessionStat
-	counters      map[string]*VipCounter
+	mu                       sync.Mutex
+	previousStats            map[string]*SessionStat
+	counters                 map[string]*VipCounter
+	conntrackCollecting      atomic.Bool
+	lastConntrackCollectNano atomic.Int64
 }
 
 var vipPromCollector *vipCollector
 
 const (
-	LABEL_VIP_UUID = "VipUUID"
+	LABEL_VIP_UUID             = "VipUUID"
+	conntrackCollectInterval   = 15 * time.Second
+	conntrackSessionStaleAfter = 300
 )
 
 func NewVipPrometheusCollector() MetricCollector {
@@ -1958,15 +1966,69 @@ func parseConntrackLine(line string) (*SessionStat, bool) {
 	return stat, true
 }
 
-// updateCountersByConntrack assumes the caller already holds c.mu.
-// Its only caller, Update(), locks c.mu before dispatching to the eBPF
-// or conntrack path; locking again here would self-deadlock since
-// sync.Mutex is non-reentrant, leaving c.mu held forever. Subsequent
-// SetVip / RemoveVip handlers block on vipPromCollector.mu.Lock() and
-// async commands never invoke their callback URL.
+type conntrackCollectStats struct {
+	totalSessions   int
+	parsedSessions  int
+	skippedSessions int
+	newSessions     int
+	staleSessions   int
+	matchedSessions int
+}
+
+func (c *vipCollector) snapshotVipCounters() []VipCounter {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	counters := make([]VipCounter, 0, len(c.counters))
+	for _, counter := range c.counters {
+		if counter == nil {
+			continue
+		}
+		counters = append(counters, *counter)
+	}
+	return counters
+}
+
+func (c *vipCollector) snapshotConntrackVips() map[string]string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	vips := make(map[string]string, len(c.counters))
+	for vip, counter := range c.counters {
+		if counter == nil {
+			continue
+		}
+		vips[vip] = counter.VipUuid
+	}
+	return vips
+}
+
+func (c *vipCollector) maybeStartConntrackCollect() {
+	now := time.Now()
+	if last := c.lastConntrackCollectNano.Load(); last > 0 && now.Sub(time.Unix(0, last)) < conntrackCollectInterval {
+		return
+	}
+
+	if !c.conntrackCollecting.CompareAndSwap(false, true) {
+		return
+	}
+	c.lastConntrackCollectNano.Store(now.UnixNano())
+
+	go func() {
+		defer c.conntrackCollecting.Store(false)
+		c.updateCountersByConntrack()
+	}()
+}
+
+// updateCountersByConntrack runs outside the Prometheus request path. It only
+// takes c.mu to copy the VIP set and later merge deltas, so SetVip/RemoveVip
+// cannot be blocked by a full /proc/net/nf_conntrack scan.
 func (c *vipCollector) updateCountersByConntrack() {
 	startTime := time.Now()
-	var totalSessions, parsedSessions, skippedSessions, newSessions, staleSessions, matchedSessions int
+	vips := c.snapshotConntrackVips()
+	if len(vips) == 0 {
+		return
+	}
 
 	file, err := os.Open("/proc/net/nf_conntrack")
 	if err != nil {
@@ -1975,18 +2037,27 @@ func (c *vipCollector) updateCountersByConntrack() {
 	}
 	defer file.Close()
 
+	deltas, stats := c.collectConntrackCounters(file, vips, time.Now().Unix())
+	c.applyConntrackDeltas(deltas)
+
+	log.Debugf("updateCountersByConntrack completed: duration=%v, totalSessions=%d, skippedSessions=%d, parsedSessions=%d, newSessions=%d, matchedSessions=%d, staleSessions=%d",
+		time.Since(startTime), stats.totalSessions, stats.skippedSessions, stats.parsedSessions, stats.newSessions, stats.matchedSessions, stats.staleSessions)
+}
+
+func (c *vipCollector) collectConntrackCounters(reader io.Reader, vips map[string]string, currentTime int64) (map[string]*VipCounter, conntrackCollectStats) {
+	var stats conntrackCollectStats
+	deltas := make(map[string]*VipCounter)
 	currentStats := make(map[string]*SessionStat)
-	currentTime := time.Now().Unix()
-	scanner := bufio.NewScanner(file)
+	scanner := bufio.NewScanner(reader)
 	for scanner.Scan() {
 		line := scanner.Text()
-		totalSessions++
+		stats.totalSessions++
 
 		firstDst, secondDst := extractDstIps(line)
-		_, matchFirst := c.counters[firstDst]
-		_, matchSecond := c.counters[secondDst]
+		_, matchFirst := vips[firstDst]
+		_, matchSecond := vips[secondDst]
 		if !matchFirst && !matchSecond {
-			skippedSessions++
+			stats.skippedSessions++
 			continue
 		}
 
@@ -1994,7 +2065,7 @@ func (c *vipCollector) updateCountersByConntrack() {
 		if !ok {
 			continue
 		}
-		parsedSessions++
+		stats.parsedSessions++
 		stat.LastUpdate = currentTime
 		currentStats[stat.Key()] = stat
 	}
@@ -2006,7 +2077,7 @@ func (c *vipCollector) updateCountersByConntrack() {
 	for key, current := range currentStats {
 		previous, exists := c.previousStats[key]
 		if !exists {
-			newSessions++
+			stats.newSessions++
 		}
 
 		var pktIn, bytesIn, pktOut, bytesOut uint64
@@ -2025,14 +2096,24 @@ func (c *vipCollector) updateCountersByConntrack() {
 			bytesOut = current.ReplyBytes
 		}
 
-		if counter, ok := c.counters[current.DstIp]; ok {
-			matchedSessions++
+		if vipUuid, ok := vips[current.DstIp]; ok {
+			stats.matchedSessions++
+			counter := deltas[current.DstIp]
+			if counter == nil {
+				counter = &VipCounter{VipUuid: vipUuid}
+				deltas[current.DstIp] = counter
+			}
 			counter.InPackets += pktIn
 			counter.InBytes += bytesIn
 			counter.OutPackets += pktOut
 			counter.OutBytes += bytesOut
-		} else if counter, ok := c.counters[current.ReplyDstIp]; ok {
-			matchedSessions++
+		} else if vipUuid, ok := vips[current.ReplyDstIp]; ok {
+			stats.matchedSessions++
+			counter := deltas[current.ReplyDstIp]
+			if counter == nil {
+				counter = &VipCounter{VipUuid: vipUuid}
+				deltas[current.ReplyDstIp] = counter
+			}
 			counter.OutPackets += pktIn
 			counter.OutBytes += bytesIn
 			counter.InPackets += pktOut
@@ -2045,14 +2126,42 @@ func (c *vipCollector) updateCountersByConntrack() {
 
 	// Clean up sessions older than 300 seconds from previousStats
 	for key, previous := range c.previousStats {
-		if currentTime-previous.LastUpdate > 300 {
-			staleSessions++
+		if currentTime-previous.LastUpdate > conntrackSessionStaleAfter {
+			stats.staleSessions++
 			delete(c.previousStats, key)
 		}
 	}
 
-	log.Debugf("updateCountersByConntrack completed: duration=%v, totalSessions=%d, skippedSessions=%d, parsedSessions=%d, newSessions=%d, matchedSessions=%d, staleSessions=%d",
-		time.Since(startTime), totalSessions, skippedSessions, parsedSessions, newSessions, matchedSessions, staleSessions)
+	return deltas, stats
+}
+
+func (c *vipCollector) applyConntrackDeltas(deltas map[string]*VipCounter) {
+	if len(deltas) == 0 {
+		return
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for vip, delta := range deltas {
+		counter, ok := c.counters[vip]
+		if !ok || counter == nil {
+			continue
+		}
+
+		counter.InPackets += delta.InPackets
+		counter.InBytes += delta.InBytes
+		counter.OutPackets += delta.OutPackets
+		counter.OutBytes += delta.OutBytes
+	}
+}
+
+func (c *vipCollector) removePreviousStatsByVip(vip string) {
+	for key, stat := range c.previousStats {
+		if stat.DstIp == vip || stat.ReplyDstIp == vip {
+			delete(c.previousStats, key)
+		}
+	}
 }
 
 func (c *vipCollector) Update(ch chan<- prom.Metric) error {
@@ -2060,18 +2169,28 @@ func (c *vipCollector) Update(ch chan<- prom.Metric) error {
 		return nil
 	}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	var counters []VipCounter
 
 	if ebpfObjs != nil {
-		log.Debugf("VIP metrics: eBPF mode — collecting stats for %d VIPs", len(c.counters))
-		updateCountersByEbpf(c.counters)
+		func() {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+
+			log.Debugf("VIP metrics: eBPF mode — collecting stats for %d VIPs", len(c.counters))
+			updateCountersByEbpf(c.counters)
+			for _, counter := range c.counters {
+				if counter != nil {
+					counters = append(counters, *counter)
+				}
+			}
+		}()
 	} else {
-		log.Debugf("VIP metrics: conntrack mode — collecting stats for %d VIPs", len(c.counters))
-		c.updateCountersByConntrack()
+		c.maybeStartConntrackCollect()
+		counters = c.snapshotVipCounters()
+		log.Debugf("VIP metrics: conntrack mode — returning cached stats for %d VIPs", len(counters))
 	}
 
-	for _, rule := range c.counters {
+	for _, rule := range counters {
 		vipUuid := rule.VipUuid
 		ch <- prom.MustNewConstMetric(c.inByteEntry, prom.CounterValue, float64(rule.InBytes), vipUuid)
 		ch <- prom.MustNewConstMetric(c.inPktEntry, prom.CounterValue, float64(rule.InPackets), vipUuid)
