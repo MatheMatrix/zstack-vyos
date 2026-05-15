@@ -1145,6 +1145,9 @@ max_responses = 0    # (required) if > 0 accepts no more responses that max_resp
     ]
 
     [servers.{{.ListenerUuid}}.healthcheck]
+    {{if eq $.HealthCheckProtocol "none" }}
+    kind = "none"
+    {{else }}
     fails = {{$.UnhealthyThreshold}}
     passes = {{$.HealthyThreshold}}
     interval = "{{$.HealthCheckInterval}}s"
@@ -1153,6 +1156,7 @@ max_responses = 0    # (required) if > 0 accepts no more responses that max_resp
     exec_command = "/usr/share/healthcheck.sh"  # (required) command to execute
     exec_expected_positive_output = "success"           # (required) expected output of command in case of success
     exec_expected_negative_output = "fail"
+    {{end }}
 `
 
 	var buf bytes.Buffer

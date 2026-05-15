@@ -477,7 +477,13 @@ var _ = Describe("ipvs health check test", func() {
 	})
 
 	It("ipvs health check: test change listener parameters", func() {
+		bs := bs1
+		bs.HealthCheckProtocol = "none"
+		bs.result = make(chan bool, 1)
 
+		bs.doHealthCheck()
+
+		Expect(<-bs.result).To(BeTrue(), "none health check should keep backend healthy without udp probing")
 	})
 
 	It("ipvs health check: test syncIpvsadmWithHealthCheck", func() {
