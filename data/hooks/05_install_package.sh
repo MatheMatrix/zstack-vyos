@@ -25,14 +25,14 @@ EULER_OPENSSH_RPMS=" \
 EULER_OPENSSH_VERSION="8.8p1-37.oe2203sp3.x86_64"
 
 function upgrade_euler_openssh() {
-    local rpm_files=""
+    local rpm_files=()
 
     for file in ${EULER_OPENSSH_RPMS}; do
         if [ ! -f "${REPOS_PATH}/${file}" ]; then
             log_info "can not find RPM package: [${file}]"
             return 1
         fi
-        rpm_files="${rpm_files} ${REPOS_PATH}/${file}"
+        rpm_files+=("${REPOS_PATH}/${file}")
     done
 
     if rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}' openssh 2>/dev/null | grep -q "^${EULER_OPENSSH_VERSION}$" && \
@@ -43,7 +43,7 @@ function upgrade_euler_openssh() {
     fi
 
     log_info "start upgrade OpenSSH RPMs: [${EULER_OPENSSH_RPMS}]"
-    if ! rpm -Uvh ${rpm_files} >> "${LOG_FILE}" 2>&1; then
+    if ! rpm -Uvh "${rpm_files[@]}" >> "${LOG_FILE}" 2>&1; then
         log_info "upgrade OpenSSH RPMs failed"
         return 1
     fi
