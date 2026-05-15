@@ -16,6 +16,39 @@ X86_DEBS=" \
 #   - bpftool is a debug/inspection tool only.
 EULER_2203_RPMS=""
 
+EULER_OPENSSH_RPMS=" \
+          openssh-8.8p1-37.oe2203sp3.x86_64.rpm \
+          openssh-clients-8.8p1-37.oe2203sp3.x86_64.rpm \
+          openssh-server-8.8p1-37.oe2203sp3.x86_64.rpm \
+         "
+
+EULER_OPENSSH_VERSION="8.8p1-37.oe2203sp3.x86_64"
+
+function upgrade_euler_openssh() {
+    local rpm_files=""
+
+    for file in ${EULER_OPENSSH_RPMS}; do
+        if [ ! -f "${REPOS_PATH}/${file}" ]; then
+            log_info "can not find RPM package: [${file}]"
+            return 1
+        fi
+        rpm_files="${rpm_files} ${REPOS_PATH}/${file}"
+    done
+
+    if rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}' openssh 2>/dev/null | grep -q "^${EULER_OPENSSH_VERSION}$" && \
+       rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}' openssh-clients 2>/dev/null | grep -q "^${EULER_OPENSSH_VERSION}$" && \
+       rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}' openssh-server 2>/dev/null | grep -q "^${EULER_OPENSSH_VERSION}$"; then
+        log_info "OpenSSH RPMs are already upgraded to [${EULER_OPENSSH_VERSION}]"
+        return
+    fi
+
+    log_info "start upgrade OpenSSH RPMs: [${EULER_OPENSSH_RPMS}]"
+    if ! rpm -Uvh ${rpm_files} >> "${LOG_FILE}" 2>&1; then
+        log_info "upgrade OpenSSH RPMs failed"
+        return 1
+    fi
+}
+
 
 ################
 ### use for install deb packages when zvr.bin is updated
@@ -59,6 +92,10 @@ if [ "${OS}" == "openEuler release 22.03" ]; then
         log_info "start install RPM package: [${rpm_file}]"
         rpm -ivh "${rpm_file}" >> "${LOG_FILE}" 2>&1 || log_info "rpm install [${rpm_file}] failed"
     done
+fi
+
+if [[ "${OS}" == "openEuler release 22.03" ]] && [[ "${ARCH}" == "x86_64" ]]; then
+    upgrade_euler_openssh || exit 1
 fi
 
 exit 0
