@@ -1,5 +1,6 @@
 # Compiled Object files, Static and Dynamic libs (Shared Objects)
 *.o
+!plugin/ebpf/*.o
 *.a
 *.so
 
@@ -38,3 +39,6 @@ vendor/
 # Go build cache
 .gocache/
 go.work.sum
+
+.gitlab-output
+vendor/*

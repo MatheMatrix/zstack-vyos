@@ -8,6 +8,14 @@ X86_DEBS=" \
           mlnx-ofed-kernel-modules_5.4.80-amd64-vyos_amd64.deb \
          "
 
+# RPMs required for eBPF VIP counter on OpenEuler 22.03.
+# NOTE: bpftool and libbpf are NOT runtime dependencies.
+#   - libbpf-devel is only needed at BUILD TIME to compile plugin/ebpf/vip_counter.c.
+#   - At runtime, cilium/ebpf loads the pre-compiled vip_counter.o (embedded via
+#     go:embed in plugin/vip_ebpf.go) directly into the kernel via BPF syscalls.
+#   - bpftool is a debug/inspection tool only.
+EULER_2203_RPMS=""
+
 
 ################
 ### use for install deb packages when zvr.bin is updated
@@ -28,6 +36,28 @@ if [[ "${KERNEL_VERSION}" == "5.4.80-amd64-vyos" ]] && [[ "${ARCH}" == "x86_64" 
             continue
         fi
         /usr/bin/dpkg -i ${REPOS_PATH}/${file}
+    done
+fi
+
+OS="vyos 1.1.7"
+if [ -f /etc/system-release ]; then
+    OS=$(cat /etc/system-release | awk '{print $1,$2,$3}')
+fi
+
+if [ "${OS}" == "openEuler release 22.03" ]; then
+    for pkg in ${EULER_2203_RPMS}; do
+        if rpm -q "${pkg}" &>/dev/null; then
+            log_info "RPM [${pkg}] is already installed"
+            continue
+        fi
+        rpm_file=$(find "${REPOS_PATH}" -name "${pkg}-*.rpm" | head -1)
+        if [ -z "${rpm_file}" ]; then
+            log_info "can not find RPM package: [${pkg}], trying yum"
+            yum install -y "${pkg}" >> "${LOG_FILE}" 2>&1 || log_info "yum install [${pkg}] failed"
+            continue
+        fi
+        log_info "start install RPM package: [${rpm_file}]"
+        rpm -ivh "${rpm_file}" >> "${LOG_FILE}" 2>&1 || log_info "rpm install [${rpm_file}] failed"
     done
 fi
 
