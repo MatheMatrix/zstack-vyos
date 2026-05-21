@@ -63,6 +63,12 @@ func TestZSTAC84903ConntrackDeltasApplyToVipCounters(t *testing.T) {
 	}
 }
 
+func TestZSTAC84903ConntrackCollectIntervalMatchesMetricsScrape(t *testing.T) {
+	if conntrackCollectInterval != 10*time.Second {
+		t.Fatalf("expected conntrack collect interval to be 10s, got %s", conntrackCollectInterval)
+	}
+}
+
 func TestZSTAC84903RemoveVipClearsPreviousStats(t *testing.T) {
 	collector := &vipCollector{
 		previousStats: map[string]*SessionStat{

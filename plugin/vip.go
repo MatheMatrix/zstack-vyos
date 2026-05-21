@@ -1757,7 +1757,7 @@ var vipPromCollector *vipCollector
 
 const (
 	LABEL_VIP_UUID             = "VipUUID"
-	conntrackCollectInterval   = 15 * time.Second
+	conntrackCollectInterval   = 10 * time.Second
 	conntrackSessionStaleAfter = 300
 )
 
