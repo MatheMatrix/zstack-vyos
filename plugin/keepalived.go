@@ -223,7 +223,11 @@ const tKeepalivedNotifyBackup = `#!/bin/sh
 port=7272
 peerIp=$(echo $(grep -A1 -w unicast_peer {{.KeepalivedCfg}} | tail -1))
 test x"$2" != x"" && port=$2
-test x"$peerIp" != x"" && curl -X POST -H "User-Agent: curl/7.2.5" --connect-timeout 3 http://"$peerIp:$port"/keepalived/garp
+case "$peerIp" in
+    *:*) garpUrl="http://[$peerIp]:$port/keepalived/garp" ;;
+    *) garpUrl="http://$peerIp:$port/keepalived/garp" ;;
+esac
+test x"$peerIp" != x"" && curl -X POST -H "User-Agent: curl/7.2.5" --connect-timeout 3 "$garpUrl"
 
 #/bin/bash {{.PrimaryBackupScript}} "$1"
 

@@ -202,9 +202,11 @@ func IsInManagementCidr(vipStr string) bool {
 	netmaskStr, _ := mgmtNic["netmask"].(string)
 
 	ip := net.ParseIP(ipStr)
-	netmask := net.IPMask(net.ParseIP(netmaskStr).To4())
+	prefix, err := NetmaskToCIDR(netmaskStr)
+	PanicOnError(err)
 
-	cidr := net.IPNet{IP: ip, Mask: netmask}
+	_, cidr, err := net.ParseCIDR(fmt.Sprintf("%s/%d", ip, prefix))
+	PanicOnError(err)
 
 	vip := net.ParseIP(vipStr)
 	return cidr.Contains(vip)
