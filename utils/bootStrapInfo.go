@@ -18,6 +18,13 @@ const (
 )
 
 const (
+	BootstrapParamManagementNodeIp      = "managementNodeIp"
+	BootstrapParamManagementPeerNodeIp  = "managementPeerNodeIp"
+	BootstrapParamManagementNodeCidr    = "managementNodeCidr"
+	BootstrapParamManagementNodeIp6Cidr = "managementNodeIp6Cidr"
+)
+
+const (
 	NOHA     = "NoHa"
 	HAMASTER = "Master"
 	HABACKUP = "Backup"
@@ -214,19 +221,30 @@ func IsInManagementCidr(vipStr string) bool {
 
 func GetMnNodeIps() map[string]string {
 	mnNodeIps := make(map[string]string)
-	mnNodeIp := BootstrapInfo["managementNodeIp"]
+	mnNodeIp := BootstrapInfo[BootstrapParamManagementNodeIp]
 	if mnNodeIp != nil {
 		mnNodeIpStr := mnNodeIp.(string)
 		mnNodeIps[mnNodeIpStr] = mnNodeIpStr
 	}
 
-	mnPeerNodeIp := BootstrapInfo["managementPeerNodeIp"]
+	mnPeerNodeIp := BootstrapInfo[BootstrapParamManagementPeerNodeIp]
 	if mnPeerNodeIp != nil {
 		mnPeerNodeStr := mnPeerNodeIp.(string)
 		mnNodeIps[mnPeerNodeStr] = mnPeerNodeStr
 	}
 
 	return mnNodeIps
+}
+
+func GetManagementNodeCidrs() []string {
+	cidrs := make([]string, 0, 2)
+	for _, key := range []string{BootstrapParamManagementNodeCidr, BootstrapParamManagementNodeIp6Cidr} {
+		if cidr, ok := BootstrapInfo[key].(string); ok && cidr != "" {
+			cidrs = append(cidrs, cidr)
+		}
+	}
+
+	return cidrs
 }
 
 func WriteDefaultHaScript(defaultNic *Nic) {

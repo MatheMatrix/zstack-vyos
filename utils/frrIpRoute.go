@@ -626,6 +626,7 @@ func AddRouteForMgmtEuler2203(mgtIp, mgtNic, gw string) error {
 		NicName:         mgtNic,
 		NextHopIp:       gw,
 		TableId:         ROUTETABLE_ID_MAIN,
+		Ipv6:            strings.Contains(mgtIp, ":"),
 	}
 	return addRouteEntries([]ZStackRouteEntry{mgtEntry})
 }

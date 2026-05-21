@@ -17,6 +17,44 @@ var (
 	mgmtNic *utils.NicInfo            = &utils.NicInfo{}
 )
 
+func getStringValue(values map[string]interface{}, key string) string {
+	if value, ok := values[key].(string); ok {
+		return value
+	}
+
+	return ""
+}
+
+func addManagementNodeRoute(cidr, gateway, devName string) {
+	if cidr == "" {
+		return
+	}
+	if gateway == "" {
+		log.Warnf("skip management node route[%s], gateway is empty", cidr)
+		return
+	}
+
+	nexthop, _ := utils.IpRouteGet(cidr)
+	if nexthop == gateway {
+		return
+	}
+
+	if utils.IsEuler2203() {
+		if err := utils.AddRouteForMgmtEuler2203(cidr, devName, gateway); err != nil {
+			log.Debugf("AddRouteForMgmtEuler2203 route entry[Dst:%s gateway:%s dev:%s] error: %+v", cidr, gateway, devName, err)
+		}
+		return
+	}
+
+	route := utils.NewIpRoute().SetDst(cidr).SetGW(gateway)
+	if devName != "" {
+		route.SetDev(devName)
+	}
+	if err := utils.IpRouteAdd(route); err != nil {
+		log.Debugf("IpRouteAdd route entry[Dst:%s gateway:%s dev:%s] error: %+v", cidr, gateway, devName, err)
+	}
+}
+
 func renameNic() {
 	log.Debugf("[configure: rename nics]")
 	type deviceName struct {
@@ -446,22 +484,8 @@ func configureNicInfo(nic *utils.NicInfo) {
 		utils.Assertf(err == nil, "IpLinkSetDown[%s] error: %+v", nic.Name, err)
 	}
 	if nic.Name == "eth0" {
-		mgmtNodeCidr := utils.BootstrapInfo["managementNodeCidr"]
-		if mgmtNodeCidr != nil {
-			mgmtNodeCidrStr := mgmtNodeCidr.(string)
-			if utils.IsEuler2203() {
-				_ = utils.AddRouteForMgmtEuler2203(mgmtNodeCidrStr, nic.Name, nic.Gateway)
-			} else {
-				nexthop, _ := utils.IpRouteGet(mgmtNodeCidrStr)
-				if nexthop != nic.Gateway {
-					defaultRoute := utils.NewIpRoute().SetDst(mgmtNodeCidrStr).SetGW(nic.Gateway)
-					if err = utils.IpRouteAdd(defaultRoute); err != nil {
-						log.Debugf("IpRouteAdd route entry[Dst:%s gateway:%s] error: %+v", mgmtNodeCidrStr, nic.Gateway, err)
-					}
-					utils.AddRoute(mgmtNodeCidrStr, nic.Gateway)
-				}
-			}
-		}
+		addManagementNodeRoute(getStringValue(utils.BootstrapInfo, utils.BootstrapParamManagementNodeCidr), nic.Gateway, nic.Name)
+		addManagementNodeRoute(getStringValue(utils.BootstrapInfo, utils.BootstrapParamManagementNodeIp6Cidr), nic.Gateway6, nic.Name)
 	}
 
 	if nic.Category == "Private" {
