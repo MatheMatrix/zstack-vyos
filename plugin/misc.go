@@ -329,9 +329,9 @@ func initHandler(ctx *server.CommandContext) interface{} {
 		gw := mgmtNic["gateway"].(string)
 		if nexthop != gw {
 			if utils.IsEuler2203() {
-				_ = utils.AddRouteForMgmtEuler2203(initConfig.MgtCidr, "eth0", gw)
+				utils.PanicOnError(utils.AddRouteForMgmtEuler2203(initConfig.MgtCidr, "eth0", gw))
 			} else {
-				_ = utils.AddRoute(initConfig.MgtCidr, gw)
+				utils.PanicOnError(utils.AddRoute(initConfig.MgtCidr, gw))
 			}
 		}
 	}
