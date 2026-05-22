@@ -428,7 +428,10 @@ func addRouteIfCallbackIpChanged(init bool) {
 		mgmtNic := utils.GetMgmtInfoFromBootInfo()
 		gateway := utils.GetMgmtGatewayForIp(server.CALLBACK_IP, mgmtNic)
 		if utils.IsEuler2203() {
-			_ = utils.AddRouteForMgmtEuler2203(server.CALLBACK_IP, "eth0", gateway)
+			if err := utils.AddRouteForMgmtEuler2203(server.CALLBACK_IP, "eth0", gateway); err != nil {
+				log.Warnf("failed to add callback route for ip[%s] via gateway[%s]: %v", server.CALLBACK_IP, gateway, err)
+				return
+			}
 			server.CURRENT_CALLBACK_IP = server.CALLBACK_IP
 			return
 		}
