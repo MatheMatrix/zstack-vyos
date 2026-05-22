@@ -485,12 +485,61 @@ func GetNicNumber(nic string) (int, error) {
 }
 
 func CheckMgmtCidrContainsIp(ip string, mgmtNic map[string]interface{}) bool {
-	maskCidr, err := NetmaskToCIDR(mgmtNic["netmask"].(string))
-	PanicOnError(err)
-	_, mgmtNet, err := net.ParseCIDR(fmt.Sprintf("%s/%d", mgmtNic["ip"], maskCidr))
+	mgmtIp, prefix, ok := getMgmtNicAddressAndPrefix(ip, mgmtNic)
+	if !ok {
+		return false
+	}
+
+	_, mgmtNet, err := net.ParseCIDR(fmt.Sprintf("%s/%d", mgmtIp, prefix))
 	PanicOnError(err)
 
 	return mgmtNet.Contains(net.ParseIP(ip))
+}
+
+func GetMgmtGatewayForIp(ip string, mgmtNic map[string]interface{}) string {
+	if mgmtNic == nil {
+		return ""
+	}
+
+	key := "gateway"
+	if IsIpv6Address(ip) {
+		key = "gateway6"
+	}
+
+	gateway, _ := mgmtNic[key].(string)
+	return gateway
+}
+
+func getMgmtNicAddressAndPrefix(ip string, mgmtNic map[string]interface{}) (string, int, bool) {
+	if mgmtNic == nil {
+		return "", 0, false
+	}
+
+	if IsIpv6Address(ip) {
+		ip6, _ := mgmtNic["ip6"].(string)
+		if ip6 == "" {
+			return "", 0, false
+		}
+
+		switch prefixLength := mgmtNic["prefixLength"].(type) {
+		case float64:
+			return ip6, int(prefixLength), true
+		case int:
+			return ip6, prefixLength, true
+		default:
+			return "", 0, false
+		}
+	}
+
+	ip4, _ := mgmtNic["ip"].(string)
+	netmask, _ := mgmtNic["netmask"].(string)
+	if ip4 == "" || netmask == "" {
+		return "", 0, false
+	}
+
+	maskCidr, err := NetmaskToCIDR(netmask)
+	PanicOnError(err)
+	return ip4, maskCidr, true
 }
 
 func GetPrivteInterface() []string {
