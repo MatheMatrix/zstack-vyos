@@ -484,56 +484,29 @@ func (s *VipTestSuite) checkVipIpv6IptablesRules(vip vipInfo, nicName string, sh
 	}
 }
 
-// checkVipCounterRules 检查 VIP 计数器规则的存在性和计数值读取
-// 使用 parseVipCounterFromIptables 解析 inRules 和 outRules 并验证
 func (s *VipTestSuite) checkVipCounterRules(vip vipInfo, nicName string, shouldExist bool) {
-	// 解析入向计数器
-	inRules := ParseVipCounterFromIptables("vip.in.counter", false)
-	// 解析出向计数器
-	outRules := ParseVipCounterFromIptables("vip.out.counter", true)
+	s.Require().NotNil(vipPromCollector, "VIP prometheus collector should be initialized for %s", nicName)
 
-	if shouldExist {
-		// 验证 VIP UUID 存在于计数器中
-		inRule, inExists := inRules[vip.VipUuid]
-		outRule, outExists := outRules[vip.VipUuid]
+	vipPromCollector.mu.Lock()
+	defer vipPromCollector.mu.Unlock()
 
-		s.Require().True(inExists, "VIP UUID %s should exist in in-counter rules", vip.VipUuid)
-		s.Require().True(outExists, "VIP UUID %s should exist in out-counter rules", vip.VipUuid)
-
-		if inExists {
-			log.Debugf("in rule: %+v", inRule)
-			// 验证 IPv4 VIP
-			if vip.Ip != "" {
-				s.Require().Equal(vip.Ip, inRule.Destination, "In-counter destination should match IPv4 VIP %s", vip.Ip)
-			}
-			// 验证 IPv6 VIP
-			if vip.Ip6 != "" {
-				s.Require().Equal(vip.Ip6, inRule.Destination6, "In-counter destination should match IPv6 VIP %s", vip.Ip6)
-			}
+	if vip.Ip != "" {
+		counter, exists := vipPromCollector.counters[vip.Ip]
+		if shouldExist {
+			s.Require().True(exists, "IPv4 VIP counter should exist for %s on %s", vip.Ip, nicName)
+			s.Require().Equal(vip.VipUuid, counter.VipUuid, "IPv4 VIP counter uuid should match")
+		} else {
+			s.Require().False(exists, "IPv4 VIP counter should be deleted for %s on %s", vip.Ip, nicName)
 		}
+	}
 
-		if outExists {
-			// 验证 IPv4 VIP
-			log.Debugf("out rule: %+v", outRule)
-			if vip.Ip != "" {
-				s.Require().Equal(vip.Ip, outRule.Source, "Out-counter source should match IPv4 VIP %s", vip.Ip)
-			}
-			// 验证 IPv6 VIP
-			if vip.Ip6 != "" {
-				s.Require().Equal(vip.Ip6, outRule.Source6, "Out-counter source should match IPv6 VIP %s", vip.Ip6)
-			}
+	if vip.Ip6 != "" {
+		counter, exists := vipPromCollector.counters[vip.Ip6]
+		if shouldExist {
+			s.Require().True(exists, "IPv6 VIP counter should exist for %s on %s", vip.Ip6, nicName)
+			s.Require().Equal(vip.VipUuid, counter.VipUuid, "IPv6 VIP counter uuid should match")
+		} else {
+			s.Require().False(exists, "IPv6 VIP counter should be deleted for %s on %s", vip.Ip6, nicName)
 		}
-
-		// 对于双栈 VIP，验证 IPv4 和 IPv6 的计数都被正确记录
-		if vip.Ip != "" && vip.Ip6 != "" {
-			log.Debugf("Dual-stack VIP %s verified: IPv4=%s, IPv6=%s", vip.VipUuid, vip.Ip, vip.Ip6)
-		}
-	} else {
-		// 验证 VIP UUID 不存在于计数器中
-		_, inExists := inRules[vip.VipUuid]
-		_, outExists := outRules[vip.VipUuid]
-
-		s.Require().False(inExists, "VIP UUID %s should not exist in in-counter rules after deletion", vip.VipUuid)
-		s.Require().False(outExists, "VIP UUID %s should not exist in out-counter rules after deletion", vip.VipUuid)
 	}
 }

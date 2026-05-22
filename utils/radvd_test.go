@@ -7,19 +7,15 @@ import (
 	"reflect"
 	"text/template"
 
-	log "github.com/sirupsen/logrus"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	log "github.com/sirupsen/logrus"
 )
-
-func GetRadvdJsonFile() {
-	return filepath.Join(GetZvrRootPath(), ".zstack_config/radvd")
-}
 
 var _ = Describe("radvd_test", func() {
 	var globalMap RadvdAttrsMap
 	It("[RADVD]: test pre env", func() {
-		InitLog(GetVyosUtLogDir()+"radvd_test.log", utils.IsRuingUT())
+		InitLog(GetVyosUtLogDir()+"radvd_test.log", IsRuingUT())
 		globalMap = make(RadvdAttrsMap)
 		cleanUpConfig()
 	})
@@ -104,7 +100,7 @@ var _ = Describe("radvd_test", func() {
 
 func cleanUpConfig() {
 	bash := Bash{
-		Command: fmt.Sprintf("rm -f %s; sudo pkill -9 radvd", GetRadvdJsonFile())
+		Command: fmt.Sprintf("rm -f %s; sudo pkill -9 radvd", getRadvdJsonFile()),
 		Sudo:    true,
 	}
 	bash.Run()
@@ -122,7 +118,7 @@ func checkRadvdProcess() bool {
 
 func checkRadvdConfig(r RadvdAttrsMap) {
 	testMap := make(RadvdAttrsMap)
-	err := JsonLoadConfig(GetRadvdJsonFile(), &testMap)
+	err := JsonLoadConfig(getRadvdJsonFile(), &testMap)
 	Expect(err).To(BeNil(), fmt.Sprintf("load radvd json error: %+v", err))
 
 	ret := reflect.DeepEqual(r, testMap)
