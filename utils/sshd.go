@@ -55,7 +55,11 @@ func (s *SshdInfo) SetPorts(port int) *SshdInfo {
 
 func (s *SshdInfo) SetListen(address string) *SshdInfo {
 	if address != "" {
-		if net.ParseIP(address).To4() == nil {
+		parsed := net.ParseIP(address)
+		if parsed == nil {
+			return s
+		}
+		if parsed.To4() == nil {
 			s.ListenAddress6 = address
 		} else {
 			s.ListenAddress = address

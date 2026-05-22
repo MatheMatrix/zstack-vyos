@@ -51,3 +51,28 @@ func TestSshdTemplatesRenderDualStackListenAddresses(t *testing.T) {
 		}
 	}
 }
+
+func TestSshdSetListenIgnoresInvalidAddress(t *testing.T) {
+	sshdInfo := NewSshServer()
+	sshdInfo.SetListen("not-an-ip")
+
+	if sshdInfo.ListenAddress != "0.0.0.0" {
+		t.Fatalf("expected IPv4 listen address unchanged, got %s", sshdInfo.ListenAddress)
+	}
+	if sshdInfo.ListenAddress6 != "::" {
+		t.Fatalf("expected IPv6 listen address unchanged, got %s", sshdInfo.ListenAddress6)
+	}
+}
+
+func TestSshdSetListenSeparatesIpv4AndIpv6(t *testing.T) {
+	sshdInfo := NewSshServer()
+	sshdInfo.SetListen("192.168.1.10")
+	sshdInfo.SetListen("2001:db8::10")
+
+	if sshdInfo.ListenAddress != "192.168.1.10" {
+		t.Fatalf("expected IPv4 listen address set, got %s", sshdInfo.ListenAddress)
+	}
+	if sshdInfo.ListenAddress6 != "2001:db8::10" {
+		t.Fatalf("expected IPv6 listen address set, got %s", sshdInfo.ListenAddress6)
+	}
+}

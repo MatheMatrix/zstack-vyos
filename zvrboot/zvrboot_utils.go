@@ -55,6 +55,14 @@ func addManagementNodeRoute(cidr, gateway, devName string) {
 	}
 }
 
+func addManagementNodeRoutes(nic *utils.NicInfo, devName string) {
+	if nic.Name != "eth0" {
+		return
+	}
+	addManagementNodeRoute(getStringValue(utils.BootstrapInfo, utils.BootstrapParamManagementNodeCidr), nic.Gateway, devName)
+	addManagementNodeRoute(getStringValue(utils.BootstrapInfo, utils.BootstrapParamManagementNodeIp6Cidr), nic.Gateway6, devName)
+}
+
 func renameNic() {
 	log.Debugf("[configure: rename nics]")
 	type deviceName struct {
@@ -372,6 +380,7 @@ func configureBondNic(nic *utils.NicInfo) {
 			}
 		}
 	}
+	addManagementNodeRoutes(nic, bondName)
 
 	// Set alias for bond interface
 	if nic.L2Type != "" {
@@ -483,10 +492,7 @@ func configureNicInfo(nic *utils.NicInfo) {
 		err := utils.IpLinkSetDown(nic.Name)
 		utils.Assertf(err == nil, "IpLinkSetDown[%s] error: %+v", nic.Name, err)
 	}
-	if nic.Name == "eth0" {
-		addManagementNodeRoute(getStringValue(utils.BootstrapInfo, utils.BootstrapParamManagementNodeCidr), nic.Gateway, nic.Name)
-		addManagementNodeRoute(getStringValue(utils.BootstrapInfo, utils.BootstrapParamManagementNodeIp6Cidr), nic.Gateway6, nic.Name)
-	}
+	addManagementNodeRoutes(nic, nic.Name)
 
 	if nic.Category == "Private" {
 		err = utils.InitNicFirewall(nic.Name, nic.Ip, false, utils.IPTABLES_ACTION_REJECT)

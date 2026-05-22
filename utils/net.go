@@ -19,15 +19,29 @@ const (
 	ZSTACK_ROUTE_PROTO_IDENTIFFER = "201"
 	ZVR_ROUTE_PROTO               = "zvr"
 	ZVR_ROUTE_PROTO_IDENTIFFER    = 202
+	IPV4_PREFIX_BITS              = 32
+	IPV6_PREFIX_BITS              = 128
 )
 
 func NetmaskToCIDR(netmask string) (int, error) {
 	if strings.Contains(netmask, ".") {
-		ipv4Mask := net.IPMask(net.ParseIP(netmask).To4())
-		return calculateMaskLength(ipv4Mask), nil
+		ipv4 := net.ParseIP(netmask).To4()
+		if ipv4 == nil {
+			return 0, fmt.Errorf("invalid IPv4 netmask %s", netmask)
+		}
+
+		ipv4Mask := net.IPMask(ipv4)
+		prefix, bits := ipv4Mask.Size()
+		if bits != IPV4_PREFIX_BITS {
+			return 0, fmt.Errorf("invalid non-contiguous IPv4 netmask %s", netmask)
+		}
+		return prefix, nil
 	}
 
 	if prefix, err := strconv.Atoi(netmask); err == nil {
+		if prefix < 0 || prefix > IPV6_PREFIX_BITS {
+			return 0, fmt.Errorf("invalid netmask prefix %d: must be 0..%d", prefix, IPV6_PREFIX_BITS)
+		}
 		return prefix, nil
 	}
 
@@ -36,22 +50,11 @@ func NetmaskToCIDR(netmask string) (int, error) {
 		return 0, fmt.Errorf("invalid netmask %s", netmask)
 	}
 	ipv6Mask := net.IPMask(ipv6MaskIp.To16())
-	return calculateMaskLength(ipv6Mask), nil
-}
-
-func calculateMaskLength(mask net.IPMask) int {
-	maskBytes := []byte(mask)
-	length := 0
-
-	for _, byteValue := range maskBytes {
-		for i := 7; i >= 0; i-- {
-			if (byteValue>>i)&1 == 1 {
-				length++
-			}
-		}
+	prefix, bits := ipv6Mask.Size()
+	if bits != IPV6_PREFIX_BITS {
+		return 0, fmt.Errorf("invalid non-contiguous IPv6 netmask %s", netmask)
 	}
-
-	return length
+	return prefix, nil
 }
 
 func GetNetworkNumber(ip, netmask string) (string, error) {
@@ -776,17 +779,21 @@ func routeCidr(ip string) string {
 }
 
 func ipRouteCommand(ip string) string {
-	if IsIpv6Address(ip) {
+	if IsIpv6Address(routeCommandAddress(ip)) {
 		return "ip -6 route"
 	}
 	return "ip route"
 }
 
 func frrRouteCommand(ip string) string {
-	if IsIpv6Address(ip) {
+	if IsIpv6Address(routeCommandAddress(ip)) {
 		return "ipv6 route"
 	}
 	return "ip route"
+}
+
+func routeCommandAddress(ip string) string {
+	return strings.SplitN(ip, "/", 2)[0]
 }
 
 func IsMgtNic(name string) bool {
