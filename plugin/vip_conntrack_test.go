@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	prom "github.com/prometheus/client_golang/prometheus"
 )
 
 func TestZSTAC84903ConntrackScanDoesNotHoldCollectorLock(t *testing.T) {
@@ -66,6 +68,47 @@ func TestZSTAC84903ConntrackDeltasApplyToVipCounters(t *testing.T) {
 func TestZSTAC84903ConntrackCollectIntervalMatchesMetricsScrape(t *testing.T) {
 	if conntrackCollectInterval != 10*time.Second {
 		t.Fatalf("expected conntrack collect interval to be 10s, got %s", conntrackCollectInterval)
+	}
+}
+
+func TestZSTAC85393PrometheusUpdateOnlyReadsCachedConntrackCounters(t *testing.T) {
+	collector := &vipCollector{
+		inByteEntry: prom.NewDesc(
+			"zstack_vip_in_bytes",
+			"VIP inbound traffic in bytes",
+			[]string{LABEL_VIP_UUID}, nil,
+		),
+		inPktEntry: prom.NewDesc(
+			"zstack_vip_in_packages",
+			"VIP inbound traffic packages",
+			[]string{LABEL_VIP_UUID}, nil,
+		),
+		outByteEntry: prom.NewDesc(
+			"zstack_vip_out_bytes",
+			"VIP outbound traffic in bytes",
+			[]string{LABEL_VIP_UUID}, nil,
+		),
+		outPktEntry: prom.NewDesc(
+			"zstack_vip_out_packages",
+			"VIP outbound traffic packages",
+			[]string{LABEL_VIP_UUID}, nil,
+		),
+		previousStats: make(map[string]*SessionStat),
+		counters: map[string]*VipCounter{
+			"172.24.4.184": {VipUuid: "vip-uuid", InBytes: 1, InPackets: 2, OutBytes: 3, OutPackets: 4},
+		},
+	}
+
+	metrics := make(chan prom.Metric, 4)
+	if err := collector.Update(metrics); err != nil {
+		t.Fatalf("unexpected update error: %v", err)
+	}
+
+	if collector.conntrackCollecting.Load() {
+		t.Fatal("prometheus update should not start conntrack collection")
+	}
+	if len(metrics) != 4 {
+		t.Fatalf("expected 4 cached VIP metrics, got %d", len(metrics))
 	}
 }
 
