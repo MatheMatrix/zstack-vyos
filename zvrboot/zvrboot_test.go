@@ -47,7 +47,7 @@ var _ = Describe("zvrboot_test", func() {
 
 func checkSshMonitor() {
 	testMap := make(utils.CronjobMap)
-	err := utils.JsonLoadConfig(utils.CROND_JSON_FILE, &testMap)
+	err := utils.JsonLoadConfig(utils.GetCronjobJsonFile(), &testMap)
 	Expect(err).To(BeNil(), fmt.Sprintf("load crond json error: %+v", err))
 
 	cronJob := testMap[1]
@@ -58,7 +58,7 @@ func checkSshMonitor() {
 
 func cleanUpCrondConfig() {
 	bash := utils.Bash{
-		Command: fmt.Sprintf("rm -f %s/.zstack_config/cronjob", utils.GetZvrRootPath()),
+		Command: fmt.Sprintf("rm -f %s", utils.GetCronjobJsonFile()),
 		Sudo:    true,
 	}
 	bash.Run()

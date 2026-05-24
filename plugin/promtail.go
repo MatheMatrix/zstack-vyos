@@ -43,6 +43,10 @@ type PromtailConfig struct {
 	ScrapeConfigs []interface{} `yaml:"scrape_configs"`
 }
 
+func buildPromtailLokiURL(logTarget string) string {
+	return fmt.Sprintf("http://%s:3100/loki/api/v1/push", utils.FormatURLHost(logTarget))
+}
+
 func promtailConfigHandler(ctx *server.CommandContext) interface{} {
 	cmd := &ConfigPromtailCmd{}
 	ctx.GetCommand(cmd)
@@ -53,7 +57,7 @@ func promtailConfigHandler(ctx *server.CommandContext) interface{} {
 
 	PROMTAIL_CONFIG_PATH := filepath.Join(getPromtailRootPath(), PROMTAIL_CONFIG)
 	PROMTAIL_TEMPLATE_CONFIG_PATH := filepath.Join(getPromtailRootPath(), PROMTAIL_TEMPLATE_CONFIG)
-	lokiURL := fmt.Sprintf("http://%s:3100/loki/api/v1/push", cmd.LogTarget)
+	lokiURL := buildPromtailLokiURL(cmd.LogTarget)
 
 	if cmd.Enable {
 		if _, err := os.Stat(PROMTAIL_CONFIG_PATH); os.IsNotExist(err) {

@@ -648,14 +648,8 @@ func configureVyos() {
 		}
 	}
 
-	mgmtNodeCidr := bootstrapInfo["managementNodeCidr"]
-	if mgmtNodeCidr != nil {
-		mgmtNodeCidrStr := mgmtNodeCidr.(string)
-		nexthop, _ := utils.GetNexthop(mgmtNodeCidrStr)
-		if nexthop != mgmtNic["gateway"].(string) {
-			utils.AddRoute(mgmtNodeCidrStr, mgmtNic["gateway"].(string))
-		}
-	}
+	addManagementNodeRoute(getStringValue(bootstrapInfo, utils.BootstrapParamManagementNodeCidr), getStringValue(mgmtNic, "gateway"), eth0.name)
+	addManagementNodeRoute(getStringValue(bootstrapInfo, utils.BootstrapParamManagementNodeIp6Cidr), getStringValue(mgmtNic, "gateway6"), eth0.name)
 
 	/* this is workaround for ZStack*/
 	log.Debugf("the vr gateway: %s, ipv6 gateway: %s at %s", defaultNic.Gateway, defaultNic.Gateway6, defaultNic.Name)

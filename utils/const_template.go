@@ -33,7 +33,9 @@ UseDNS yes
 
 # Specifies the port number and local addresses that sshd listens on.  The default port is 22.
 # Port 22
-ListenAddress {{.ListenAddress}}:{{.Port}}
+Port {{.Port}}
+ListenAddress {{.ListenAddress}}
+ListenAddress {{.ListenAddress6}}
 
 # Gives the verbosity level that is used when logging messages from sshd
 LogLevel INFO
@@ -48,7 +50,9 @@ const sshdTemplate = `# Auto Create by Zstack, Do Not Modify It
 #
 
 #Port 22
-ListenAddress {{.ListenAddress}}:{{.Port}}
+Port {{.Port}}
+ListenAddress {{.ListenAddress}}
+ListenAddress {{.ListenAddress6}}
 Protocol 2
 # HostKeys for protocol version 2
 HostKey /etc/ssh/ssh_host_rsa_key
@@ -122,8 +126,9 @@ Include /etc/ssh/sshd_config.d/*.conf
 #
 #Port 22
 #AddressFamily any
-ListenAddress {{.ListenAddress}}:{{.Port}}
-#ListenAddress ::
+Port {{.Port}}
+ListenAddress {{.ListenAddress}}
+ListenAddress {{.ListenAddress6}}
 
 HostKey /etc/ssh/ssh_host_rsa_key
 #HostKey /etc/ssh/ssh_host_ecdsa_key

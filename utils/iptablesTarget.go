@@ -19,7 +19,8 @@ const (
 	IPTABLES_ACTION_CONNMARK_RESTORE = "CONNMARK_RESTORE"
 	IPTABLES_ACTION_LOG              = "LOG"
 
-	REJECT_TYPE_ICMP_UNREACHABLE = "icmp-port-unreachable"
+	REJECT_TYPE_ICMP_UNREACHABLE  = "icmp-port-unreachable"
+	REJECT_TYPE_ICMP6_UNREACHABLE = "icmp6-port-unreachable"
 )
 
 type IpTableTarget struct {
