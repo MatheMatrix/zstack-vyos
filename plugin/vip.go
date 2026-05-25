@@ -1756,11 +1756,10 @@ type vipCollector struct {
 	outPktEntry  *prom.Desc
 
 	// Fields for conntrack-based monitoring
-	mu                       sync.Mutex
-	previousStats            map[string]*SessionStat
-	counters                 map[string]*VipCounter
-	conntrackCollecting      atomic.Bool
-	lastConntrackCollectNano atomic.Int64
+	mu                  sync.Mutex
+	previousStats       map[string]*SessionStat
+	counters            map[string]*VipCounter
+	conntrackCollecting atomic.Bool
 }
 
 var vipPromCollector *vipCollector
@@ -1797,6 +1796,7 @@ func NewVipPrometheusCollector() MetricCollector {
 		previousStats: make(map[string]*SessionStat),
 		counters:      make(map[string]*VipCounter),
 	}
+	vipPromCollector.startConntrackCollectLoop()
 	return vipPromCollector
 }
 
@@ -2013,26 +2013,32 @@ func (c *vipCollector) snapshotConntrackVips() map[string]string {
 	return vips
 }
 
-func (c *vipCollector) maybeStartConntrackCollect() {
-	now := time.Now()
-	if last := c.lastConntrackCollectNano.Load(); last > 0 && now.Sub(time.Unix(0, last)) < conntrackCollectInterval {
-		return
-	}
-
-	if !c.conntrackCollecting.CompareAndSwap(false, true) {
-		return
-	}
-	c.lastConntrackCollectNano.Store(now.UnixNano())
-
+func (c *vipCollector) startConntrackCollectLoop() {
 	go func() {
-		defer c.conntrackCollecting.Store(false)
-		c.updateCountersByConntrack()
+		ticker := time.NewTicker(conntrackCollectInterval)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			c.tryUpdateCountersByConntrack()
+		}
 	}()
 }
 
-// updateCountersByConntrack runs outside the Prometheus request path. It only
-// takes c.mu to copy the VIP set and later merge deltas, so SetVip/RemoveVip
-// cannot be blocked by a full /proc/net/nf_conntrack scan.
+func (c *vipCollector) tryUpdateCountersByConntrack() {
+	if ebpfObjs != nil || !IsMaster() {
+		return
+	}
+	if !c.conntrackCollecting.CompareAndSwap(false, true) {
+		return
+	}
+
+	defer c.conntrackCollecting.Store(false)
+	c.updateCountersByConntrack()
+}
+
+// updateCountersByConntrack runs in the background instead of the Prometheus
+// request path. It only takes c.mu to copy the VIP set and later merge deltas,
+// so SetVip/RemoveVip cannot be blocked by a full /proc/net/nf_conntrack scan.
 func (c *vipCollector) updateCountersByConntrack() {
 	startTime := time.Now()
 	vips := c.snapshotConntrackVips()
@@ -2195,7 +2201,6 @@ func (c *vipCollector) Update(ch chan<- prom.Metric) error {
 			}
 		}()
 	} else {
-		c.maybeStartConntrackCollect()
 		counters = c.snapshotVipCounters()
 		log.Debugf("VIP metrics: conntrack mode — returning cached stats for %d VIPs", len(counters))
 	}
