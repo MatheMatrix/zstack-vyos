@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"fmt"
+	"sort"
 
 	log "github.com/sirupsen/logrus"
 	"zstack-vyos/server"
@@ -12,6 +13,8 @@ const (
 	REMOVE_DNS_PATH = "/removedns"
 	SET_DNS_PATH    = "/setdns"
 	SET_VPNDNS_PATH = "/setvpcdns"
+
+	SYNC_DNS_RECORDS_PATH = "/syncdnsrecord"
 )
 
 type dnsInfo struct {
@@ -32,8 +35,14 @@ type setVpcDnsCmd struct {
 	NicMac []string `json:"nicMac"`
 }
 
+type dnsRecordCmd struct {
+	DnsRecord []DnsRecord `json:"dnsRecord"`
+	NicMac    []string    `json:"nicMac"`
+}
+
 var dnsServers map[string]string
 var nicNames map[string]string
+var dnsRecords []DnsRecord
 
 func makeDnsFirewallRuleDescription(nicname string) string {
 	return fmt.Sprintf("DNS-for-%s", nicname)
@@ -131,7 +140,7 @@ func setDns(cmd *setDnsCmd) interface{} {
 		}
 	}
 
-	dnsConf := NewDnsmasq(nicNames, dnsServers)
+	dnsConf := NewDnsmasq(nicNames, dnsServers, dnsRecords)
 	dnsConf.RestartDnsmasq()
 
 	return nil
@@ -149,7 +158,7 @@ func removeDns(cmd *removeDnsCmd) interface{} {
 		delete(dnsServers, info.DnsAddress)
 	}
 
-	dnsConf := NewDnsmasq(nicNames, dnsServers)
+	dnsConf := NewDnsmasq(nicNames, dnsServers, dnsRecords)
 	dnsConf.RestartDnsmasq()
 
 	return nil
@@ -162,14 +171,13 @@ func setVpcDnsHandler(ctx *server.CommandContext) interface{} {
 	return setVpcDns(cmd)
 }
 
-func setVpcDns(cmd *setVpcDnsCmd) interface{} {
+func configureDnsNics(nicMacs []string) {
 	var tree *server.VyosConfigTree
 	if !utils.IsSkipVyosIptables() {
 		tree = server.NewParserFromShowConfiguration().Tree
 	}
 
 	/* remove old dns  */
-	dnsServers = map[string]string{}
 	nicNames = map[string]string{}
 	priNics := utils.GetPrivteInterface()
 	for _, priNic := range priNics {
@@ -185,7 +193,7 @@ func setVpcDns(cmd *setVpcDnsCmd) interface{} {
 
 	/* add new configure */
 	var nics []string
-	for _, mac := range cmd.NicMac {
+	for _, mac := range nicMacs {
 		eth, err := utils.GetNicNameByMac(mac)
 		utils.PanicOnError(err)
 		nics = append(nics, eth)
@@ -215,15 +223,20 @@ func setVpcDns(cmd *setVpcDnsCmd) interface{} {
 		}
 	}
 
+	if !utils.IsSkipVyosIptables() {
+		tree.Apply(false)
+	}
+}
+
+func setVpcDns(cmd *setVpcDnsCmd) interface{} {
+	dnsServers = map[string]string{}
 	for _, dns := range cmd.Dns {
 		dnsServers[dns] = dns
 	}
 
-	if !utils.IsSkipVyosIptables() {
-		tree.Apply(false)
-	}
+	configureDnsNics(cmd.NicMac)
 
-	dnsConf := NewDnsmasq(nicNames, dnsServers)
+	dnsConf := NewDnsmasq(nicNames, dnsServers, dnsRecords)
 	dnsConf.RestartDnsmasq()
 
 	return nil
@@ -232,11 +245,34 @@ func addDnsNic(nicName string) {
 	if _, ok := nicNames[nicName]; !ok {
 		log.Debugf("add new dns nic [%s]", nicName)
 		nicNames[nicName] = nicName
-		dnsConf := NewDnsmasq(nicNames, dnsServers)
+		dnsConf := NewDnsmasq(nicNames, dnsServers, dnsRecords)
 		dnsConf.RestartDnsmasq()
 	} else {
 		log.Debugf("dns nic [%s] already added", nicName)
 	}
+}
+
+func syncDnsRecordsHandler(ctx *server.CommandContext) interface{} {
+	cmd := &dnsRecordCmd{}
+	ctx.GetCommand(cmd)
+
+	return syncDnsRecords(cmd)
+}
+
+func syncDnsRecords(cmd *dnsRecordCmd) interface{} {
+	dnsRecords = append([]DnsRecord{}, cmd.DnsRecord...)
+	sort.SliceStable(dnsRecords, func(i, j int) bool {
+		return dnsRecords[i].Domain < dnsRecords[j].Domain
+	})
+
+	if len(cmd.NicMac) != 0 {
+		configureDnsNics(cmd.NicMac)
+	}
+
+	dnsConf := NewDnsmasq(nicNames, dnsServers, dnsRecords)
+	dnsConf.RestartDnsmasq()
+
+	return nil
 }
 
 func init() {
@@ -248,4 +284,5 @@ func DnsEntryPoint() {
 	server.RegisterAsyncCommandHandler(SET_DNS_PATH, server.VyosLock(setDnsHandler))
 	server.RegisterAsyncCommandHandler(REMOVE_DNS_PATH, server.VyosLock(removeDnsHandler))
 	server.RegisterAsyncCommandHandler(SET_VPNDNS_PATH, server.VyosLock(setVpcDnsHandler))
+	server.RegisterAsyncCommandHandler(SYNC_DNS_RECORDS_PATH, server.VyosLock(syncDnsRecordsHandler))
 }
