@@ -326,8 +326,10 @@ func initHandler(ctx *server.CommandContext) interface{} {
 	if initConfig.MgtCidr != "" {
 		mgmtNic := utils.GetMgmtInfoFromBootInfo()
 		nexthop, _ := utils.GetNexthop(initConfig.MgtCidr)
-		gw := mgmtNic["gateway"].(string)
-		if nexthop != gw {
+		gw := utils.GetMgmtGatewayForIp(initConfig.MgtCidr, mgmtNic)
+		if gw == "" {
+			log.Warnf("skip management cidr route[%s], gateway is empty", initConfig.MgtCidr)
+		} else if nexthop != gw {
 			if utils.IsEuler2203() {
 				utils.PanicOnError(utils.AddRouteForMgmtEuler2203(initConfig.MgtCidr, "eth0", gw))
 			} else {

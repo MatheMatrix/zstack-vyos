@@ -505,12 +505,20 @@ func GetMgmtGatewayForIp(ip string, mgmtNic map[string]interface{}) string {
 	}
 
 	key := "gateway"
-	if IsIpv6Address(ip) {
+	if isIpv6AddressOrCidr(ip) {
 		key = "gateway6"
 	}
 
 	gateway, _ := mgmtNic[key].(string)
 	return gateway
+}
+
+func isIpv6AddressOrCidr(address string) bool {
+	if ip, _, err := net.ParseCIDR(address); err == nil {
+		return ip.To4() == nil
+	}
+
+	return IsIpv6Address(address)
 }
 
 func getMgmtNicAddressAndPrefix(ip string, mgmtNic map[string]interface{}) (string, int, bool) {
