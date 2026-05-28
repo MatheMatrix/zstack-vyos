@@ -17,6 +17,12 @@ const (
 	ROUTETABLE_ID_MIN  = 1
 	ROUTETABLE_ID_MAX  = 250
 	ROUTETABLE_ID_MAIN = 254
+
+	FRR_SHOW_IP_ROUTE_COMMAND      = "show ip route"
+	FRR_SHOW_IPV6_ROUTE_COMMAND    = "show ipv6 route"
+	FRR_NETWORK_NOT_IN_TABLE       = "Network not in table"
+	FRR_DIRECTLY_CONNECTED_ROUTE   = "directly connected"
+	FRR_ROUTE_VIA_INTERFACE_PREFIX = "via"
 )
 
 func getPolicyRouterTableFileTemp() string {
@@ -571,39 +577,55 @@ Routing entry for 172.25.0.0/16
 
 */
 
-// TODO ipv6 is not implemented
 func getRouteEntryForIp(ip string) (*ZStackRouteEntry, error) {
+	ipv6 := strings.Contains(ip, ":")
+	routeCommand := FRR_SHOW_IP_ROUTE_COMMAND
+	if ipv6 {
+		routeCommand = FRR_SHOW_IPV6_ROUTE_COMMAND
+	}
+
 	bash := Bash{
-		Command: fmt.Sprintf("vtysh -c 'show ip route %s' | tail -n 2", ip),
+		Command: fmt.Sprintf("vtysh -c '%s %s' | tail -n 2", routeCommand, ip),
 	}
 
 	ret, o, e, err := bash.RunWithReturn()
 	if err != nil || ret != 0 {
-		return nil, fmt.Errorf("vtysh -c 'show ip route %s' | tail -n 2 failed: %+v", ip, e)
+		return nil, fmt.Errorf("vtysh -c '%s %s' | tail -n 2 failed: %+v", routeCommand, ip, e)
 	}
 
-	lines := strings.Split(o, "\n")
-	if strings.Contains(lines[0], "Network not in table") {
+	output := strings.TrimSpace(o)
+	if output == "" {
+		return nil, nil
+	}
+
+	lines := strings.Split(output, "\n")
+	if strings.Contains(lines[0], FRR_NETWORK_NOT_IN_TABLE) {
 		return nil, nil
 	}
 
 	items := strings.Split(lines[0], ",")
-	if strings.Contains(items[0], "directly connected") {
+	if strings.Contains(items[0], FRR_DIRECTLY_CONNECTED_ROUTE) {
+		if len(items) < 2 {
+			return nil, fmt.Errorf("invalid connected route format: %s", lines[0])
+		}
+
 		return &ZStackRouteEntry{
 			DestinationCidr: ip,
 			NicName:         strings.TrimSpace(items[1]),
 			TableId:         ROUTETABLE_ID_MAIN,
+			Ipv6:            ipv6,
 		}, nil
-	} else if strings.Contains(items[1], "via") {
-		nicName := strings.Replace(items[1], "via", "", 1)
+	} else if len(items) > 1 && strings.Contains(items[1], FRR_ROUTE_VIA_INTERFACE_PREFIX) {
+		nicName := strings.Replace(items[1], FRR_ROUTE_VIA_INTERFACE_PREFIX, "", 1)
 		nicName = strings.TrimSpace(nicName)
 		nexthop := strings.Replace(items[0], "*", "", 1)
 		nexthop = strings.TrimSpace(nexthop)
 		return &ZStackRouteEntry{
 			DestinationCidr: ip,
-			NicName:         strings.TrimSpace(items[1]),
+			NicName:         nicName,
 			NextHopIp:       nexthop,
 			TableId:         ROUTETABLE_ID_MAIN,
+			Ipv6:            ipv6,
 		}, nil
 	}
 

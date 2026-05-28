@@ -326,8 +326,10 @@ func initHandler(ctx *server.CommandContext) interface{} {
 	if initConfig.MgtCidr != "" {
 		mgmtNic := utils.GetMgmtInfoFromBootInfo()
 		nexthop, _ := utils.GetNexthop(initConfig.MgtCidr)
-		gw := mgmtNic["gateway"].(string)
-		if nexthop != gw {
+		gw := utils.GetMgmtGatewayForIp(initConfig.MgtCidr, mgmtNic)
+		if gw == "" {
+			log.Warnf("skip management cidr route[%s], gateway is empty", initConfig.MgtCidr)
+		} else if nexthop != gw {
 			if utils.IsEuler2203() {
 				utils.PanicOnError(utils.AddRouteForMgmtEuler2203(initConfig.MgtCidr, "eth0", gw))
 			} else {
@@ -427,6 +429,10 @@ func addRouteIfCallbackIpChanged(init bool) {
 
 		mgmtNic := utils.GetMgmtInfoFromBootInfo()
 		gateway := utils.GetMgmtGatewayForIp(server.CALLBACK_IP, mgmtNic)
+		if gateway == "" && utils.CheckMgmtCidrContainsIp(server.CALLBACK_IP, mgmtNic) == false {
+			log.Warnf("skip callback route for ip[%s], gateway is empty", server.CALLBACK_IP)
+			return
+		}
 		if utils.IsEuler2203() {
 			if err := utils.AddRouteForMgmtEuler2203(server.CALLBACK_IP, "eth0", gateway); err != nil {
 				log.Warnf("failed to add callback route for ip[%s] via gateway[%s]: %v", server.CALLBACK_IP, gateway, err)
