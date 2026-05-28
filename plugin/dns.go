@@ -36,8 +36,8 @@ type setVpcDnsCmd struct {
 }
 
 type dnsRecordCmd struct {
-	DnsRecords []DnsRecord `json:"dnsRecords"`
-	NicMac     []string    `json:"nicMac"`
+	DnsRecord []DnsRecord `json:"dnsRecord"`
+	NicMac    []string    `json:"nicMac"`
 }
 
 var dnsServers map[string]string
@@ -260,7 +260,7 @@ func syncDnsRecordsHandler(ctx *server.CommandContext) interface{} {
 }
 
 func syncDnsRecords(cmd *dnsRecordCmd) interface{} {
-	dnsRecords = append([]DnsRecord{}, cmd.DnsRecords...)
+	dnsRecords = append([]DnsRecord{}, cmd.DnsRecord...)
 	sort.SliceStable(dnsRecords, func(i, j int) bool {
 		return dnsRecords[i].Domain < dnsRecords[j].Domain
 	})
