@@ -126,6 +126,8 @@ count_ipv6_egress(struct __sk_buff *skb, struct ipv6_key *key)
 }
 
 // ── TC ingress: BEFORE NF PREROUTING, dst = VIP ──────────────────────────────
+// Return TC_ACT_UNSPEC so this counter does not stop later tc filters such as
+// VIP QoS mirred redirects to ifb.
 
 SEC("tc_ingress")
 int vip_count_ingress(struct __sk_buff *skb)
@@ -135,14 +137,14 @@ int vip_count_ingress(struct __sk_buff *skb)
 
 	struct ethhdr *eth = data;
 	if ((void *)(eth + 1) > data_end)
-		return TC_ACT_OK;
+		return TC_ACT_UNSPEC;
 
 	__u16 proto = bpf_ntohs(eth->h_proto);
 
 	if (proto == ETH_P_IP) {
 		struct iphdr *ip = (void *)(eth + 1);
 		if ((void *)(ip + 1) > data_end)
-			return TC_ACT_OK;
+			return TC_ACT_UNSPEC;
 		__u8 *found = bpf_map_lookup_elem(&vip_set, &ip->daddr);
 		if (found)
 			count_ipv4_ingress(skb, ip->daddr);
@@ -150,7 +152,7 @@ int vip_count_ingress(struct __sk_buff *skb)
 	} else if (proto == ETH_P_IPV6) {
 		struct ipv6hdr *ip6 = (void *)(eth + 1);
 		if ((void *)(ip6 + 1) > data_end)
-			return TC_ACT_OK;
+			return TC_ACT_UNSPEC;
 		struct ipv6_key key;
 		__builtin_memcpy(key.addr, &ip6->daddr, 16);
 		__u8 *found = bpf_map_lookup_elem(&vip_set6, &key);
@@ -158,10 +160,11 @@ int vip_count_ingress(struct __sk_buff *skb)
 			count_ipv6_ingress(skb, &key);
 	}
 
-	return TC_ACT_OK;
+	return TC_ACT_UNSPEC;
 }
 
 // ── TC egress: AFTER NF POSTROUTING, src = VIP ───────────────────────────────
+// Keep the egress counter non-terminal for future tc actions on the same hook.
 
 SEC("tc_egress")
 int vip_count_egress(struct __sk_buff *skb)
@@ -171,14 +174,14 @@ int vip_count_egress(struct __sk_buff *skb)
 
 	struct ethhdr *eth = data;
 	if ((void *)(eth + 1) > data_end)
-		return TC_ACT_OK;
+		return TC_ACT_UNSPEC;
 
 	__u16 proto = bpf_ntohs(eth->h_proto);
 
 	if (proto == ETH_P_IP) {
 		struct iphdr *ip = (void *)(eth + 1);
 		if ((void *)(ip + 1) > data_end)
-			return TC_ACT_OK;
+			return TC_ACT_UNSPEC;
 		__u8 *found = bpf_map_lookup_elem(&vip_set, &ip->saddr);
 		if (found)
 			count_ipv4_egress(skb, ip->saddr);
@@ -186,7 +189,7 @@ int vip_count_egress(struct __sk_buff *skb)
 	} else if (proto == ETH_P_IPV6) {
 		struct ipv6hdr *ip6 = (void *)(eth + 1);
 		if ((void *)(ip6 + 1) > data_end)
-			return TC_ACT_OK;
+			return TC_ACT_UNSPEC;
 		struct ipv6_key key;
 		__builtin_memcpy(key.addr, &ip6->saddr, 16);
 		__u8 *found = bpf_map_lookup_elem(&vip_set6, &key);
@@ -194,7 +197,7 @@ int vip_count_egress(struct __sk_buff *skb)
 			count_ipv6_egress(skb, &key);
 	}
 
-	return TC_ACT_OK;
+	return TC_ACT_UNSPEC;
 }
 
 char _license[] SEC("license") = "GPL";
