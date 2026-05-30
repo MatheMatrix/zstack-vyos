@@ -48,6 +48,24 @@ type nic struct {
 var bootstrapInfo map[string]interface{} = make(map[string]interface{})
 var nics map[string]*nic = make(map[string]*nic)
 
+func nicIPv4FirewallAddress(nic *nic) string {
+	return nic.ip
+}
+
+func nicSSHListenAddress(nic *nic) string {
+	if nic.ip != "" {
+		return nic.ip
+	}
+	return nic.ip6
+}
+
+func setDestinationAddress(ruleParts []string, address string) []string {
+	if address == "" {
+		return ruleParts
+	}
+	return append(ruleParts, fmt.Sprintf("destination address %v", address))
+}
+
 func getBootstrapInfoPath() string {
 	return filepath.Join(utils.GetZvrRootPath(), BOOTSTRAP_INFO_FILE)
 }
@@ -510,18 +528,17 @@ func configureVyos() {
 				defaultNic = utils.Nic{Name: nic.name, Mac: nic.mac, Ip: nic.ip, Ip6: nic.ip6,
 					Gateway: nic.gateway, Gateway6: nic.gateway6}
 			}
-			setNicTree.SetFirewallOnInterface(nic.name, "local",
+			firewallAddress := nicIPv4FirewallAddress(nic)
+			setNicTree.SetFirewallOnInterface(nic.name, "local", setDestinationAddress([]string{
 				"action accept",
 				"state established enable",
 				"state related enable",
-				fmt.Sprintf("destination address %v", nic.ip),
-			)
+			}, firewallAddress)...)
 
-			setNicTree.SetFirewallOnInterface(nic.name, "local",
+			setNicTree.SetFirewallOnInterface(nic.name, "local", setDestinationAddress([]string{
 				"action accept",
 				"protocol icmp",
-				fmt.Sprintf("destination address %v", nic.ip),
-			)
+			}, firewallAddress)...)
 
 			setNicTree.SetZStackFirewallRuleOnInterface(nic.name, "behind", "in",
 				"action accept",
@@ -536,19 +553,17 @@ func configureVyos() {
 
 			// only allow ssh traffic on eth0, disable on others
 			if nic.name == "eth0" {
-				setNicTree.SetFirewallOnInterface(nic.name, "local",
+				setNicTree.SetFirewallOnInterface(nic.name, "local", setDestinationAddress([]string{
 					fmt.Sprintf("destination port %v", int(sshport)),
-					fmt.Sprintf("destination address %v", nic.ip),
 					"protocol tcp",
 					"action accept",
-				)
+				}, firewallAddress)...)
 			} else {
-				setNicTree.SetFirewallOnInterface(nic.name, "local",
+				setNicTree.SetFirewallOnInterface(nic.name, "local", setDestinationAddress([]string{
 					fmt.Sprintf("destination port %v", int(sshport)),
-					fmt.Sprintf("destination address %v", nic.ip),
 					"protocol tcp",
 					"action reject",
-				)
+				}, firewallAddress)...)
 			}
 
 			setNicTree.SetFirewallDefaultAction(nic.name, "local", "reject")
@@ -557,7 +572,7 @@ func configureVyos() {
 			setNicTree.AttachFirewallToInterface(nic.name, "local")
 			setNicTree.AttachFirewallToInterface(nic.name, "in")
 
-			if nic.category == "Private" {
+			if nic.category == "Private" && nic.ip != "" {
 				// add private SNAT rule in VyOS config tree
 				nicNo, _ := utils.GetNicNumber(nic.name)
 				ruleNo := utils.GetPrivateNicSNATRuleNumber(nicNo)
@@ -592,7 +607,10 @@ func configureVyos() {
 	setSshTree := server.NewParserFromShowConfiguration().Tree
 	utils.Assert(sshport != 0, "sshport not found in bootstrap info")
 	setSshTree.Setf("service ssh port %v", int(sshport))
-	setSshTree.Setf("service ssh listen-address %v", eth0.ip)
+	sshListenAddress := nicSSHListenAddress(eth0)
+	if sshListenAddress != "" {
+		setSshTree.Setf("service ssh listen-address %v", sshListenAddress)
+	}
 	setSshTree.Apply(true)
 
 	log.Debugf("[configure: system configuration]")
@@ -626,8 +644,8 @@ func configureVyos() {
 		b.Run()
 	}
 
-	arping6 := func(nicname, ip, gateway string) {
-		b := utils.Bash{Command: fmt.Sprintf("sudo arping -6 -q -A -w 2 -c 1 -I %s %s > /dev/null", nicname, ip)}
+	arping6 := func(nicname, ip string) {
+		b := utils.Bash{Command: fmt.Sprintf("sudo ndsend %s %s > /dev/null", ip, nicname)}
 		b.Run()
 	}
 
@@ -636,7 +654,7 @@ func configureVyos() {
 		arping("eth0", eth0.ip, eth0.gateway)
 	}
 	if eth0.ip6 != "" {
-		arping6("eth0", eth0.ip6, eth0.gateway)
+		arping6("eth0", eth0.ip6)
 	}
 
 	for _, nic := range nics {
@@ -644,7 +662,7 @@ func configureVyos() {
 			arping(nic.name, nic.ip, nic.gateway)
 		}
 		if nic.ip6 != "" {
-			arping6(nic.name, nic.ip6, eth0.gateway)
+			arping6(nic.name, nic.ip6)
 		}
 	}
 

@@ -7,7 +7,9 @@ import (
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"io/ioutil"
+	"net"
 	"net/http"
+	"strconv"
 	"time"
 	"zstack-vyos/utils"
 )
@@ -275,7 +277,7 @@ func dispatch(w http.ResponseWriter, req *http.Request) {
 
 func startServer() {
 	server := &http.Server{
-		Addr:         fmt.Sprintf("%v:%v", CommandOptions.Ip, CommandOptions.Port),
+		Addr:         listenAddress(CommandOptions.Ip, CommandOptions.Port),
 		ReadTimeout:  time.Duration(CommandOptions.ReadTimeout) * time.Second,
 		WriteTimeout: time.Duration(CommandOptions.WriteTimeout) * time.Second,
 		Handler:      dispatcher(dispatch),
@@ -283,4 +285,8 @@ func startServer() {
 
 	log.Debugln("everything looks good, the agent starts ...")
 	server.ListenAndServe()
+}
+
+func listenAddress(ip string, port uint) string {
+	return net.JoinHostPort(ip, strconv.FormatUint(uint64(port), 10))
 }
