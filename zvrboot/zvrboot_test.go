@@ -15,6 +15,15 @@ import (
 )
 
 var _ = Describe("zvrboot_test", func() {
+	It("[REPLACE_VYOS] zvrboot: ipv6-only skips IPv4 firewall address", func() {
+		n := &nic{ip6: "2001:db8::10"}
+		Expect(nicIPv4FirewallAddress(n)).To(BeEmpty())
+		Expect(nicSSHListenAddress(n)).To(Equal("2001:db8::10"))
+		Expect(setDestinationAddress([]string{"action accept"}, nicIPv4FirewallAddress(n))).To(Equal([]string{"action accept"}))
+	})
+	It("[REPLACE_VYOS] zvrboot: skip empty firewall address", func() {
+		Expect(setDestinationAddress([]string{"action accept"}, "")).To(Equal([]string{"action accept"}))
+	})
 	It("[REPLACE_VYOS] zvrboot: pre env", func() {
 		utils.InitLog(utils.GetVyosUtLogDir()+"zvrboot_test.log", utils.IsRuingUT())
 		utils.SetEnableVyosCmdForUT(false)
