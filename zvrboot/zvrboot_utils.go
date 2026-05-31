@@ -257,6 +257,13 @@ func managementNicSshListenAddress(nic *utils.NicInfo) string {
 	return nic.Ip6
 }
 
+func nicInfoFirewallAddress(nic *utils.NicInfo) string {
+	if nic.Ip != "" {
+		return nic.Ip
+	}
+	return nic.Ip6
+}
+
 func configureRadvdServer() {
 	log.Debugf("[configure: radvd service]")
 	radvdMap := make(utils.RadvdAttrsMap)
@@ -402,10 +409,11 @@ func configureBondNic(nic *utils.NicInfo) {
 	}
 
 	// Initialize firewall for bond interface
+	firewallAddress := nicInfoFirewallAddress(nic)
 	if nic.Category == "Private" {
-		err = utils.InitNicFirewall(bondName, nic.Ip, false, utils.IPTABLES_ACTION_REJECT)
+		err = utils.InitNicFirewall(bondName, firewallAddress, false, utils.IPTABLES_ACTION_REJECT)
 	} else {
-		err = utils.InitNicFirewall(bondName, nic.Ip, true, utils.IPTABLES_ACTION_REJECT)
+		err = utils.InitNicFirewall(bondName, firewallAddress, true, utils.IPTABLES_ACTION_REJECT)
 	}
 	if err != nil {
 		log.Debugf("InitNicFirewall for bond: %s failed", err.Error())
@@ -501,10 +509,11 @@ func configureNicInfo(nic *utils.NicInfo) {
 	}
 	addManagementNodeRoutes(nic, nic.Name)
 
+	firewallAddress := nicInfoFirewallAddress(nic)
 	if nic.Category == "Private" {
-		err = utils.InitNicFirewall(nic.Name, nic.Ip, false, utils.IPTABLES_ACTION_REJECT)
+		err = utils.InitNicFirewall(nic.Name, firewallAddress, false, utils.IPTABLES_ACTION_REJECT)
 	} else {
-		err = utils.InitNicFirewall(nic.Name, nic.Ip, true, utils.IPTABLES_ACTION_REJECT)
+		err = utils.InitNicFirewall(nic.Name, firewallAddress, true, utils.IPTABLES_ACTION_REJECT)
 	}
 	if err != nil {
 		log.Debugf("InitNicFirewall for nic: %s failed", err.Error())

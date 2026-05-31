@@ -123,6 +123,25 @@ func TestBuildSnatLogRuntimeEnv(t *testing.T) {
 	}
 }
 
+func TestGetSnatLogRuntimeConfigUsesIpv6OnlyManagementNic(t *testing.T) {
+	original := utils.BootstrapInfo
+	defer func() {
+		utils.BootstrapInfo = original
+	}()
+
+	utils.BootstrapInfo = map[string]interface{}{
+		"uuid": "vpc-uuid-1",
+		"managementNic": map[string]interface{}{
+			"ip6": "2001:db8::10",
+		},
+		"additionalNics": []interface{}{},
+	}
+
+	if conf := getSnatLogRuntimeConfig(); conf.MgmtIP != "2001:db8::10" {
+		t.Fatalf("expect IPv6-only management IP in runtime config, got %+v", conf)
+	}
+}
+
 func TestGetVpcDefaultPublicIpFromAdditionalNic(t *testing.T) {
 	original := utils.BootstrapInfo
 	defer func() {

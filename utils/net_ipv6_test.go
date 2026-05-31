@@ -50,4 +50,15 @@ var _ = Describe("net ipv6", func() {
 
 		Expect(GetMgmtGatewayForIp("fd00:172:24:246::/64", mgmtNic)).To(Equal(""))
 	})
+
+	It("selects management NIC address with IPv4 preference and IPv6 fallback", func() {
+		Expect(GetManagementNicAddress(map[string]interface{}{
+			"ip":  "192.168.1.10",
+			"ip6": "2001:db8::10",
+		})).To(Equal("192.168.1.10"))
+
+		Expect(GetManagementNicAddress(map[string]interface{}{
+			"ip6": "2001:db8::10",
+		})).To(Equal("2001:db8::10"))
+	})
 })

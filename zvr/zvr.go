@@ -62,8 +62,17 @@ func initPlugins() {
 
 type nic struct {
 	ip       string
+	ip6      string
 	name     string
 	category string
+}
+
+func nicFirewallAddress(nic *nic) string {
+	if nic.ip != "" {
+		return nic.ip
+	}
+
+	return nic.ip6
 }
 
 // Note: there shouldn't be 'daily' etc. in the following config files.
@@ -263,8 +272,8 @@ func checkIptablesRules() {
 	eth0 := &nic{name: "eth0"}
 	var ok bool
 	eth0.ip, ok = mgmtNic["ip"].(string)
-	_, ok = mgmtNic["ip"].(string)
-	_, ok6 := mgmtNic["ip6"].(string)
+	var ok6 bool
+	eth0.ip6, ok6 = mgmtNic["ip6"].(string)
 	utils.PanicIfError(ok || ok6, fmt.Errorf("cannot find 'ip' field for the nic[name:%s]", eth0.name))
 
 	if mgmtNic["l2type"] != nil {
@@ -282,8 +291,7 @@ func checkIptablesRules() {
 			utils.PanicIfError(ok, fmt.Errorf("cannot find 'deviceName' field for the nic"))
 
 			n.ip, ok = onic["ip"].(string)
-			_, ok := onic["ip"].(string)
-			_, ok6 := onic["ip6"].(string)
+			n.ip6, ok6 = onic["ip6"].(string)
 			utils.PanicIfError(ok || ok6, fmt.Errorf("cannot find 'ip' field for the nic[name:%s]", n.name))
 
 			if onic["l2type"] != nil {
@@ -296,10 +304,15 @@ func checkIptablesRules() {
 
 	for _, nic := range nics {
 		var err error
+		address := nicFirewallAddress(nic)
+		if address == "" {
+			log.Debugf("skip InitNicFirewall for nic %s without IP address", nic.name)
+			continue
+		}
 		if nic.category == "Private" {
-			err = utils.InitNicFirewall(nic.name, nic.ip, false, utils.IPTABLES_ACTION_REJECT)
+			err = utils.InitNicFirewall(nic.name, address, false, utils.IPTABLES_ACTION_REJECT)
 		} else {
-			err = utils.InitNicFirewall(nic.name, nic.ip, true, utils.IPTABLES_ACTION_REJECT)
+			err = utils.InitNicFirewall(nic.name, address, true, utils.IPTABLES_ACTION_REJECT)
 		}
 		if err != nil {
 			log.Debugf("InitNicFirewall for nic: %s failed", err.Error())
