@@ -499,6 +499,21 @@ func CheckMgmtCidrContainsIp(ip string, mgmtNic map[string]interface{}) bool {
 	return mgmtNet.Contains(net.ParseIP(ip))
 }
 
+func GetManagementNicAddress(mgmtNic map[string]interface{}) string {
+	if mgmtNic == nil {
+		return ""
+	}
+
+	ip, _ := mgmtNic["ip"].(string)
+	ip = strings.TrimSpace(ip)
+	if ip != "" {
+		return ip
+	}
+
+	ip6, _ := mgmtNic["ip6"].(string)
+	return strings.TrimSpace(ip6)
+}
+
 func GetMgmtGatewayForIp(ip string, mgmtNic map[string]interface{}) string {
 	if mgmtNic == nil {
 		return ""

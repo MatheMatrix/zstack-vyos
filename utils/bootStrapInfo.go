@@ -3,7 +3,6 @@ package utils
 import (
 	"encoding/json"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -204,19 +203,12 @@ func GetVirtualRouterUuid() string {
 }
 
 func IsInManagementCidr(vipStr string) bool {
-	mgmtNic := BootstrapInfo["managementNic"].(map[string]interface{})
-	ipStr, _ := mgmtNic["ip"].(string)
-	netmaskStr, _ := mgmtNic["netmask"].(string)
+	mgmtNic, ok := BootstrapInfo["managementNic"].(map[string]interface{})
+	if !ok {
+		return false
+	}
 
-	ip := net.ParseIP(ipStr)
-	prefix, err := NetmaskToCIDR(netmaskStr)
-	PanicOnError(err)
-
-	_, cidr, err := net.ParseCIDR(fmt.Sprintf("%s/%d", ip, prefix))
-	PanicOnError(err)
-
-	vip := net.ParseIP(vipStr)
-	return cidr.Contains(vip)
+	return CheckMgmtCidrContainsIp(vipStr, mgmtNic)
 }
 
 func GetMnNodeIps() map[string]string {
@@ -284,8 +276,9 @@ func GetBootStrapNicInfo() map[string]Nic {
 		name, ok1 := mgmtNic["deviceName"].(string)
 		mac, ok2 := mgmtNic["mac"].(string)
 		ip, ok3 := mgmtNic["ip"].(string)
-		if ok1 && ok2 && ok3 {
-			mnic := Nic{Name: name, Mac: mac, Ip: ip}
+		ip6, ok4 := mgmtNic["ip6"].(string)
+		if ok1 && ok2 && (ok3 || ok4) {
+			mnic := Nic{Name: name, Mac: mac, Ip: ip, Ip6: ip6}
 			mnic.Catatory, _ = mgmtNic["category"].(string)
 			bootstrapNics[mnic.Name] = mnic
 		}
