@@ -21,6 +21,13 @@ var _ = Describe("zvrboot_test", func() {
 		Expect(nicSSHListenAddress(n)).To(Equal("2001:db8::10"))
 		Expect(setDestinationAddress([]string{"action accept"}, nicIPv4FirewallAddress(n))).To(Equal([]string{"action accept"}))
 	})
+	It("[REPLACE_VYOS] euler zvrboot: ipv6-only management nic uses IPv6 ssh listen address", func() {
+		n := &utils.NicInfo{Ip6: "2001:db8::10"}
+		Expect(managementNicSshListenAddress(n)).To(Equal("2001:db8::10"))
+
+		n.Ip = "192.168.1.10"
+		Expect(managementNicSshListenAddress(n)).To(Equal("192.168.1.10"))
+	})
 	It("[REPLACE_VYOS] zvrboot: skip empty firewall address", func() {
 		Expect(setDestinationAddress([]string{"action accept"}, "")).To(Equal([]string{"action accept"}))
 	})

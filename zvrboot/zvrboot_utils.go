@@ -237,7 +237,7 @@ func configureSshServer() {
 	sshkey := utils.BootstrapInfo["publicKey"].(string)
 	utils.Assert(sshkey != "", "cannot find 'publicKey' in bootstrap info")
 	sshport := utils.BootstrapInfo["sshPort"].(float64)
-	address := mgmtNic.Ip
+	address := managementNicSshListenAddress(mgmtNic)
 	utils.Assert(address != "", "cannot find eth0 ip address in bootstrap info")
 	passwordAuthentication := "no"
 	if _, ok := utils.BootstrapInfo["allowPasswordAuth"].(string); ok {
@@ -248,6 +248,13 @@ func configureSshServer() {
 	sshInfo.SetPasswordAuthentication(passwordAuthentication)
 	err := sshInfo.ConfigService()
 	utils.Assertf(err == nil, "configure SSH Server error: %s", err)
+}
+
+func managementNicSshListenAddress(nic *utils.NicInfo) string {
+	if nic.Ip != "" {
+		return nic.Ip
+	}
+	return nic.Ip6
 }
 
 func configureRadvdServer() {
