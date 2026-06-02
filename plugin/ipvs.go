@@ -692,8 +692,7 @@ func RefreshIpvsBackend() error {
 	services := map[string]*IpvsFrontendService{}
 	for _, lb := range gIpvsLbInfoMap {
 		for _, listener := range lb {
-			if strings.ToLower(listener.Mode) != "udp" {
-				/* current only udp lb use ipvs */
+			if !isIpvsDataPlane(listener) {
 				continue
 			}
 

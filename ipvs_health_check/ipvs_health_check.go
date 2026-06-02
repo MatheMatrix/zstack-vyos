@@ -74,11 +74,14 @@ func (bs *IpvsHealthCheckBackendServer) equal(other *IpvsHealthCheckBackendServe
 }
 
 func (bs *IpvsHealthCheckBackendServer) doHealthCheck() {
-	if isHealthCheckDisabled(bs.HealthCheckProtocol) {
+	switch strings.ToLower(bs.HealthCheckProtocol) {
+	case "none":
 		bs.result <- true
-	} else if bs.HealthCheckProtocol == "udp" {
+	case "tcp":
+		bs.doTcpCheck()
+	case "udp":
 		bs.doUdpCheck()
-	} else {
+	default:
 		log.Debugf("unknow health check protocol %s", bs.HealthCheckProtocol)
 		bs.result <- false
 	}

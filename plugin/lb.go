@@ -186,6 +186,7 @@ type LbParams struct {
 	httpRedirectHttps     bool
 	accessControlStatus   bool
 	balancerAlgorithm     string
+	dataPlane             string
 	aclEntry              []string
 }
 
@@ -246,10 +247,28 @@ func ParseLbParams(lb LbInfo) LbParams {
 			}
 		case "balancerAlgorithm":
 			param.balancerAlgorithm = kv[1]
+		case "dataPlane":
+			param.dataPlane = kv[1]
 		}
 	}
 
 	return param
+}
+
+func isIpvsDataPlane(info LbInfo) bool {
+	if info.Mode == LB_MODE_UDP {
+		return true
+	}
+
+	if info.Mode != LB_MODE_TCP {
+		return false
+	}
+
+	return strings.EqualFold(ParseLbParams(info).dataPlane, "ipvs")
+}
+
+func isTcpIpvsDataPlane(info LbInfo) bool {
+	return info.Mode == LB_MODE_TCP && strings.EqualFold(ParseLbParams(info).dataPlane, "ipvs")
 }
 
 type Listener interface {
@@ -2175,7 +2194,7 @@ func AddLbs(lbs []Listener) error {
 }
 
 func isIpvsListener(info LbInfo) bool {
-	if info.Mode != LB_MODE_UDP {
+	if !isIpvsDataPlane(info) {
 		return false
 	}
 
@@ -2196,6 +2215,17 @@ func RefreshLbInternal(cmd *RefreshLbCmd) {
 
 	EnableHaproxyLog = cmd.EnableHaproxyLog
 	for _, lb := range cmd.Lbs {
+		if isTcpIpvsDataPlane(lb) {
+			listener := GetListener(lb)
+			if listener != nil {
+				toDeleted = append(toDeleted, listener)
+			}
+			if len(lb.NicIps) != 0 {
+				ipvsAdded[lb.ListenerUuid] = lb
+			}
+			continue
+		}
+
 		if isIpvsListener(lb) {
 			ipvsAdded[lb.ListenerUuid] = lb
 			continue
@@ -2265,6 +2295,11 @@ func DeleteLbInternal(cmd *deleteLbCmd) {
 	ipvs := map[string]LbInfo{}
 	if len(cmd.Lbs) > 0 {
 		for _, lb := range cmd.Lbs {
+			if isTcpIpvsDataPlane(lb) {
+				ipvs[lb.ListenerUuid] = lb
+				continue
+			}
+
 			if isIpvsListener(lb) {
 				ipvs[lb.ListenerUuid] = lb
 				continue
