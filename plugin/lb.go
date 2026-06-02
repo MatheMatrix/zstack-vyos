@@ -2220,9 +2220,7 @@ func RefreshLbInternal(cmd *RefreshLbCmd) {
 			if listener != nil {
 				toDeleted = append(toDeleted, listener)
 			}
-			if len(lb.NicIps) != 0 {
-				ipvsAdded[lb.ListenerUuid] = lb
-			}
+			ipvsAdded[lb.ListenerUuid] = lb
 			continue
 		}
 

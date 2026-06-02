@@ -74,7 +74,8 @@ func (bs *IpvsHealthCheckBackendServer) equal(other *IpvsHealthCheckBackendServe
 }
 
 func (bs *IpvsHealthCheckBackendServer) doHealthCheck() {
-	switch strings.ToLower(bs.HealthCheckProtocol) {
+	protocol := strings.TrimSpace(strings.ToLower(bs.HealthCheckProtocol))
+	switch protocol {
 	case "none":
 		bs.result <- true
 	case "tcp":
@@ -82,7 +83,7 @@ func (bs *IpvsHealthCheckBackendServer) doHealthCheck() {
 	case "udp":
 		bs.doUdpCheck()
 	default:
-		log.Debugf("unknow health check protocol %s", bs.HealthCheckProtocol)
+		log.Debugf("unknow health check protocol %q", bs.HealthCheckProtocol)
 		bs.result <- false
 	}
 }
