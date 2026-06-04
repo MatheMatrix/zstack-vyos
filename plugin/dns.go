@@ -84,6 +84,7 @@ func setDnsHandler(ctx *server.CommandContext) interface{} {
 }
 
 func setDns(cmd *setDnsCmd) interface{} {
+	resetDnsmasqOptions()
 	dnsByMac := make(map[string][]dnsInfo)
 	for _, info := range cmd.Dns {
 		dns := dnsByMac[info.NicMac]
@@ -145,6 +146,7 @@ func removeDnsHandler(ctx *server.CommandContext) interface{} {
 }
 
 func removeDns(cmd *removeDnsCmd) interface{} {
+	resetDnsmasqOptions()
 	for _, info := range cmd.Dns {
 		delete(dnsServers, info.DnsAddress)
 	}
