@@ -20,8 +20,9 @@ const (
 	DNSMASQ_RESOLV_FILE = "/etc/resolv.conf"
 	DNSMASQ_PID_FILE    = "/var/run/dnsmasq.pid"
 
-	DEFAULT_DNS_FORWARD_MAX = 1000
-	DEFAULT_DNS_CACHE_SIZE  = 10000
+	DEFAULT_DNS_FORWARD_MAX       = 1000
+	DEFAULT_DNS_CACHE_SIZE        = 10000
+	DEFAULT_LEGACY_DNS_CACHE_SIZE = 150
 )
 
 func getDnsmasqPidFileTemp() string {
@@ -46,8 +47,12 @@ const dnsmasqTemplate = `#
 log-facility=/var/log/dnsmasq.log
 no-poll
 edns-packet-max=4096
+{{ if .UseDnsmasqOptions }}
 dns-forward-max={{.DnsForwardMax}}
 cache-size={{.CacheSize}}
+{{ else }}
+cache-size={{.CacheSize}}
+{{ end }}
 bind-interfaces
 interface=lo
 {{ range $index, $name := .NicNames }}
@@ -64,18 +69,21 @@ nameserver {{$ip}}
 {{ end }}`
 
 type DnsmasqConf struct {
-	NicNames      []string
-	DnsServers    []string
-	DnsForwardMax int
-	CacheSize     int
+	NicNames          []string
+	DnsServers        []string
+	DnsForwardMax     int
+	CacheSize         int
+	UseDnsmasqOptions bool
 }
 
 var (
-	currentDnsForwardMax = DEFAULT_DNS_FORWARD_MAX
-	currentDnsCacheSize  = DEFAULT_DNS_CACHE_SIZE
+	currentDnsForwardMax     = DEFAULT_DNS_FORWARD_MAX
+	currentDnsCacheSize      = DEFAULT_DNS_CACHE_SIZE
+	currentUseDnsmasqOptions = false
 )
 
 func setDnsmasqOptions(dnsForwardMax, cacheSize int) {
+	currentUseDnsmasqOptions = true
 	if dnsForwardMax > 0 {
 		currentDnsForwardMax = dnsForwardMax
 	}
@@ -84,11 +92,35 @@ func setDnsmasqOptions(dnsForwardMax, cacheSize int) {
 	}
 }
 
+func resetDnsmasqOptions() {
+	currentUseDnsmasqOptions = false
+	currentDnsForwardMax = DEFAULT_DNS_FORWARD_MAX
+	currentDnsCacheSize = DEFAULT_DNS_CACHE_SIZE
+}
+
 func NewDnsmasq(nics, servers map[string]string) *DnsmasqConf {
-	return NewDnsmasqWithOptions(nics, servers, currentDnsForwardMax, currentDnsCacheSize)
+	if currentUseDnsmasqOptions {
+		return NewDnsmasqWithOptions(nics, servers, currentDnsForwardMax, currentDnsCacheSize)
+	}
+
+	return NewDnsmasqWithCacheSize(nics, servers, DEFAULT_LEGACY_DNS_CACHE_SIZE)
 }
 
 func NewDnsmasqWithOptions(nics, servers map[string]string, dnsForwardMax, cacheSize int) *DnsmasqConf {
+	if dnsForwardMax <= 0 {
+		dnsForwardMax = DEFAULT_DNS_FORWARD_MAX
+	}
+	if cacheSize <= 0 {
+		cacheSize = DEFAULT_DNS_CACHE_SIZE
+	}
+
+	dnsmasq := NewDnsmasqWithCacheSize(nics, servers, cacheSize)
+	dnsmasq.DnsForwardMax = dnsForwardMax
+	dnsmasq.UseDnsmasqOptions = true
+	return dnsmasq
+}
+
+func NewDnsmasqWithCacheSize(nics, servers map[string]string, cacheSize int) *DnsmasqConf {
 	var nicNames, ips []string
 	for nic, _ := range nics {
 		nicNames = append(nicNames, nic)
@@ -98,14 +130,11 @@ func NewDnsmasqWithOptions(nics, servers map[string]string, dnsForwardMax, cache
 		ips = append(ips, ip)
 	}
 
-	if dnsForwardMax <= 0 {
-		dnsForwardMax = DEFAULT_DNS_FORWARD_MAX
-	}
 	if cacheSize <= 0 {
-		cacheSize = DEFAULT_DNS_CACHE_SIZE
+		cacheSize = DEFAULT_LEGACY_DNS_CACHE_SIZE
 	}
 
-	return &DnsmasqConf{NicNames: nicNames, DnsServers: ips, DnsForwardMax: dnsForwardMax, CacheSize: cacheSize}
+	return &DnsmasqConf{NicNames: nicNames, DnsServers: ips, CacheSize: cacheSize}
 }
 
 func (d *DnsmasqConf) RestartDnsmasq() error {
