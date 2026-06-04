@@ -19,6 +19,9 @@ const (
 	DNSMASQ_CONF_PATH   = "/etc/dnsmasq.conf"
 	DNSMASQ_RESOLV_FILE = "/etc/resolv.conf"
 	DNSMASQ_PID_FILE    = "/var/run/dnsmasq.pid"
+
+	DEFAULT_DNS_FORWARD_MAX = 1000
+	DEFAULT_DNS_CACHE_SIZE  = 10000
 )
 
 func getDnsmasqPidFileTemp() string {
@@ -43,7 +46,8 @@ const dnsmasqTemplate = `#
 log-facility=/var/log/dnsmasq.log
 no-poll
 edns-packet-max=4096
-cache-size=150
+dns-forward-max={{.DnsForwardMax}}
+cache-size={{.CacheSize}}
 bind-interfaces
 interface=lo
 {{ range $index, $name := .NicNames }}
@@ -60,11 +64,31 @@ nameserver {{$ip}}
 {{ end }}`
 
 type DnsmasqConf struct {
-	NicNames   []string
-	DnsServers []string
+	NicNames      []string
+	DnsServers    []string
+	DnsForwardMax int
+	CacheSize     int
+}
+
+var (
+	currentDnsForwardMax = DEFAULT_DNS_FORWARD_MAX
+	currentDnsCacheSize  = DEFAULT_DNS_CACHE_SIZE
+)
+
+func setDnsmasqOptions(dnsForwardMax, cacheSize int) {
+	if dnsForwardMax > 0 {
+		currentDnsForwardMax = dnsForwardMax
+	}
+	if cacheSize > 0 {
+		currentDnsCacheSize = cacheSize
+	}
 }
 
 func NewDnsmasq(nics, servers map[string]string) *DnsmasqConf {
+	return NewDnsmasqWithOptions(nics, servers, currentDnsForwardMax, currentDnsCacheSize)
+}
+
+func NewDnsmasqWithOptions(nics, servers map[string]string, dnsForwardMax, cacheSize int) *DnsmasqConf {
 	var nicNames, ips []string
 	for nic, _ := range nics {
 		nicNames = append(nicNames, nic)
@@ -74,7 +98,14 @@ func NewDnsmasq(nics, servers map[string]string) *DnsmasqConf {
 		ips = append(ips, ip)
 	}
 
-	return &DnsmasqConf{NicNames: nicNames, DnsServers: ips}
+	if dnsForwardMax <= 0 {
+		dnsForwardMax = DEFAULT_DNS_FORWARD_MAX
+	}
+	if cacheSize <= 0 {
+		cacheSize = DEFAULT_DNS_CACHE_SIZE
+	}
+
+	return &DnsmasqConf{NicNames: nicNames, DnsServers: ips, DnsForwardMax: dnsForwardMax, CacheSize: cacheSize}
 }
 
 func (d *DnsmasqConf) RestartDnsmasq() error {
