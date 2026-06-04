@@ -49,6 +49,32 @@ function upgrade_euler_openssh() {
     fi
 }
 
+EULER_HAPROXY_RPM="haproxy-3.2.19-3.el8.x86_64.rpm"
+EULER_HAPROXY_VERSION="3.2.19-3.el8.x86_64"
+
+function upgrade_euler_haproxy() {
+    local rpm_file="${REPOS_PATH}/${EULER_HAPROXY_RPM}"
+    local installed_version
+
+    if [ "${ARCH}" != "x86_64" ]; then
+        return
+    fi
+
+    installed_version=$(rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}' haproxy 2>/dev/null || true)
+    if [ "${installed_version}" == "${EULER_HAPROXY_VERSION}" ]; then
+        log_info "HAProxy RPM is already upgraded to [${EULER_HAPROXY_VERSION}]"
+        return
+    fi
+
+    if [ ! -f "${rpm_file}" ]; then
+        log_info "can not find HAProxy RPM package: [${rpm_file}]"
+        return
+    fi
+
+    log_info "start upgrade HAProxy RPM from [${installed_version:-not installed}] to [${EULER_HAPROXY_VERSION}]"
+    rpm -Uvh "${rpm_file}" >> "${LOG_FILE}" 2>&1 || log_info "upgrade HAProxy RPM failed: [${rpm_file}]"
+}
+
 
 ################
 ### use for install deb packages when zvr.bin is updated
@@ -78,6 +104,8 @@ if [ -f /etc/system-release ]; then
 fi
 
 if [ "${OS}" == "openEuler release 22.03" ]; then
+    upgrade_euler_haproxy
+
     for pkg in ${EULER_2203_RPMS}; do
         if rpm -q "${pkg}" &>/dev/null; then
             log_info "RPM [${pkg}] is already installed"

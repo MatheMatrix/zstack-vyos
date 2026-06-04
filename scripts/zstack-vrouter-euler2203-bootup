@@ -98,6 +98,11 @@ if [ ! -f "${RUNNER_FILE}" ]; then
         log_info "ARCH:${ARCH} is not recognized,"
     fi
 
+    if [ -f "/home/zstack/zvr/data/hooks/00_exec_hooks.sh" ]; then
+        chmod +x /home/zstack/zvr/data/hooks/00_exec_hooks.sh
+        /bin/bash -x /home/zstack/zvr/data/hooks/00_exec_hooks.sh zstack
+    fi
+
     touch ${RUNNER_FILE}
 else
     log_info "${RUNNER_FILE} is exist, no need sync boot file"
