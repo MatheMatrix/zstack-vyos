@@ -632,7 +632,30 @@ func getRouteEntryForIp(ip string) (*ZStackRouteEntry, error) {
 	return nil, fmt.Errorf("unknow route format: %s", lines[0])
 }
 
+func isVtyshAvailable() bool {
+	bash := Bash{
+		Command: "command -v vtysh",
+		NoLog:   true,
+	}
+	ret, _, _, err := bash.RunWithReturn()
+	return err == nil && ret == 0
+}
+
+func addMgmtRouteByKernelRoute(mgtIp, mgtNic, gw string) error {
+	route := NewIpRoute().SetDst(mgtIp).SetGW(gw).SetDev(mgtNic)
+	if err := IpRouteAdd(route); err != nil {
+		return fmt.Errorf("add management route by kernel route[dst:%s gateway:%s dev:%s] failed: %v", mgtIp, gw, mgtNic, err)
+	}
+
+	return nil
+}
+
 func AddRouteForMgmtEuler2203(mgtIp, mgtNic, gw string) error {
+	if !isVtyshAvailable() {
+		log.Warnf("vtysh is unavailable, add management route by kernel route[dst:%s gateway:%s dev:%s]", mgtIp, gw, mgtNic)
+		return addMgmtRouteByKernelRoute(mgtIp, mgtNic, gw)
+	}
+
 	entry, err := getRouteEntryForIp(mgtIp)
 	if err != nil {
 		return err
