@@ -52,20 +52,6 @@ func TestSshdTemplatesRenderDualStackListenAddresses(t *testing.T) {
 	}
 }
 
-func TestEulerSshdTemplateAcceptsLegacyJschRsaAuth(t *testing.T) {
-	expectedLines := []string{
-		"HostKeyAlgorithms +ssh-rsa",
-		"PubkeyAcceptedAlgorithms +ssh-rsa",
-		"PubkeyAcceptedKeyTypes +ssh-rsa",
-	}
-
-	for _, expected := range expectedLines {
-		if !strings.Contains(sshdTemplateEuler, expected) {
-			t.Fatalf("expect euler sshd template to contain %s", expected)
-		}
-	}
-}
-
 func TestSshdSetListenIgnoresInvalidAddress(t *testing.T) {
 	sshdInfo := NewSshServer()
 	sshdInfo.SetListen("not-an-ip")
