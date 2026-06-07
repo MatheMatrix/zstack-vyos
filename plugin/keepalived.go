@@ -537,15 +537,18 @@ func NewKeepalivedConf(hearbeatNic, LocalIp, LocalIpV6, PeerIp, PeerIpV6 string,
 func newKeepalivedMonitorConfigs(ips []string) []keepalivedMonitorConfig {
 	configs := make([]keepalivedMonitorConfig, 0, len(ips))
 	for _, ip := range ips {
-		safeIp := keepalivedMonitorNameReplacer.ReplaceAllString(ip, "_")
-		safeIp = strings.Trim(safeIp, "_")
-		if safeIp == "" {
-			safeIp = "unknown"
+		scriptIp := ip
+		if !utils.IsIpv4Address(ip) {
+			scriptIp = keepalivedMonitorNameReplacer.ReplaceAllString(ip, "_")
+			scriptIp = strings.Trim(scriptIp, "_")
+			if scriptIp == "" {
+				scriptIp = "unknown"
+			}
 		}
 		configs = append(configs, keepalivedMonitorConfig{
 			Ip:         ip,
-			ScriptName: keepalivedMonitorScriptNamePrefix + safeIp,
-			ScriptFile: keepalivedMonitorScriptFilePrefix + safeIp + keepalivedScriptExtension,
+			ScriptName: keepalivedMonitorScriptNamePrefix + scriptIp,
+			ScriptFile: keepalivedMonitorScriptFilePrefix + scriptIp + keepalivedScriptExtension,
 		})
 	}
 
@@ -640,18 +643,15 @@ vrrp_instance vyos-ha {
 	advert_int {{.Interval}}
 	nopreempt
 
-{{ if .VipV4 }}
-	unicast_src_ip {{.LocalIp}}
+{{ if .VipV4 }}	unicast_src_ip {{.LocalIp}}
 	unicast_peer {
 		{{.PeerIp}}
 	}
-{{ else if .VipV6 }}
-	unicast_src_ip {{.LocalIpV6}}
+{{ else if .VipV6 }}	unicast_src_ip {{.LocalIpV6}}
 	unicast_peer {
 		{{.PeerIpV6}}
 	}
 {{end}}
-
 	track_script {
 		monitor_zvr
 {{ range .MonitorConfigs }}
@@ -704,18 +704,15 @@ vrrp_instance vyos-ha {
 	advert_int {{.Interval}}
 	nopreempt
 
-{{ if .VipV4 }}
-	unicast_src_ip {{.LocalIp}}
+{{ if .VipV4 }}	unicast_src_ip {{.LocalIp}}
 	unicast_peer {
 		{{.PeerIp}}
 	}
-{{ else if .VipV6 }}
-	unicast_src_ip {{.LocalIpV6}}
+{{ else if .VipV6 }}	unicast_src_ip {{.LocalIpV6}}
 	unicast_peer {
 		{{.PeerIpV6}}
 	}
 {{end}}
-
 	track_script {
 		monitor_zvr
 {{ range .MonitorConfigs }}
