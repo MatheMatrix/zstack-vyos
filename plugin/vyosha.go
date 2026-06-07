@@ -145,8 +145,10 @@ func SetVyosHa(cmd *SetVyosHaCmd) interface{} {
 		if parsedIP != nil && parsedIP.To4() != nil {
 			prefix, err = utils.NetmaskToCIDR(p.Netmask)
 			utils.PanicOnError(err)
+			pairs = append(pairs, nicVipPair{NicName: nicname, Vip: p.NicVip, Prefix: prefix})
+		} else {
+			pairs = append(pairs, nicVipPair{NicName: nicname, Vip6: p.NicVip, Prefix: prefix})
 		}
-		pairs = append(pairs, nicVipPair{NicName: nicname, Vip: p.NicVip, Prefix: prefix})
 
 		/* if vip is same to nic Ip, there is no need to add firewall again */
 		if nicIp, err := utils.GetIpByNicName(nicname); err == nil && nicIp == p.NicVip {
@@ -162,10 +164,14 @@ func SetVyosHa(cmd *SetVyosHaCmd) interface{} {
 	if cmd.PeerIp == "" {
 		cmd.PeerIp = cmd.LocalIp
 	}
+	if cmd.PeerIpV6 == "" {
+		cmd.PeerIpV6 = cmd.LocalIpV6
+	}
 	checksum, err := getFileChecksum(GetKeepalivedConfigFile())
 	utils.PanicOnError(err)
 
-	keepalivedConf := NewKeepalivedConf(heartbeatNicNme, cmd.LocalIp, cmd.LocalIpV6, cmd.PeerIp, cmd.PeerIpV6, cmd.Monitors, cmd.Keepalive, pairs)
+	keepalivedConf, err := NewKeepalivedConf(heartbeatNicNme, cmd.LocalIp, cmd.LocalIpV6, cmd.PeerIp, cmd.PeerIpV6, cmd.Monitors, cmd.Keepalive, pairs)
+	utils.PanicOnError(err)
 	keepalivedConf.BuildCheckScript()
 	if utils.IsSLB() {
 		knc := KeepalivedNotify{
@@ -355,6 +361,10 @@ func (vip nicVipPair) getVip() string {
 	}
 }
 
+func (vip nicVipPair) VipAddress() string {
+	return vip.getVip()
+}
+
 type vyosNicVipPairs struct {
 	pairs []nicVipPair
 }
@@ -371,7 +381,7 @@ func generateNotityScripts() {
 	/* only vip on management nic will be added in master script and will be deleted in backup script */
 	mgmtVip := []nicVipPair{}
 	for _, p := range haVipPairs.pairs {
-		if utils.IsInManagementCidr(p.Vip) {
+		if utils.IsInManagementCidr(p.getVip()) {
 			mgmtVip = append(mgmtVip, p)
 		}
 	}
@@ -410,7 +420,7 @@ func removeHaNicVipPair(pairs []nicVipPair) {
 	for _, p := range haVipPairs.pairs {
 		found := false
 		for _, np := range pairs {
-			if p.NicName == np.NicName && p.Vip == np.Vip {
+			if p.NicName == np.NicName && p.getVip() == np.getVip() {
 				found = true
 				break
 			}
