@@ -58,6 +58,8 @@ func TestNewKeepalivedConfBuildsIpv6OnlyConfig(t *testing.T) {
 		"fd00:5:5:28::a3",
 		"monitor_2001_4860_4860_8888",
 		"check_monitor_2001_4860_4860_8888.sh",
+		"virtual_ipaddress",
+		"1000:2000:3000:4000::11:e619/64 dev eth1 no_track",
 	} {
 		if !strings.Contains(rendered, expected) {
 			t.Fatalf("rendered keepalived config does not contain %q:\n%s", expected, rendered)
@@ -114,6 +116,12 @@ func TestNewKeepalivedConfKeepsIpv4MonitorNamesCompatible(t *testing.T) {
 	if strings.Contains(rendered, "monitor_8_8_8_8") {
 		t.Fatalf("rendered keepalived config changed IPv4 monitor name:\n%s", rendered)
 	}
+	if strings.Contains(rendered, "no_virtual_ipaddress") {
+		t.Fatalf("rendered IPv4 keepalived config changed no-VIP behavior:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "virtual_ipaddress {") {
+		t.Fatalf("rendered IPv4 keepalived config lets keepalived manage HA VIPs:\n%s", rendered)
+	}
 
 	tmpl, err = template.New("keepalived-slb.conf").Parse(tKeepalivedSlbConf)
 	if err != nil {
@@ -126,5 +134,37 @@ func TestNewKeepalivedConfKeepsIpv4MonitorNamesCompatible(t *testing.T) {
 	rendered = buf.String()
 	if !strings.Contains(rendered, "nopreempt\n\n\tunicast_src_ip 192.168.1.10\n\tunicast_peer {\n\t\t192.168.1.11\n\t}\n\n\ttrack_script") {
 		t.Fatalf("rendered slb keepalived config changed IPv4 unicast spacing:\n%s", rendered)
+	}
+}
+
+func TestKeepalivedConfDeclaresIpv6VipWithoutTrackingVipNic(t *testing.T) {
+	conf, err := NewKeepalivedConf(
+		"eth0",
+		"",
+		"fd00:5:5:28::a2",
+		"",
+		"fd00:5:5:28::a3",
+		[]string{"2001:4860:4860::8888"},
+		5,
+		[]nicVipPair{{NicName: "eth1", Vip6: "1000:2000:3000:4000::11:e619", Prefix: 64}},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	tmpl, err := template.New("keepalived.conf").Parse(tKeepalivedConf)
+	if err != nil {
+		t.Fatalf("failed to parse keepalived template: %v", err)
+	}
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, conf); err != nil {
+		t.Fatalf("failed to render keepalived template: %v", err)
+	}
+	rendered := buf.String()
+	if !strings.Contains(rendered, "virtual_ipaddress") {
+		t.Fatalf("rendered keepalived config does not declare an IPv6 VIP:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "1000:2000:3000:4000::11:e619/64 dev eth1 no_track") {
+		t.Fatalf("rendered keepalived config does not avoid tracking the VIP nic:\n%s", rendered)
 	}
 }
