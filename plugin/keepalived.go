@@ -642,6 +642,13 @@ vrrp_instance vyos-ha {
 	priority 100
 	advert_int {{.Interval}}
 	nopreempt
+{{- if .VipV6 }}
+	virtual_ipaddress {
+{{ range .Vips }}
+            {{.VipAddress}}/{{.Prefix}} dev {{.NicName}} no_track
+{{ end }}
+	}
+{{- end }}
 
 {{ if .VipV4 }}	unicast_src_ip {{.LocalIp}}
 	unicast_peer {
