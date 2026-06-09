@@ -1493,6 +1493,32 @@ func hasIcmpRuleOnIptables(table *utils.IpTables, rule *utils.IpTableRule) bool 
 	return table.Check(vipIcmpRule)
 }
 
+func getIpv4PrivateInterfacesWithLocalChain(table *utils.IpTables) []string {
+	priNics := utils.GetPrivteInterface()
+	ipv4Nics := make([]string, 0, len(priNics))
+	for _, priNic := range priNics {
+		localChain := utils.GetRuleSetName(priNic, utils.RULESET_LOCAL)
+		if !table.CheckChain(localChain) {
+			log.Debugf("skip adding IPv4 LB rules to private nic %s because chain %s does not exist", priNic, localChain)
+			continue
+		}
+
+		addrs, err := utils.Ip4AddrShow(priNic)
+		if err != nil {
+			log.Warnf("skip adding IPv4 LB rules to private nic %s because failed to get IPv4 address: %v", priNic, err)
+			continue
+		}
+		if len(addrs) == 0 {
+			log.Debugf("skip adding IPv4 LB rules to private nic %s because it has no IPv4 address", priNic)
+			continue
+		}
+
+		ipv4Nics = append(ipv4Nics, priNic)
+	}
+
+	return ipv4Nics
+}
+
 func setLb(lb LbInfo) bool {
 	listener := GetListener(lb)
 	if listener == nil {
@@ -1787,7 +1813,7 @@ func addRuleForTcpListenerByLinux(lbs []Listener) error {
 		rules, _ := lb.getIptablesRule()
 		table.AddIpTableRules(rules)
 
-		priNics := utils.GetPrivteInterface()
+		priNics := getIpv4PrivateInterfacesWithLocalChain(table)
 		for _, priNic := range priNics {
 			for _, r := range rules {
 				newRule := r.Copy()
@@ -1909,7 +1935,7 @@ func addRuleForUdpListenerByLinux(lbs []Listener) error {
 		rules, _ := lb.getIptablesRule()
 		table.AddIpTableRules(rules)
 
-		priNics := utils.GetPrivteInterface()
+		priNics := getIpv4PrivateInterfacesWithLocalChain(table)
 		for _, priNic := range priNics {
 			for _, r := range rules {
 				newRule := r.Copy()
