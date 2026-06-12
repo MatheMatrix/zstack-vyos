@@ -222,7 +222,7 @@ firewall {
 // also removes the hook rule, the default rule, and the chain itself — not just user rules.
 func TestZSTAC83935StaleIptablesChainFullyRemoved(t *testing.T) {
 	// Build an IpTables directly to avoid calling iptables-save (not available in unit-test env).
-	table := &utils.IpTables{Name: utils.FirewallTable, IpVersion: utils.IP_VERSION_4}
+	table := &utils.IpTables{Name: utils.FirewallTable}
 	table.AddChain(utils.VYOS_FWD_ROOT_CHAIN)
 	table.AddChain("eth5.in") // stale
 	table.AddChain("eth6.in") // desired — must survive

@@ -13,24 +13,28 @@ const (
 )
 
 /*
-  # sudo ipset list -o xml
+	# sudo ipset list -o xml
+
 <ipset name="eth3.in-1001-source">
-  <type>hash:ip</type>
-  <header>
-    <family>inet</family>
-    <hashsize>1024</hashsize>
-    <maxelem>65536</maxelem>
-    <memsize>344</memsize>
-    <references>0</references>
-  </header>
-  <members>
-    <member>1.1.1.1</member>
-    <member>2.2.2.1</member>
-    <member>1.1.1.2</member>
-  </members>
+
+	<type>hash:ip</type>
+	<header>
+	  <family>inet</family>
+	  <hashsize>1024</hashsize>
+	  <maxelem>65536</maxelem>
+	  <memsize>344</memsize>
+	  <references>0</references>
+	</header>
+	<members>
+	  <member>1.1.1.1</member>
+	  <member>2.2.2.1</member>
+	  <member>1.1.1.2</member>
+	</members>
+
 </ipset>
 <ipset name="eth3.in-1003-source">
-  <type>hash:ip</type>
+
+	<type>hash:ip</type>
 */
 type IpSetList struct {
 	XMLName xml.Name `xml:"ipsets"`
@@ -62,6 +66,21 @@ func GetCurrentIpSet() ([]*IpSet, error) {
 	}
 
 	return ipSets.Ipsets, nil
+}
+
+func GetIpSet(name string) *IpSet {
+	ipsets, err := GetCurrentIpSet()
+	if err != nil {
+		return nil
+	}
+
+	for _, ipset := range ipsets {
+		if ipset.Name == name {
+			return ipset
+		}
+	}
+
+	return nil
 }
 
 func NewIPSet(name, ipsetType string) *IpSet {

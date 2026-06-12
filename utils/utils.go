@@ -28,8 +28,8 @@ func formatVersion(versionNo string) int {
 }
 
 // CompareVersion
-//*   Compare two version numbers
-//*   version string format: x.y.z, ( 0 <= x, y, y < 100)
+// *   Compare two version numbers
+// *   version string format: x.y.z, ( 0 <= x, y, y < 100)
 func CompareVersion(version1, version2 string) (error, int) {
 	version1No, version2No := formatVersion(version1), formatVersion(version2)
 	if version1No == -1 || version2No == -1 {
@@ -40,8 +40,8 @@ func CompareVersion(version1, version2 string) (error, int) {
 }
 
 // ValidVersionString
-//*   Compare two version numbers
-//*   version string format: x.y.z, ( 0 <= x, y, y < 100)
+// *   Compare two version numbers
+// *   version string format: x.y.z, ( 0 <= x, y, y < 100)
 func ValidVersionString(version string) bool {
 	versionList := strings.Split(version, ".")
 	if len(versionList) != 3 {
@@ -54,6 +54,19 @@ func ValidVersionString(version string) bool {
 		}
 	}
 	return true
+}
+
+func IsEuler2203() bool {
+	if ok, err := PathExists("/etc/system-release"); err != nil || !ok {
+		return false
+	}
+
+	version, err := ReadLine("/etc/system-release")
+	if err != nil {
+		return false
+	}
+
+	return strings.Contains(version, "openEuler release 22.03")
 }
 
 func IsVYOS() bool {
