@@ -92,8 +92,11 @@ func TestBuildSnatRsyslogConf(t *testing.T) {
 	}
 
 	conf = buildSnatRsyslogConf("2001:db8::10")
-	if !strings.Contains(conf, "target=\"[2001:db8::10]\"") {
-		t.Fatalf("expect rsyslog IPv6 target to be bracketed, got %s", conf)
+	if !strings.Contains(conf, "target=\"2001:db8::10\"") {
+		t.Fatalf("expect rsyslog IPv6 target to be raw IP, got %s", conf)
+	}
+	if strings.Contains(conf, "target=\"[2001:db8::10]\"") {
+		t.Fatalf("expect rsyslog IPv6 target not to be bracketed, got %s", conf)
 	}
 }
 

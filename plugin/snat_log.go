@@ -226,7 +226,7 @@ if ($syslogtag contains "snat.raw") then {
            queue.saveonshutdown="on")
     stop
 }
-`, snatLogLocalFilePath, utils.FormatURLHost(targetIp), snatLogRsyslogPort)
+`, snatLogLocalFilePath, targetIp, snatLogRsyslogPort)
 }
 
 func configureSnatRsyslog(enable bool, targetIp string) error {
