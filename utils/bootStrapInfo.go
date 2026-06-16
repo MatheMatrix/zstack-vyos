@@ -300,7 +300,8 @@ func GetBootStrapPrivateNicInfo() []Nic {
 	appendNic := func(nic map[string]interface{}) {
 		category, _ := nic["category"].(string)
 		ip, _ := nic["ip"].(string)
-		if category != NIC_TYPE_PRIVATE || !IsIpv4Address(ip) {
+		ip6, _ := nic["ip6"].(string)
+		if category != NIC_TYPE_PRIVATE || (ip == "" && ip6 == "") {
 			return
 		}
 
@@ -316,7 +317,26 @@ func GetBootStrapPrivateNicInfo() []Nic {
 		}
 
 		netmask, _ := nic["netmask"].(string)
-		nics = append(nics, Nic{Name: name, Mac: mac, Ip: ip, Netmask: netmask, Catatory: category})
+		gateway, _ := nic["gateway"].(string)
+		gateway6, _ := nic["gateway6"].(string)
+		prefixLength := 0
+		switch v := nic["prefixLength"].(type) {
+		case int:
+			prefixLength = v
+		case float64:
+			prefixLength = int(v)
+		}
+		nics = append(nics, Nic{
+			Name:         name,
+			Mac:          mac,
+			Ip:           ip,
+			Ip6:          ip6,
+			Gateway:      gateway,
+			Gateway6:     gateway6,
+			Netmask:      netmask,
+			PrefixLength: prefixLength,
+			Catatory:     category,
+		})
 	}
 
 	switch otherNics := additionalNics.(type) {

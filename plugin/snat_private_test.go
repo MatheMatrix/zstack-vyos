@@ -23,6 +23,13 @@ func TestRemoveSlbPrivateNicSnatRulesByVyos(t *testing.T) {
 				"netmask":    "255.255.255.0",
 			},
 			map[string]interface{}{
+				"category":     utils.NIC_TYPE_PRIVATE,
+				"deviceName":   "eth2",
+				"ip6":          "2001:db8::1",
+				"gateway6":     "2001:db8::ff",
+				"prefixLength": 64,
+			},
+			map[string]interface{}{
 				"category":   utils.NIC_TYPE_PUBLIC,
 				"deviceName": "eth0",
 				"ip":         "172.20.10.2",
@@ -50,6 +57,12 @@ func TestRemoveSlbPrivateNicSnatRulesByVyos(t *testing.T) {
 		"destination address 192.168.10.100",
 		"translation address 192.168.10.1",
 	)
+	tree.SetSnatWithRuleNumber(6600,
+		"outbound-interface eth2",
+		"source address 2001:db8::/64",
+		"destination address !224.0.0.0/8",
+		"translation address 2001:db8::1",
+	)
 	tree.SetSnatWithRuleNumber(100,
 		"description ipsec-exclude",
 		"outbound-interface eth1",
@@ -68,6 +81,9 @@ func TestRemoveSlbPrivateNicSnatRulesByVyos(t *testing.T) {
 	}
 	if tree.Get("nat source rule 6500") == nil {
 		t.Fatal("EIP gateway SNAT rule should not be removed")
+	}
+	if tree.Get("nat source rule 6600") == nil {
+		t.Fatal("IPv6 private nic rule should not be removed by IPv4 SNAT cleanup")
 	}
 	if tree.Get("nat source rule 100") == nil {
 		t.Fatal("IPsec exclude rule should not be removed")

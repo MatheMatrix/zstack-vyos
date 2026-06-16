@@ -198,6 +198,9 @@ func RemoveSlbPrivateNicSnatRulesByVyos(tree *server.VyosConfigTree) bool {
 
 	privateNicNames := make(map[string]struct{})
 	for _, nic := range utils.GetBootStrapPrivateNicInfo() {
+		if !utils.IsIpv4Address(nic.Ip) {
+			continue
+		}
 		privateNicNames[nic.Name] = struct{}{}
 	}
 	if len(privateNicNames) == 0 {

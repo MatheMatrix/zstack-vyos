@@ -47,19 +47,24 @@ func TestGetBootStrapPrivateNicInfo(t *testing.T) {
 				"netmask":    "255.255.255.0",
 			},
 			map[string]interface{}{
-				"category":   NIC_TYPE_PRIVATE,
-				"deviceName": "eth2",
-				"ip":         "2001:db8::1",
-				"netmask":    "64",
+				"category":     NIC_TYPE_PRIVATE,
+				"deviceName":   "eth2",
+				"ip6":          "2001:db8::1",
+				"gateway6":     "2001:db8::ff",
+				"prefixLength": 64,
 			},
 		},
 	}
 
 	nics := GetBootStrapPrivateNicInfo()
-	if len(nics) != 1 {
-		t.Fatalf("expected one private IPv4 nic, got %d", len(nics))
+	if len(nics) != 2 {
+		t.Fatalf("expected two private nics, got %d", len(nics))
 	}
 	if nics[0].Name != "eth1" || nics[0].Ip != "192.168.10.1" || nics[0].Netmask != "255.255.255.0" {
-		t.Fatalf("unexpected private nic info: %+v", nics[0])
+		t.Fatalf("unexpected private IPv4 nic info: %+v", nics[0])
+	}
+	if nics[1].Name != "eth2" || nics[1].Ip6 != "2001:db8::1" ||
+		nics[1].Gateway6 != "2001:db8::ff" || nics[1].PrefixLength != 64 {
+		t.Fatalf("unexpected private IPv6 nic info: %+v", nics[1])
 	}
 }
