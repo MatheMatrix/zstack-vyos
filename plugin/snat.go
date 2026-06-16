@@ -115,6 +115,10 @@ func SyncPrivateNicSnatRuleByVyos(tree *server.VyosConfigTree, nicName, ip, netm
 }
 
 func addPrivateNicSnatRuleByVyos(tree *server.VyosConfigTree, nicName, ip, netmask string) bool {
+	if !utils.ShouldConfigurePrivateNicSnat(ip) {
+		return false
+	}
+
 	if privateNicSnatRuleExists(tree, nicName, ip, netmask) {
 		return false
 	}

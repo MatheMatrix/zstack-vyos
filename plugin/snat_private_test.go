@@ -74,6 +74,32 @@ func TestRemoveSlbPrivateNicSnatRulesByVyos(t *testing.T) {
 	}
 }
 
+func TestAddPrivateNicSnatRuleByVyosSkipsUnsupportedPrivateSnat(t *testing.T) {
+	originalBootstrapInfo := utils.BootstrapInfo
+	defer func() {
+		utils.BootstrapInfo = originalBootstrapInfo
+	}()
+
+	utils.BootstrapInfo = map[string]interface{}{}
+	tree := server.NewParserFromConfiguration("").Tree
+	if addPrivateNicSnatRuleByVyos(tree, "eth1", "2001:db8::1", "64") {
+		t.Fatal("IPv6 private SNAT rule should not be added")
+	}
+	if tree.Get("nat source rule") != nil {
+		t.Fatal("IPv6 private SNAT should not create nat source rules")
+	}
+
+	utils.BootstrapInfo = map[string]interface{}{
+		"applianceVmSubType": utils.APPLIANCETYPE_SLB,
+	}
+	if addPrivateNicSnatRuleByVyos(tree, "eth1", "192.168.10.1", "255.255.255.0") {
+		t.Fatal("SLB private SNAT rule should not be added")
+	}
+	if tree.Get("nat source rule") != nil {
+		t.Fatal("SLB private SNAT should not create nat source rules")
+	}
+}
+
 func TestGetAvailablePublicNicSNATRuleNumberSkipsOccupiedRules(t *testing.T) {
 	tree := server.NewParserFromConfiguration("").Tree
 
