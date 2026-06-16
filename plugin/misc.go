@@ -412,7 +412,10 @@ func addRouteIfCallbackIpChanged(init bool) {
 	if server.CURRENT_CALLBACK_IP != server.CALLBACK_IP {
 		update = true
 	} else if init {
-		update = true
+		// for reconnect
+		if !utils.CheckZStackRouteExists(server.CALLBACK_IP) {
+			update = true
+		}
 	}
 
 	if update {
@@ -423,19 +426,18 @@ func addRouteIfCallbackIpChanged(init bool) {
 		}
 
 		mgmtNic := utils.GetMgmtInfoFromBootInfo()
+		if utils.IsEuler2203() {
+			_ = utils.AddRouteForMgmtEuler2203(server.CALLBACK_IP, "eth0", mgmtNic["gateway"].(string))
+			server.CURRENT_CALLBACK_IP = server.CALLBACK_IP
+			return
+		}
+
 		// NOTE(WeiW): Since our mgmt nic is always eth0
 		if server.CURRENT_CALLBACK_IP != "" {
 			err := utils.RemoveZStackRoute(server.CURRENT_CALLBACK_IP)
 			utils.PanicOnError(err)
 		}
-		if nic, err := utils.GetOutingNicForIp(server.CALLBACK_IP); err == nil && nic != "" {
-			if nic != "eth0" {
-				err := utils.SetZStackRoute(server.CALLBACK_IP, nic, "")
-				utils.PanicOnError(err)
-			} else {
-				log.Debugf("the cidr of vr mgmt contains callback ip, skip to configure route")
-			}
-		} else if mgmtNic != nil && utils.CheckMgmtCidrContainsIp(server.CALLBACK_IP, mgmtNic) == false {
+		if mgmtNic != nil && utils.CheckMgmtCidrContainsIp(server.CALLBACK_IP, mgmtNic) == false {
 			err := utils.SetZStackRoute(server.CALLBACK_IP, "eth0", mgmtNic["gateway"].(string))
 			utils.PanicOnError(err)
 		} else if mgmtNic == nil {
