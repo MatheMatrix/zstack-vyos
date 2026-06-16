@@ -191,7 +191,19 @@ func RemovePrivateNicSnatRuleByVyos(tree *server.VyosConfigTree, nicName, ip, ne
 	return updated
 }
 
-func RemoveSlbPrivateNicSnatRulesByVyos(tree *server.VyosConfigTree) bool {
+func defaultPrivateNicSnatRuleMatches(r *server.VyosConfigNode, privateNicNames map[string]struct{}) bool {
+	outIf := r.Get("outbound-interface")
+	dstAddr := r.Get("destination address")
+	tAddr := r.Get("translation address")
+	if outIf == nil || dstAddr == nil || tAddr == nil {
+		return false
+	}
+
+	_, ok := privateNicNames[outIf.Value()]
+	return ok && dstAddr.Value() == "!224.0.0.0/8"
+}
+
+func RemoveSlbDefaultPrivateNicSnatRulesByVyos(tree *server.VyosConfigTree) bool {
 	if !utils.IsSLB() {
 		return false
 	}
@@ -214,13 +226,7 @@ func RemoveSlbPrivateNicSnatRulesByVyos(tree *server.VyosConfigTree) bool {
 
 	updated := false
 	for _, r := range rules.Children() {
-		outIf := r.Get("outbound-interface")
-		dstAddr := r.Get("destination address")
-		tAddr := r.Get("translation address")
-		if outIf == nil || dstAddr == nil || tAddr == nil {
-			continue
-		}
-		if _, ok := privateNicNames[outIf.Value()]; ok && dstAddr.Value() == "!224.0.0.0/8" {
+		if defaultPrivateNicSnatRuleMatches(r, privateNicNames) {
 			r.Delete()
 			updated = true
 		}
@@ -244,7 +250,7 @@ func cleanupSlbPrivateNicSnatRulesByVyos() {
 	}
 
 	tree := server.NewParserFromShowConfiguration().Tree
-	if RemoveSlbPrivateNicSnatRulesByVyos(tree) {
+	if RemoveSlbDefaultPrivateNicSnatRulesByVyos(tree) {
 		tree.Apply(false)
 	}
 }

@@ -7,7 +7,7 @@ import (
 	"zstack-vyos/utils"
 )
 
-func TestRemoveSlbPrivateNicSnatRulesByVyos(t *testing.T) {
+func TestRemoveSlbDefaultPrivateNicSnatRulesByVyos(t *testing.T) {
 	originalBootstrapInfo := utils.BootstrapInfo
 	defer func() {
 		utils.BootstrapInfo = originalBootstrapInfo
@@ -70,7 +70,7 @@ func TestRemoveSlbPrivateNicSnatRulesByVyos(t *testing.T) {
 		"exclude",
 	)
 
-	if !RemoveSlbPrivateNicSnatRulesByVyos(tree) {
+	if !RemoveSlbDefaultPrivateNicSnatRulesByVyos(tree) {
 		t.Fatal("expected SLB private-local SNAT rule to be removed")
 	}
 	if tree.Get("nat source rule 6000") != nil {
