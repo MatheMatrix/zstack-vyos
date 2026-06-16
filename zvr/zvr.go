@@ -306,6 +306,18 @@ func checkIptablesRules() {
 	}
 }
 
+func cleanupSlbPrivateNicSnatRules() {
+	if !utils.IsSkipVyosIptables() || !utils.IsSLB() {
+		return
+	}
+
+	table := utils.NewIpTables(utils.NatTable)
+	table.RemoveIpTableRuleByComments(utils.PrivateNicSNATComment)
+	if err := table.Apply(); err != nil {
+		log.Debugf("remove slb private nic snat rules failed, %v", err.Error())
+	}
+}
+
 func main() {
 	parseCommandOptions()
 	if st, err := utils.DiskUsage(getHeartBeatDir(options.LogFile)); err == nil && st.Avail == 0 {
@@ -320,6 +332,7 @@ func main() {
 	go restartRsyslog()
 	utils.InitBootStrapInfo()
 	checkIptablesRules()
+	cleanupSlbPrivateNicSnatRules()
 	utils.InitNatRule()
 	initPlugins()
 	plugin.InitKeepalived()

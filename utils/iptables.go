@@ -569,11 +569,15 @@ func InitIptablesFlags() {
 	}
 }
 
+func ShouldConfigurePrivateNicSnat(ip string) bool {
+	return IsIpv4Address(ip) && !IsSLB()
+}
+
 func AddSnatRuleForPrivateNic(nicName, ip, netmask string) {
-	if ip == "" || strings.Contains(ip, ":") {
-		/* TODO: add ipv6 support */
+	if !ShouldConfigurePrivateNicSnat(ip) {
 		return
 	}
+
 	table := NewIpTables(NatTable)
 	address, err := GetNetworkNumber(ip, netmask)
 	PanicOnError(err)
