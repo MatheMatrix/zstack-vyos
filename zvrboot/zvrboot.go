@@ -494,7 +494,7 @@ func configureVyos() {
 			if nic.category == "Private" {
 				err = utils.InitNicFirewall(nic.name, nic.ip, false, utils.IPTABLES_ACTION_REJECT)
 				if err != nil {
-					log.Debugf("InitNicFirewall for nic: %s failed", err.Error())
+					log.Debugf("InitNicFirewall for nic %s failed: %s", nic.name, err.Error())
 				}
 
 				err = utils.SyncSnatRuleForPrivateNic(nic.name, nic.ip, nic.netmask)
@@ -504,7 +504,7 @@ func configureVyos() {
 			} else {
 				err = utils.InitNicFirewall(nic.name, nic.ip, true, utils.IPTABLES_ACTION_REJECT)
 				if err != nil {
-					log.Debugf("InitNicFirewall for nic: %s failed", err.Error())
+					log.Debugf("InitNicFirewall for nic %s failed: %s", nic.name, err.Error())
 				}
 			}
 		}
