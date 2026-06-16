@@ -290,6 +290,51 @@ func GetBootStrapNicInfo() map[string]Nic {
 	return bootstrapNics
 }
 
+func GetBootStrapPrivateNicInfo() []Nic {
+	nics := make([]Nic, 0)
+	additionalNics, ok := BootstrapInfo["additionalNics"]
+	if !ok {
+		return nics
+	}
+
+	appendNic := func(nic map[string]interface{}) {
+		category, _ := nic["category"].(string)
+		ip, _ := nic["ip"].(string)
+		if category != NIC_TYPE_PRIVATE || !IsIpv4Address(ip) {
+			return
+		}
+
+		name, _ := nic["deviceName"].(string)
+		mac, _ := nic["mac"].(string)
+		if mac != "" {
+			if nicName, err := GetNicNameByMac(mac); err == nil && nicName != "" {
+				name = nicName
+			}
+		}
+		if name == "" {
+			return
+		}
+
+		netmask, _ := nic["netmask"].(string)
+		nics = append(nics, Nic{Name: name, Mac: mac, Ip: ip, Netmask: netmask, Catatory: category})
+	}
+
+	switch otherNics := additionalNics.(type) {
+	case []interface{}:
+		for _, n := range otherNics {
+			if nic, ok := n.(map[string]interface{}); ok {
+				appendNic(nic)
+			}
+		}
+	case []map[string]interface{}:
+		for _, nic := range otherNics {
+			appendNic(nic)
+		}
+	}
+
+	return nics
+}
+
 func SetHaStatus(status string) {
 	BootstrapInfo["haStatus"] = status
 }
