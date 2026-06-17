@@ -359,7 +359,9 @@ func configureBondNic(nic *utils.NicInfo) {
 
 	// Add SNAT rule for private bond interface
 	if nic.Category == "Private" {
-		utils.AddSnatRuleForPrivateNic(bondName, nic.Ip, nic.Netmask)
+		if err := utils.SyncSnatRuleForPrivateNic(bondName, nic.Ip, nic.Netmask); err != nil {
+			log.Debugf("sync private nic SNAT rule for bond %s failed: %s", bondName, err.Error())
+		}
 	}
 
 	log.Debugf("[configure: bond %s configured successfully]", bondName)
@@ -474,7 +476,9 @@ func configureNicInfo(nic *utils.NicInfo) {
 	}
 
 	if nic.Category == "Private" {
-		utils.AddSnatRuleForPrivateNic(nic.Name, nic.Ip, nic.Netmask)
+		if err := utils.SyncSnatRuleForPrivateNic(nic.Name, nic.Ip, nic.Netmask); err != nil {
+			log.Debugf("sync private nic SNAT rule for nic %s failed: %s", nic.Name, err.Error())
+		}
 	}
 }
 

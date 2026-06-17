@@ -290,6 +290,71 @@ func GetBootStrapNicInfo() map[string]Nic {
 	return bootstrapNics
 }
 
+func GetBootStrapPrivateNicInfo() []Nic {
+	nics := make([]Nic, 0)
+	additionalNics, ok := BootstrapInfo["additionalNics"]
+	if !ok {
+		return nics
+	}
+
+	appendNic := func(nic map[string]interface{}) {
+		category, _ := nic["category"].(string)
+		ip, _ := nic["ip"].(string)
+		ip6, _ := nic["ip6"].(string)
+		if category != NIC_TYPE_PRIVATE || (ip == "" && ip6 == "") {
+			return
+		}
+
+		name, _ := nic["deviceName"].(string)
+		mac, _ := nic["mac"].(string)
+		if mac != "" {
+			if nicName, err := GetNicNameByMac(mac); err == nil && nicName != "" {
+				name = nicName
+			}
+		}
+		if name == "" {
+			return
+		}
+
+		netmask, _ := nic["netmask"].(string)
+		gateway, _ := nic["gateway"].(string)
+		gateway6, _ := nic["gateway6"].(string)
+		prefixLength := 0
+		switch v := nic["prefixLength"].(type) {
+		case int:
+			prefixLength = v
+		case float64:
+			prefixLength = int(v)
+		}
+		nics = append(nics, Nic{
+			Name:         name,
+			Mac:          mac,
+			Ip:           ip,
+			Ip6:          ip6,
+			Gateway:      gateway,
+			Gateway6:     gateway6,
+			Netmask:      netmask,
+			PrefixLength: prefixLength,
+			Catatory:     category,
+		})
+	}
+
+	switch otherNics := additionalNics.(type) {
+	case []interface{}:
+		for _, n := range otherNics {
+			if nic, ok := n.(map[string]interface{}); ok {
+				appendNic(nic)
+			}
+		}
+	case []map[string]interface{}:
+		for _, nic := range otherNics {
+			appendNic(nic)
+		}
+	}
+
+	return nics
+}
+
 func SetHaStatus(status string) {
 	BootstrapInfo["haStatus"] = status
 }
