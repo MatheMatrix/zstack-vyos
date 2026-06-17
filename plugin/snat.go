@@ -191,7 +191,7 @@ func RemovePrivateNicSnatRuleByVyos(tree *server.VyosConfigTree, nicName, ip, ne
 	return updated
 }
 
-func defaultPrivateNicSnatRuleMatches(r *server.VyosConfigNode, privateNicNames map[string]struct{}) bool {
+func defaultPrivateNicSnatRuleMatches(r *server.VyosConfigNode, privateNicIPs map[string]string) bool {
 	outIf := r.Get("outbound-interface")
 	dstAddr := r.Get("destination address")
 	tAddr := r.Get("translation address")
@@ -199,8 +199,8 @@ func defaultPrivateNicSnatRuleMatches(r *server.VyosConfigNode, privateNicNames 
 		return false
 	}
 
-	_, ok := privateNicNames[outIf.Value()]
-	return ok && dstAddr.Value() == "!224.0.0.0/8"
+	expectedIP, ok := privateNicIPs[outIf.Value()]
+	return ok && dstAddr.Value() == "!224.0.0.0/8" && tAddr.Value() == expectedIP
 }
 
 func RemoveSlbDefaultPrivateNicSnatRulesByVyos(tree *server.VyosConfigTree) bool {
@@ -208,14 +208,14 @@ func RemoveSlbDefaultPrivateNicSnatRulesByVyos(tree *server.VyosConfigTree) bool
 		return false
 	}
 
-	privateNicNames := make(map[string]struct{})
+	privateNicIPs := make(map[string]string)
 	for _, nic := range utils.GetBootStrapPrivateNicInfo() {
 		if !utils.IsIpv4Address(nic.Ip) {
 			continue
 		}
-		privateNicNames[nic.Name] = struct{}{}
+		privateNicIPs[nic.Name] = nic.Ip
 	}
-	if len(privateNicNames) == 0 {
+	if len(privateNicIPs) == 0 {
 		return false
 	}
 
@@ -226,7 +226,7 @@ func RemoveSlbDefaultPrivateNicSnatRulesByVyos(tree *server.VyosConfigTree) bool
 
 	updated := false
 	for _, r := range rules.Children() {
-		if defaultPrivateNicSnatRuleMatches(r, privateNicNames) {
+		if defaultPrivateNicSnatRuleMatches(r, privateNicIPs) {
 			r.Delete()
 			updated = true
 		}
@@ -569,7 +569,8 @@ func SyncSnat(cmd *SyncSnatCmd) interface{} {
 	// add missing private SNAT rules per mode
 	if utils.IsSkipVyosIptables() {
 		for _, p := range privates {
-			_ = utils.SyncSnatRuleForPrivateNic(p.nicName, p.nicIp, p.netmask)
+			err := utils.SyncSnatRuleForPrivateNic(p.nicName, p.nicIp, p.netmask)
+			utils.PanicOnError(err)
 		}
 	} else {
 		tree := server.NewParserFromShowConfiguration().Tree

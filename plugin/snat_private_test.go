@@ -57,6 +57,13 @@ func TestRemoveSlbDefaultPrivateNicSnatRulesByVyos(t *testing.T) {
 		"destination address 192.168.10.100",
 		"translation address 192.168.10.1",
 	)
+	tree.SetSnatWithRuleNumber(6550,
+		"description custom-private-snat",
+		"outbound-interface eth1",
+		"source address 192.168.10.0/24",
+		"destination address !224.0.0.0/8",
+		"translation address 192.168.10.254",
+	)
 	tree.SetSnatWithRuleNumber(6600,
 		"outbound-interface eth2",
 		"source address 2001:db8::/64",
@@ -81,6 +88,9 @@ func TestRemoveSlbDefaultPrivateNicSnatRulesByVyos(t *testing.T) {
 	}
 	if tree.Get("nat source rule 6500") == nil {
 		t.Fatal("EIP gateway SNAT rule should not be removed")
+	}
+	if tree.Get("nat source rule 6550") == nil {
+		t.Fatal("custom private SNAT rule with a different translation address should not be removed")
 	}
 	if tree.Get("nat source rule 6600") == nil {
 		t.Fatal("IPv6 private nic rule should not be removed by IPv4 SNAT cleanup")
