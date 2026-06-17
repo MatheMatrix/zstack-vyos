@@ -569,11 +569,29 @@ func InitIptablesFlags() {
 	}
 }
 
+func ShouldConfigurePrivateNicSnat(ip string) bool {
+	return IsIpv4Address(ip) && !IsSLB()
+}
+
+func SyncSnatRuleForPrivateNic(nicName, ip, netmask string) error {
+	if ShouldConfigurePrivateNicSnat(ip) {
+		return AddSnatRuleForPrivateNic(nicName, ip, netmask)
+	}
+
+	return RemoveSnatRuleForPrivateNic(nicName, ip, netmask)
+}
+
+func RemoveAllPrivateNicSnatRules() error {
+	table := NewIpTables(NatTable)
+	table.RemoveIpTableRuleByComments(PrivateNicSNATComment)
+	return table.Apply()
+}
+
 func AddSnatRuleForPrivateNic(nicName, ip, netmask string) (err error) {
-	if ip == "" || strings.Contains(ip, ":") {
-		/* TODO: add ipv6 support */
+	if !ShouldConfigurePrivateNicSnat(ip) {
 		return nil
 	}
+
 	table := NewIpTables(NatTable)
 	address, err := GetNetworkNumber(ip, netmask)
 	PanicOnError(err)
@@ -587,8 +605,7 @@ func AddSnatRuleForPrivateNic(nicName, ip, netmask string) (err error) {
 }
 
 func RemoveSnatRuleForPrivateNic(nicName, ip, netmask string) error {
-	if ip == "" || strings.Contains(ip, ":") {
-		/* TODO: add ipv6 support */
+	if !IsIpv4Address(ip) {
 		return nil
 	}
 
