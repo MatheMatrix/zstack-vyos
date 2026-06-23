@@ -142,6 +142,8 @@ type LbInfo struct {
 	InstancePort       int                `json:"instancePort"`
 	LoadBalancerPort   int                `json:"loadBalancerPort"`
 	Mode               string             `json:"mode"`
+	DataPlane          string             `json:"dataPlane"`
+	ForwardMode        string             `json:"forwardMode"`
 	Parameters         []string           `json:"parameters"`
 	CertificateUuid    string             `json:"certificateUuid"`
 	SecurityPolicyType string             `json:"securityPolicyType"`
@@ -264,11 +266,11 @@ func isIpvsDataPlane(info LbInfo) bool {
 		return false
 	}
 
-	return strings.EqualFold(ParseLbParams(info).dataPlane, "ipvs")
+	return strings.EqualFold(info.DataPlane, "ipvs") && strings.EqualFold(info.ForwardMode, "full_nat")
 }
 
 func isTcpIpvsDataPlane(info LbInfo) bool {
-	return info.Mode == LB_MODE_TCP && strings.EqualFold(ParseLbParams(info).dataPlane, "ipvs")
+	return info.Mode == LB_MODE_TCP && strings.EqualFold(info.DataPlane, "ipvs") && strings.EqualFold(info.ForwardMode, "full_nat")
 }
 
 type Listener interface {
