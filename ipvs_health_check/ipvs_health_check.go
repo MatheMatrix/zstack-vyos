@@ -37,8 +37,24 @@ var gHealthCheckMap map[string]*IpvsHealthCheckBackendServer
 var gHealthCheckMapLock sync.Mutex
 var ipvsadmLock sync.Mutex
 
+const (
+	healthCheckProtocolNone = "none"
+	healthCheckProtocolTCP  = "tcp"
+	healthCheckProtocolUDP  = "udp"
+
+	defaultHealthCheckTimeoutSeconds = 2
+)
+
 func isHealthCheckDisabled(protocol string) bool {
-	return strings.EqualFold(protocol, "none")
+	return strings.EqualFold(protocol, healthCheckProtocolNone)
+}
+
+func healthCheckTimeoutDuration(timeout int) time.Duration {
+	if timeout <= 0 {
+		return time.Duration(defaultHealthCheckTimeoutSeconds) * time.Second
+	}
+
+	return time.Duration(timeout) * time.Second
 }
 
 func parseCommandOptions() {
@@ -50,9 +66,9 @@ func parseCommandOptions() {
 }
 
 func (bs *IpvsHealthCheckBackendServer) getBackendKey() string {
-	proto := "udp"
-	if strings.ToLower(bs.ProtocolType) == "tcp" || strings.ToLower(bs.ProtocolType) == "-t" {
-		proto = "tcp"
+	proto := healthCheckProtocolUDP
+	if strings.ToLower(bs.ProtocolType) == healthCheckProtocolTCP || strings.ToLower(bs.ProtocolType) == "-t" {
+		proto = healthCheckProtocolTCP
 	}
 
 	return proto + "-" + bs.FrontIp + "-" + bs.FrontPort + "-" + bs.BackendIp + "-" + bs.BackendPort
@@ -74,16 +90,18 @@ func (bs *IpvsHealthCheckBackendServer) equal(other *IpvsHealthCheckBackendServe
 }
 
 func (bs *IpvsHealthCheckBackendServer) doHealthCheck() {
+	// Valid values are none, tcp, and udp; Cloud/zvr validation should keep
+	// unexpected values out of this worker.
 	protocol := strings.TrimSpace(strings.ToLower(bs.HealthCheckProtocol))
 	switch protocol {
-	case "none":
+	case healthCheckProtocolNone:
 		bs.result <- true
-	case "tcp":
+	case healthCheckProtocolTCP:
 		bs.doTcpCheck()
-	case "udp":
+	case healthCheckProtocolUDP:
 		bs.doUdpCheck()
 	default:
-		log.Debugf("unknow health check protocol %q", bs.HealthCheckProtocol)
+		log.Debugf("unknown health check protocol %q", bs.HealthCheckProtocol)
 		bs.result <- false
 	}
 }
@@ -149,33 +167,13 @@ func (bs *IpvsHealthCheckBackendServer) UnInstall() {
 	}
 	b.Run()
 
-	/* if there is no backend, remove the service */
-	conf, err := plugin.NewIpvsConfFromSave()
-	if err != nil {
-		log.Debugf("[ipvsHealthCheck] ipvsadm-save to config failed %+v", err)
+	cmd = fmt.Sprintf("ipvsadm -L %s %s:%s 2>/dev/null | grep -q -- '->' || ipvsadm -D %s %s:%s",
+		proto, frontIp, bs.FrontPort, proto, frontIp, bs.FrontPort)
+	b = utils.Bash{
+		Command: cmd,
+		Sudo:    true,
 	}
-
-	for _, fs := range conf.Services {
-		if len(fs.BackendServers) == 0 {
-			proto := "-u"
-			if strings.ToLower(fs.ProtocolType) == "tcp" || strings.ToLower(fs.ProtocolType) == "-t" {
-				proto = "-t"
-			}
-			frontIp := fs.FrontIp
-			ip := net.ParseIP(frontIp)
-			if ip != nil && ip.To4() == nil {
-				frontIp = fmt.Sprintf("[%s]", frontIp)
-			}
-
-			cmd := fmt.Sprintf("ipvsadm -D %s %s:%s", proto, frontIp, fs.FrontPort)
-			b := utils.Bash{
-				Command: cmd,
-				Sudo:    true,
-			}
-			b.Run()
-		}
-	}
-
+	b.Run()
 }
 
 func (bs *IpvsHealthCheckBackendServer) EditBackendServer() {

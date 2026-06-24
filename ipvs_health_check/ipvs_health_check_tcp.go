@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"net"
-	"time"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -16,7 +15,7 @@ func (bs *IpvsHealthCheckBackendServer) doTcpCheck() {
 	}
 
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", addr, bs.HealthCheckPort),
-		time.Duration(bs.HealthCheckTimeout)*time.Second)
+		healthCheckTimeoutDuration(bs.HealthCheckTimeout))
 	if err != nil {
 		log.Debugf("[tcp checker]: dial tcp %s:%d failed: %v", addr, bs.HealthCheckPort, err)
 		bs.result <- false
