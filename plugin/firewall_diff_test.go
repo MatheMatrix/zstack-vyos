@@ -290,3 +290,59 @@ func TestZSTAC83935StaleIptablesChainFullyRemoved(t *testing.T) {
 		t.Fatal("hook rule for desired chain eth6.in must be kept")
 	}
 }
+
+func TestZSTAC86156ExistingIptablesRuleSetMissingDefaultDetected(t *testing.T) {
+	table := &utils.IpTables{Name: utils.FirewallTable}
+	table.AddChain(utils.VYOS_FWD_OUT_ROOT_CHAIN)
+	table.AddChain("eth1.out")
+
+	hookRule := utils.NewIpTableRule(utils.VYOS_FWD_OUT_ROOT_CHAIN)
+	hookRule.SetAction("eth1.out")
+	hookRule.SetOutNic("eth1")
+	table.AddIpTableRules([]*utils.IpTableRule{hookRule})
+
+	userRule := utils.NewIpTableRule("eth1.out")
+	userRule.SetAction(utils.IPTABLES_ACTION_RETURN)
+	utils.SetFirewallRuleNumber(userRule, "eth1.out", 1015)
+	table.AddIpTableRules([]*utils.IpTableRule{userRule})
+
+	defaultRuleSetNames := getDefaultRuleSetNamesFromIpTable(table)
+	if _, exists := defaultRuleSetNames["eth1.out"]; exists {
+		t.Fatal("test setup must not contain eth1.out default rule")
+	}
+
+	currentRuleSets := getRuleSetFromIpTable(table)
+	currentRuleSet, exists := currentRuleSets["eth1.out"]
+	if !exists {
+		t.Fatal("existing eth1.out chain must be detected")
+	}
+	if currentRuleSet.ActionType != "accept" {
+		t.Fatalf("missing default rule is interpreted as accept before fix, got %s", currentRuleSet.ActionType)
+	}
+	if len(currentRuleSet.Rules) != 1 || currentRuleSet.Rules[0].RuleNumber != 1015 {
+		t.Fatalf("expected existing user rule 1015 to be detected, got %#v", currentRuleSet.Rules)
+	}
+
+	ref := ethRuleSetRef{
+		Mac:         "52:54:00:00:00:01",
+		Forward:     FIREWALL_DIRECTION_OUT,
+		RuleSetInfo: *currentRuleSet,
+	}
+	diffs := diffUserRules([]ethRuleSetRef{ref}, []ethRuleSetRef{ref})
+	if len(diffs) != 1 {
+		t.Fatalf("expected one diff, got %d", len(diffs))
+	}
+	diff := diffs[0]
+	if !diff.RuleSetExists || diff.ActionChanged || diff.LogChanged || len(diff.RulesToAdd) != 0 || len(diff.RulesToDelete) != 0 || len(diff.RulesToUpdate) != 0 {
+		t.Fatalf("regular rule diff must not detect missing default rule, got %#v", diff)
+	}
+
+	missingDefaultRuleSetNames := getMissingDefaultRuleSetNames(
+		map[string]struct{}{"eth1.out": {}},
+		currentRuleSets,
+		defaultRuleSetNames,
+	)
+	if _, exists := missingDefaultRuleSetNames["eth1.out"]; !exists {
+		t.Fatal("existing desired ruleset without default rule must be repaired")
+	}
+}
