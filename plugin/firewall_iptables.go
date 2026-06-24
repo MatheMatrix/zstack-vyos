@@ -95,6 +95,29 @@ func getRuleSetFromIpTable(table *utils.IpTables) map[string]*ruleSetInfo {
 	return sets
 }
 
+func getDefaultRuleSetNamesFromIpTable(table *utils.IpTables) map[string]struct{} {
+	names := make(map[string]struct{})
+	for _, r := range table.Rules {
+		if utils.IsDefaultRule(r) {
+			names[r.GetChainName()] = struct{}{}
+		}
+	}
+	return names
+}
+
+func getMissingDefaultRuleSetNames(desiredRuleSetNames map[string]struct{}, currentRuleSets map[string]*ruleSetInfo, defaultRuleSetNames map[string]struct{}) map[string]struct{} {
+	names := make(map[string]struct{})
+	for ruleSetName := range desiredRuleSetNames {
+		if _, exists := currentRuleSets[ruleSetName]; !exists {
+			continue
+		}
+		if _, exists := defaultRuleSetNames[ruleSetName]; !exists {
+			names[ruleSetName] = struct{}{}
+		}
+	}
+	return names
+}
+
 func getRuleFromIpTableRule(r *utils.IpTableRule) ruleInfo {
 	var rule ruleInfo
 
@@ -547,6 +570,7 @@ ERROR_OUT:
 
 func applyUserRulesByIpTables(cmd *applyUserRuleCmd) error {
 	readTable := utils.NewIpTables(utils.FirewallTable)
+	defaultRuleSetNames := getDefaultRuleSetNamesFromIpTable(readTable)
 	currentRuleSets := getRuleSetFromIpTable(readTable)
 	currentRefs := make([]ethRuleSetRef, 0, len(cmd.Refs))
 	desiredRuleSetNames := make(map[string]struct{}, len(cmd.Refs))
@@ -570,8 +594,9 @@ func applyUserRulesByIpTables(cmd *applyUserRuleCmd) error {
 		}
 	}
 
+	missingDefaultRuleSetNames := getMissingDefaultRuleSetNames(desiredRuleSetNames, currentRuleSets, defaultRuleSetNames)
 	diffs := diffUserRules(currentRefs, cmd.Refs)
-	hasChange := len(extraRuleSetNames) > 0
+	hasChange := len(extraRuleSetNames) > 0 || len(missingDefaultRuleSetNames) > 0
 	if !hasChange {
 		for _, diff := range diffs {
 			if !diff.RuleSetExists || diff.ActionChanged || diff.LogChanged || len(diff.RulesToAdd) > 0 || len(diff.RulesToDelete) > 0 || len(diff.RulesToUpdate) > 0 {
@@ -661,10 +686,16 @@ func applyUserRulesByIpTables(cmd *applyUserRuleCmd) error {
 			}
 		}
 
-		if diff.RuleSetExists && diff.ActionChanged {
-			for _, r := range table.Rules {
-				if r.GetChainName() == ruleSetName && utils.IsDefaultRule(r) {
-					r.SetAction(getIptablesRuleActionFromRuleAction(diff.DesiredRuleSet.ActionType))
+		if diff.RuleSetExists {
+			if _, missing := missingDefaultRuleSetNames[ruleSetName]; missing {
+				defaultRule := utils.NewDefaultIpTableRule(ruleSetName, utils.IPTABLES_RULENUMBER_MAX)
+				defaultRule.SetAction(getIptablesRuleActionFromRuleAction(diff.DesiredRuleSet.ActionType))
+				addRules = append(addRules, defaultRule)
+			} else if diff.ActionChanged {
+				for _, r := range table.Rules {
+					if r.GetChainName() == ruleSetName && utils.IsDefaultRule(r) {
+						r.SetAction(getIptablesRuleActionFromRuleAction(diff.DesiredRuleSet.ActionType))
+					}
 				}
 			}
 		}
