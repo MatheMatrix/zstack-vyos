@@ -42,6 +42,9 @@ const (
 	LB_MODE_TCP   = "tcp"
 	LB_MODE_UDP   = "udp"
 
+	LB_DATA_PLANE_IPVS       = "ipvs"
+	LB_FORWARD_MODE_FULL_NAT = "full_nat"
+
 	LB_BACKEND_PREFIX_REG = "^nic-"
 
 	LISTENER_MAP_SIZE = 128
@@ -155,6 +158,8 @@ type LbInfo struct {
 	InstancePort       int                `json:"instancePort"`
 	LoadBalancerPort   int                `json:"loadBalancerPort"`
 	Mode               string             `json:"mode"`
+	DataPlane          string             `json:"dataPlane"`
+	ForwardMode        string             `json:"forwardMode"`
 	Parameters         []string           `json:"parameters"`
 	CertificateUuid    string             `json:"certificateUuid"`
 	SecurityPolicyType string             `json:"securityPolicyType"`
@@ -263,6 +268,22 @@ func ParseLbParams(lb LbInfo) LbParams {
 	}
 
 	return param
+}
+
+func isIpvsDataPlane(info LbInfo) bool {
+	if info.Mode == LB_MODE_UDP {
+		return true
+	}
+
+	if info.Mode != LB_MODE_TCP {
+		return false
+	}
+
+	return strings.EqualFold(info.DataPlane, LB_DATA_PLANE_IPVS) && strings.EqualFold(info.ForwardMode, LB_FORWARD_MODE_FULL_NAT)
+}
+
+func isTcpIpvsDataPlane(info LbInfo) bool {
+	return info.Mode == LB_MODE_TCP && strings.EqualFold(info.DataPlane, LB_DATA_PLANE_IPVS) && strings.EqualFold(info.ForwardMode, LB_FORWARD_MODE_FULL_NAT)
 }
 
 type Listener interface {
@@ -2217,8 +2238,12 @@ func AddLbs(lbs []Listener) error {
 }
 
 func isIpvsListener(info LbInfo) bool {
-	if info.Mode != LB_MODE_UDP {
+	if !isIpvsDataPlane(info) {
 		return false
+	}
+
+	if isTcpIpvsDataPlane(info) {
+		return true
 	}
 
 	confPath := makeLbConfFilePath(info)
@@ -2307,6 +2332,14 @@ func DeleteLbInternal(cmd *deleteLbCmd) {
 	ipvs := map[string]LbInfo{}
 	if len(cmd.Lbs) > 0 {
 		for _, lb := range cmd.Lbs {
+			if isTcpIpvsDataPlane(lb) {
+				if listener := GetListener(lb); listener != nil {
+					toDeleted = append(toDeleted, listener)
+				}
+				ipvs[lb.ListenerUuid] = lb
+				continue
+			}
+
 			if isIpvsListener(lb) {
 				ipvs[lb.ListenerUuid] = lb
 				continue

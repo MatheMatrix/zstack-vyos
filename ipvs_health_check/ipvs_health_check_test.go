@@ -486,6 +486,12 @@ var _ = Describe("ipvs health check test", func() {
 		Expect(<-bs.result).To(BeTrue(), "none health check should keep backend healthy without udp probing")
 	})
 
+	It("ipvs health check: default timeout", func() {
+		Expect(healthCheckTimeoutDuration(0)).To(Equal(2 * time.Second))
+		Expect(healthCheckTimeoutDuration(-1)).To(Equal(2 * time.Second))
+		Expect(healthCheckTimeoutDuration(3)).To(Equal(3 * time.Second))
+	})
+
 	It("ipvs health check: test syncIpvsadmWithHealthCheck", func() {
 
 		wait := uint(bs1.HealthCheckInterval) * (bs1.HealthyThreshold + 2)
