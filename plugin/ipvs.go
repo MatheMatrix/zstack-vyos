@@ -111,6 +111,18 @@ func GetIpvsSchedulerTypeFromString(sch string) IpvsSchedulerType {
 	}
 }
 
+func getIpvsConnectionTypeFromForwardMode(forwardMode string) IpvsConnectionType {
+	switch strings.ToLower(forwardMode) {
+	case LB_FORWARD_MODE_FULL_NAT:
+		return IpvsConnectionTypeNAT
+	default:
+		// TODO(SUG-2795): add explicit nat/dr mappings when those forward
+		// modes are supported. Keep NAT as the current fallback for existing
+		// UDP IPVS listeners, which do not carry forwardMode.
+		return IpvsConnectionTypeNAT
+	}
+}
+
 func makeIpvsFirewallRuleDescription(lb LbInfo) string {
 	return fmt.Sprintf("%s-%v-%v", utils.IpvsComment, lb.LbUuid, lb.ListenerUuid)
 }
@@ -141,6 +153,40 @@ type IpvsFrontendService struct {
 	BackendServers map[string]*IpvsBackendServer
 	LbInfo
 	LbParams
+}
+
+func parseIpvsAclConfig(params []string) (string, []string, bool) {
+	var aclType string
+	var aclEntries []string
+	enableAcl := false
+	for _, param := range params {
+		parts := strings.SplitN(param, "::", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(parts[0])
+		value := strings.TrimSpace(parts[1])
+
+		switch key {
+		case "accessControlStatus":
+			enableAcl = value == "enable"
+		case "aclType":
+			aclType = value
+		case "aclEntry":
+			for _, entry := range strings.Split(value, ",") {
+				entry = strings.TrimSpace(entry)
+				if entry != "" {
+					aclEntries = append(aclEntries, entry)
+				}
+			}
+		}
+	}
+
+	if !enableAcl || aclType == "" || len(aclEntries) == 0 {
+		return "", nil, false
+	}
+
+	return aclType, aclEntries, true
 }
 
 type IpvsConf struct {
@@ -319,6 +365,8 @@ func (ipvs *IpvsConf) ParseIpvs(content string) error {
 			info.LoadBalancerPort, _ = strconv.Atoi(port)
 			if protocol == "-u" {
 				info.Mode = "udp"
+			} else if protocol == "-t" {
+				info.Mode = "tcp"
 			}
 
 			param := LbParams{}
@@ -342,6 +390,22 @@ func (ipvs *IpvsConf) ParseIpvs(content string) error {
 			service.ConnectionType = items[5]
 			weight := items[7]
 			backend := NewIpvsBackendServer(backendIp, backendPort, weight, service)
+			for i := 8; i+1 < len(items); i++ {
+				switch items[i] {
+				case "-x":
+					value, err := strconv.Atoi(items[i+1])
+					if err != nil {
+						return fmt.Errorf("invalid ipvs max connection %q", items[i+1])
+					}
+					backend.maxConnection = value
+				case "-y":
+					value, err := strconv.Atoi(items[i+1])
+					if err != nil {
+						return fmt.Errorf("invalid ipvs min connection %q", items[i+1])
+					}
+					backend.minConnection = value
+				}
+			}
 			service.BackendServers[backend.GetBackendKey()] = backend
 		}
 	}
@@ -380,7 +444,7 @@ func NewIpvsBackendServer(serverIp, serverPort, weight string, frontService *Ipv
 }
 
 func NewIpvsFrontService(info LbInfo, param LbParams, frontIp string, servers map[string]*IpvsBackendServer) *IpvsFrontendService {
-	connectionType := IpvsConnectionTypeNAT.String()
+	connectionType := getIpvsConnectionTypeFromForwardMode(info.ForwardMode).String()
 	protocolType := "-u"
 	if info.Mode == LB_MODE_HTTPS || info.Mode == LB_MODE_HTTP || info.Mode == LB_MODE_TCP {
 		protocolType = "-t"
@@ -409,6 +473,238 @@ func NewIpvsConfFromSave() (*IpvsConf, error) {
 
 func (fs *IpvsFrontendService) getFrontendServiceKey() string {
 	return fs.ProtocolType + "-" + fs.FrontIp + "-" + fs.FrontPort
+}
+
+func validateIpvsAddress(address string) error {
+	ip := net.ParseIP(address)
+	if ip == nil {
+		return fmt.Errorf("invalid ipvs address %q", address)
+	}
+
+	return nil
+}
+
+func formatIpvsAddress(address string) string {
+	ip := net.ParseIP(address)
+	if ip.To4() == nil {
+		return fmt.Sprintf("[%s]", address)
+	}
+
+	return address
+}
+
+func validateIpvsPort(port string) error {
+	value, err := strconv.Atoi(port)
+	if err != nil || value <= 0 || value > 65535 {
+		return fmt.Errorf("invalid ipvs port %q", port)
+	}
+
+	return nil
+}
+
+func validateIpvsScheduler(scheduler string) error {
+	switch scheduler {
+	case IpvsSchedulerRR.String(), IpvsSchedulerWRR.String(), IpvsSchedulerLC.String(), IpvsSchedulerSH.String():
+		return nil
+	default:
+		return fmt.Errorf("invalid ipvs scheduler %q", scheduler)
+	}
+}
+
+func validateIpvsConnectionType(connectionType string) error {
+	switch connectionType {
+	case IpvsConnectionTypeDR.String(), IpvsConnectionTypeNAT.String(), IpvsConnectionTypeTUNNEL.String():
+		return nil
+	default:
+		return fmt.Errorf("invalid ipvs connection type %q", connectionType)
+	}
+}
+
+func validateIpvsWeight(weight string) error {
+	value, err := strconv.Atoi(weight)
+	if err != nil || value < 0 {
+		return fmt.Errorf("invalid ipvs weight %q", weight)
+	}
+
+	return nil
+}
+
+func ipvsProtocolArg(protocol string) string {
+	if strings.EqualFold(protocol, "tcp") || strings.EqualFold(protocol, "-t") {
+		return "-t"
+	}
+
+	return "-u"
+}
+
+func validateIpvsFrontendService(fs *IpvsFrontendService) error {
+	if err := validateIpvsAddress(fs.FrontIp); err != nil {
+		return err
+	}
+	if err := validateIpvsPort(fs.FrontPort); err != nil {
+		return err
+	}
+	if err := validateIpvsScheduler(fs.Scheduler); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func validateIpvsBackendServer(bs *IpvsBackendServer) error {
+	if err := validateIpvsFrontendService(bs.IpvsFrontendService); err != nil {
+		return err
+	}
+	if err := validateIpvsAddress(bs.BackendIp); err != nil {
+		return err
+	}
+	if err := validateIpvsPort(bs.BackendPort); err != nil {
+		return err
+	}
+	if err := validateIpvsConnectionType(bs.ConnectionType); err != nil {
+		return err
+	}
+	if err := validateIpvsWeight(bs.Weight); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (fs *IpvsFrontendService) frontServiceAddress() string {
+	return fmt.Sprintf("%s:%s", formatIpvsAddress(fs.FrontIp), fs.FrontPort)
+}
+
+func (bs *IpvsBackendServer) backendAddress() string {
+	return fmt.Sprintf("%s:%s", formatIpvsAddress(bs.BackendIp), bs.BackendPort)
+}
+
+func makeIpvsAddServiceCommand(fs *IpvsFrontendService) string {
+	proto := ipvsProtocolArg(fs.ProtocolType)
+	return fmt.Sprintf("ipvsadm -A %s %s -s %s", proto, fs.frontServiceAddress(), fs.Scheduler)
+}
+
+func makeIpvsEditServiceCommand(fs *IpvsFrontendService) string {
+	proto := ipvsProtocolArg(fs.ProtocolType)
+	return fmt.Sprintf("ipvsadm -E %s %s -s %s", proto, fs.frontServiceAddress(), fs.Scheduler)
+}
+
+func makeIpvsDeleteServiceCommand(fs *IpvsFrontendService) string {
+	proto := ipvsProtocolArg(fs.ProtocolType)
+	return fmt.Sprintf("ipvsadm -D %s %s", proto, fs.frontServiceAddress())
+}
+
+func makeIpvsAddBackendCommand(bs *IpvsBackendServer) string {
+	proto := ipvsProtocolArg(bs.ProtocolType)
+	return fmt.Sprintf("ipvsadm -a %s %s -r %s %s -w %s -x %d -y %d",
+		proto, bs.frontServiceAddress(), bs.backendAddress(), bs.ConnectionType, bs.Weight,
+		bs.maxConnection, bs.minConnection)
+}
+
+func makeIpvsEditBackendCommand(bs *IpvsBackendServer) string {
+	proto := ipvsProtocolArg(bs.ProtocolType)
+	return fmt.Sprintf("ipvsadm -e %s %s -r %s %s -w %s -x %d -y %d",
+		proto, bs.frontServiceAddress(), bs.backendAddress(), bs.ConnectionType, bs.Weight,
+		bs.maxConnection, bs.minConnection)
+}
+
+func makeIpvsDeleteBackendCommand(bs *IpvsBackendServer) string {
+	proto := ipvsProtocolArg(bs.ProtocolType)
+	return fmt.Sprintf("ipvsadm -d %s %s -r %s",
+		proto, bs.frontServiceAddress(), bs.backendAddress())
+}
+
+func sameIpvsBackend(current, desired *IpvsBackendServer) bool {
+	return current.ConnectionType == desired.ConnectionType &&
+		current.Weight == desired.Weight &&
+		current.maxConnection == desired.maxConnection &&
+		current.minConnection == desired.minConnection
+}
+
+func appendIpvsCommand(commands *[]string, cmd string) {
+	*commands = append(*commands, cmd)
+}
+
+func syncIpvsadm(oldConf, desiredConf *IpvsConf) error {
+	if desiredConf == nil {
+		desiredConf = &IpvsConf{Services: map[string]*IpvsFrontendService{}}
+	}
+	if oldConf == nil {
+		oldConf = &IpvsConf{Services: map[string]*IpvsFrontendService{}}
+	}
+
+	currentConf, err := NewIpvsConfFromSave()
+	if err != nil {
+		return err
+	}
+
+	var commands []string
+	for key, fs := range desiredConf.Services {
+		if err := validateIpvsFrontendService(fs); err != nil {
+			return err
+		}
+		current := currentConf.Services[key]
+		if current == nil {
+			appendIpvsCommand(&commands, makeIpvsAddServiceCommand(fs))
+		} else if current.Scheduler != fs.Scheduler {
+			appendIpvsCommand(&commands, makeIpvsEditServiceCommand(fs))
+		}
+
+		for backendKey, bs := range fs.BackendServers {
+			if err := validateIpvsBackendServer(bs); err != nil {
+				return err
+			}
+			currentBackend := (*IpvsBackendServer)(nil)
+			if current != nil {
+				currentBackend = current.BackendServers[backendKey]
+			}
+
+			if currentBackend == nil {
+				appendIpvsCommand(&commands, makeIpvsAddBackendCommand(bs))
+			} else if !sameIpvsBackend(currentBackend, bs) {
+				appendIpvsCommand(&commands, makeIpvsEditBackendCommand(bs))
+			}
+		}
+
+		if old := oldConf.Services[key]; old != nil && current != nil {
+			for backendKey, oldBackend := range old.BackendServers {
+				if _, ok := fs.BackendServers[backendKey]; !ok {
+					if current.BackendServers[backendKey] != nil {
+						if err := validateIpvsBackendServer(oldBackend); err != nil {
+							return err
+						}
+						appendIpvsCommand(&commands, makeIpvsDeleteBackendCommand(oldBackend))
+					}
+				}
+			}
+		}
+	}
+
+	for key, current := range currentConf.Services {
+		if _, ok := desiredConf.Services[key]; ok {
+			continue
+		}
+		if err := validateIpvsFrontendService(current); err != nil {
+			return err
+		}
+		appendIpvsCommand(&commands, makeIpvsDeleteServiceCommand(current))
+	}
+
+	if len(commands) == 0 {
+		return nil
+	}
+
+	b := utils.Bash{
+		Command: "set -e; " + strings.Join(commands, "; "),
+		Sudo:    true,
+	}
+	ret, stdout, stderr, err := b.RunWithReturn()
+	if ret != 0 || err != nil {
+		return fmt.Errorf("failed to sync ipvsadm, ret: %d, stdout: %s, stderr: %s, error: %v",
+			ret, stdout, stderr, err)
+	}
+
+	return nil
 }
 
 func (fs *IpvsFrontendService) EnableIpvsLog() (err error) {
@@ -692,36 +988,13 @@ func RefreshIpvsBackend() error {
 	services := map[string]*IpvsFrontendService{}
 	for _, lb := range gIpvsLbInfoMap {
 		for _, listener := range lb {
-			if strings.ToLower(listener.Mode) != "udp" {
-				/* current only udp lb use ipvs */
+			if !isIpvsDataPlane(listener) {
 				continue
 			}
 
 			lbParam := ParseLbParams(listener)
 
-			// parse ACL config
-			var aclType string
-			var aclEntries []string
-			enableAcl := false
-			for _, param := range listener.Parameters {
-				parts := strings.Split(param, "::")
-				if len(parts) != 2 {
-					continue
-				}
-
-				switch parts[0] {
-				case "accessControlStatus":
-					// Acl are processed only when accessControlStatus is enabled
-					if parts[1] == "enable" {
-						enableAcl = true
-					}
-				case "aclType":
-					aclType = parts[1]
-				case "aclEntry":
-					// If multiple IP addresses are separated by commas (,), split them
-					aclEntries = strings.Split(parts[1], ",")
-				}
-			}
+			aclType, aclEntries, enableAcl := parseIpvsAclConfig(listener.Parameters)
 
 			var fs4, fs6 *IpvsFrontendService
 			if listener.Vip != "" {
@@ -764,7 +1037,13 @@ func RefreshIpvsBackend() error {
 		}
 	}
 
-	gIpvsConf = &IpvsConf{Services: services}
+	desiredConf := &IpvsConf{Services: services}
+	err := syncIpvsadm(gIpvsConf, desiredConf)
+	if err != nil {
+		return err
+	}
+
+	gIpvsConf = desiredConf
 	gIpvsConf.ReloadIpvsHealthCheckConfig()
 
 	if utils.IsSkipVyosIptables() {
