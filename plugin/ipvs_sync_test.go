@@ -1,6 +1,10 @@
 package plugin
 
-import "testing"
+import (
+	"fmt"
+	"strings"
+	"testing"
+)
 
 func TestIpvsCommandBuildersUseTcpFullNatBackendPort(t *testing.T) {
 	lb := LbInfo{
@@ -90,14 +94,22 @@ func TestSameIpvsBackendComparesConnectionLimits(t *testing.T) {
 	current := &IpvsBackendServer{
 		ConnectionType: "-m",
 		Weight:         "100",
-		maxConnection:  10,
-		minConnection:  1,
+		IpvsFrontendService: &IpvsFrontendService{
+			LbParams: LbParams{
+				maxConnection: 10,
+				minConnection: 1,
+			},
+		},
 	}
 	desired := &IpvsBackendServer{
 		ConnectionType: "-m",
 		Weight:         "100",
-		maxConnection:  20,
-		minConnection:  1,
+		IpvsFrontendService: &IpvsFrontendService{
+			LbParams: LbParams{
+				maxConnection: 20,
+				minConnection: 1,
+			},
+		},
 	}
 
 	if sameIpvsBackend(current, desired) {
@@ -149,5 +161,113 @@ func TestParseIpvsAclConfigKeepsIPv6Entries(t *testing.T) {
 	}
 	if len(entries) != 2 || entries[0] != "2001:db8::1/128" || entries[1] != "192.168.10.0/24" {
 		t.Fatalf("unexpected acl entries: %#v", entries)
+	}
+}
+
+func TestTcpIpvsCountersUseTcpKeyAndKeepDesiredMissingActualDown(t *testing.T) {
+	oldConf := gIpvsConf
+	defer func() {
+		gIpvsConf = oldConf
+	}()
+
+	lb := LbInfo{
+		LbUuid:           "lb",
+		ListenerUuid:     "listener",
+		Vip:              "172.24.7.153",
+		LoadBalancerPort: 19086,
+		InstancePort:     8080,
+		Mode:             LB_MODE_TCP,
+		DataPlane:        LB_DATA_PLANE_IPVS,
+		ForwardMode:      LB_FORWARD_MODE_FULL_NAT,
+		ServerGroups: []ServerGroupInfo{
+			{
+				ServerGroupUuid: "sg",
+				BackendServers: []BackendServerInfo{
+					{Ip: "192.168.10.20", Weight: 100},
+					{Ip: "192.168.10.21", Weight: 100},
+				},
+			},
+		},
+	}
+	param := ParseLbParams(lb)
+	fs := NewIpvsFrontService(lb, param, lb.Vip, map[string]*IpvsBackendServer{})
+	upBackend := NewIpvsBackendServer("192.168.10.20", "8080", "100", fs)
+	downBackend := NewIpvsBackendServer("192.168.10.21", "8080", "100", fs)
+	fs.BackendServers[upBackend.GetBackendKey()] = upBackend
+	fs.BackendServers[downBackend.GetBackendKey()] = downBackend
+	gIpvsConf = &IpvsConf{Services: map[string]*IpvsFrontendService{
+		fs.getFrontendServiceKey(): fs,
+	}}
+
+	resetIpvsCounters()
+	updateIpvsCountersFromStats(`
+IP Virtual Server version 1.2.1 (size=4096)
+Prot LocalAddress:Port               Conns   InPkts  OutPkts  InBytes OutBytes
+  -> RemoteAddress:Port
+TCP  172.24.7.153:19086                  0        0        0        0        0
+  -> 192.168.10.20:8080                  0        0        0      123      456
+`)
+	updateIpvsCountersFromThresholds(`
+IP Virtual Server version 1.2.1 (size=4096)
+Prot LocalAddress:Port            Uthreshold Lthreshold ActiveConn InActConn
+  -> RemoteAddress:Port
+TCP  172.24.7.153:19086 rr
+  -> 192.168.10.20:8080             0          0          7          2
+`)
+
+	if upBackend.Counter.Status != 1 {
+		t.Fatalf("expected actual TCP backend to be up, got %d", upBackend.Counter.Status)
+	}
+	if upBackend.Counter.bytesIn != 123 || upBackend.Counter.bytesOut != 456 {
+		t.Fatalf("unexpected traffic counters: in=%d out=%d", upBackend.Counter.bytesIn, upBackend.Counter.bytesOut)
+	}
+	if upBackend.Counter.sessionNumber != 7 || upBackend.Counter.refusedSessionNumber != 2 || upBackend.Counter.totalSessionNumber != 9 {
+		t.Fatalf("unexpected session counters: active=%d refused=%d total=%d",
+			upBackend.Counter.sessionNumber, upBackend.Counter.refusedSessionNumber, upBackend.Counter.totalSessionNumber)
+	}
+	if downBackend.Counter.Status != 0 {
+		t.Fatalf("expected desired backend missing from actual IPVS to stay down, got %d", downBackend.Counter.Status)
+	}
+
+	resetIpvsCounters()
+	updateIpvsCountersFromStats(`
+IP Virtual Server version 1.2.1 (size=4096)
+Prot LocalAddress:Port               Conns   InPkts  OutPkts  InBytes OutBytes
+  -> RemoteAddress:Port
+TCP  172.24.7.153:19086                  0        0        0        0        0
+`)
+	if upBackend.Counter.Status != 0 {
+		t.Fatalf("expected missing TCP backend to be reset down, got %d", upBackend.Counter.Status)
+	}
+	if upBackend.Counter.bytesIn != 0 || upBackend.Counter.bytesOut != 0 ||
+		upBackend.Counter.sessionNumber != 0 || upBackend.Counter.refusedSessionNumber != 0 ||
+		upBackend.Counter.totalSessionNumber != 0 || upBackend.Counter.concurrentSessionNumber != 0 {
+		t.Fatalf("expected missing TCP backend counters to reset, got %+v", upBackend.Counter)
+	}
+
+	resetIpvsCounters()
+	updateIpvsCountersFromThresholds(`
+IP Virtual Server version 1.2.1 (size=4096)
+Prot LocalAddress:Port            Uthreshold Lthreshold ActiveConn InActConn
+  -> RemoteAddress:Port
+TCP  172.24.7.153:19086 rr
+  -> 192.168.10.20:8080             0          0          3          1
+`)
+	if upBackend.Counter.Status != 1 {
+		t.Fatalf("expected thresholds parser to mark actual TCP backend up, got %d", upBackend.Counter.Status)
+	}
+}
+
+func TestLbSessionMetricsExposeServerGroupUuidLabel(t *testing.T) {
+	collector := NewLbPrometheusCollector().(*loadBalancerCollector)
+	for name, desc := range map[string]string{
+		"cur":        fmt.Sprint(collector.curSessionNumEntry),
+		"refused":    fmt.Sprint(collector.refusedSessionNumEntry),
+		"total":      fmt.Sprint(collector.totalSessionNumEntry),
+		"concurrent": fmt.Sprint(collector.concurrentSessionUsageEntry),
+	} {
+		if !strings.Contains(desc, LB_ServerGroup_UUID) {
+			t.Fatalf("expected %s session metric to expose %s label: %s", name, LB_ServerGroup_UUID, desc)
+		}
 	}
 }

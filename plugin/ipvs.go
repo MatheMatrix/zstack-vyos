@@ -1183,10 +1183,10 @@ func UpdateIpvsMetrics(c *loadBalancerCollector, ch chan<- prom.Metric) (err err
 			ch <- prom.MustNewConstMetric(c.statusEntry, prom.GaugeValue, float64(cnt.Status), cnt.listenerUuid, cnt.ip, cnt.lbUuid, cnt.serverGroupUuid)
 			ch <- prom.MustNewConstMetric(c.inByteEntry, prom.GaugeValue, float64(cnt.bytesIn), cnt.listenerUuid, cnt.ip, cnt.lbUuid, cnt.serverGroupUuid)
 			ch <- prom.MustNewConstMetric(c.outByteEntry, prom.GaugeValue, float64(cnt.bytesOut), cnt.listenerUuid, cnt.ip, cnt.lbUuid, cnt.serverGroupUuid)
-			ch <- prom.MustNewConstMetric(c.curSessionNumEntry, prom.GaugeValue, float64(cnt.sessionNumber), cnt.listenerUuid, cnt.ip, cnt.lbUuid)
-			ch <- prom.MustNewConstMetric(c.refusedSessionNumEntry, prom.GaugeValue, float64(cnt.refusedSessionNumber), cnt.listenerUuid, cnt.ip, cnt.lbUuid)
-			ch <- prom.MustNewConstMetric(c.totalSessionNumEntry, prom.GaugeValue, float64(cnt.totalSessionNumber), cnt.listenerUuid, cnt.ip, cnt.lbUuid)
-			ch <- prom.MustNewConstMetric(c.concurrentSessionUsageEntry, prom.GaugeValue, float64(cnt.concurrentSessionNumber), cnt.listenerUuid, cnt.ip, cnt.lbUuid)
+			ch <- prom.MustNewConstMetric(c.curSessionNumEntry, prom.GaugeValue, float64(cnt.sessionNumber), cnt.listenerUuid, cnt.ip, cnt.lbUuid, cnt.serverGroupUuid)
+			ch <- prom.MustNewConstMetric(c.refusedSessionNumEntry, prom.GaugeValue, float64(cnt.refusedSessionNumber), cnt.listenerUuid, cnt.ip, cnt.lbUuid, cnt.serverGroupUuid)
+			ch <- prom.MustNewConstMetric(c.totalSessionNumEntry, prom.GaugeValue, float64(cnt.totalSessionNumber), cnt.listenerUuid, cnt.ip, cnt.lbUuid, cnt.serverGroupUuid)
+			ch <- prom.MustNewConstMetric(c.concurrentSessionUsageEntry, prom.GaugeValue, float64(cnt.concurrentSessionNumber), cnt.listenerUuid, cnt.ip, cnt.lbUuid, cnt.serverGroupUuid)
 		}
 		if maxConnection > 0 {
 			ch <- prom.MustNewConstMetric(c.curSessionUsageEntry, prom.GaugeValue, float64(fs.SessionNumber*100/(uint64)(maxConnection)), fs.ListenerUuid, fs.LbUuid)
@@ -1197,13 +1197,7 @@ func UpdateIpvsMetrics(c *loadBalancerCollector, ch chan<- prom.Metric) (err err
 }
 
 func UpdateIpvsCounters() {
-	for _, fs := range gIpvsConf.Services {
-		for _, bs := range fs.BackendServers {
-			/* if it can not be updated by ipvsadm -L -n --stats, it's down*/
-			bs.Counter.ip = bs.BackendIp
-			bs.Counter.Status = 0
-		}
-	}
+	resetIpvsCounters()
 
 	b := utils.Bash{
 		/*
@@ -1224,55 +1218,8 @@ func UpdateIpvsCounters() {
 	}
 
 	ret, o, _, err := b.RunWithReturn()
-	if ret != 0 || err != nil {
-		return
-	}
-
-	frontIp := ""
-	frontPort := ""
-	proto := "-u"
-	backendIp := ""
-	backendPort := ""
-	lines := strings.Split(o, "\n")
-	lines = lines[3:] //ignore the first 3 lines
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" || len(line) == 0 {
-			continue
-		}
-		items := strings.Fields(line)
-		if items[0] == "TCP" || items[0] == "UDP" {
-			proto = "-u"
-			if items[0] == "TCP" {
-				proto = "-t"
-			}
-			ipports := strings.Split(items[1], ":")
-			frontIp = strings.Join(ipports[0:len(ipports)-1], ":")
-			frontIp = strings.Trim(frontIp, "[")
-			frontIp = strings.Trim(frontIp, "]")
-			frontPort = ipports[len(ipports)-1]
-		} else if items[0] == "->" {
-			ipports := strings.Split(items[1], ":")
-			backendIp = strings.Join(ipports[0:len(ipports)-1], ":")
-			backendIp = strings.Trim(backendIp, "[")
-			backendIp = strings.Trim(backendIp, "]")
-			backendPort = ipports[len(ipports)-1]
-
-			bs := getIpvsBackend(proto, frontIp, frontPort, backendIp, backendPort)
-			if bs == nil {
-				log.Debugf("GetIpvsCounters backend server for key:%s:%s:%s:%s:%s not found",
-					proto, frontIp, frontPort, backendIp, backendPort)
-				break
-			}
-
-			bs.Counter.ip = backendIp
-			bs.Counter.Status = 1
-			bs.Counter.bytesIn, _ = strconv.ParseUint(strings.Trim(items[5], " "), 10, 64)
-			bs.Counter.bytesOut, _ = strconv.ParseUint(strings.Trim(items[6], " "), 10, 64)
-		} else {
-			frontIp = ""
-			frontPort = ""
-		}
+	if ret == 0 && err == nil {
+		updateIpvsCountersFromStats(o)
 	}
 
 	b = utils.Bash{
@@ -1292,11 +1239,35 @@ func UpdateIpvsCounters() {
 	}
 
 	ret, o, _, err = b.RunWithReturn()
-	if ret != 0 || err != nil {
-		return
+	if ret == 0 && err == nil {
+		updateIpvsCountersFromThresholds(o)
 	}
-	lines = strings.Split(o, "\n")
-	lines = lines[3:] //ignore the first 3 lines
+}
+
+func resetIpvsCounters() {
+	for _, fs := range gIpvsConf.Services {
+		for _, bs := range fs.BackendServers {
+			/* if it can not be updated by ipvsadm -L -n --stats, it's down*/
+			bs.Counter.ip = bs.BackendIp
+			bs.Counter.Status = 0
+			bs.Counter.bytesIn = 0
+			bs.Counter.bytesOut = 0
+			bs.Counter.sessionNumber = 0
+			bs.Counter.refusedSessionNumber = 0
+			bs.Counter.totalSessionNumber = 0
+			bs.Counter.concurrentSessionNumber = 0
+		}
+	}
+
+}
+
+func updateIpvsCountersFromStats(output string) {
+	frontIp := ""
+	frontPort := ""
+	proto := "-u"
+	backendIp := ""
+	backendPort := ""
+	lines := strings.Split(output, "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" || len(line) == 0 {
@@ -1304,17 +1275,29 @@ func UpdateIpvsCounters() {
 		}
 		items := strings.Fields(line)
 		if items[0] == "TCP" || items[0] == "UDP" {
+			if len(items) < 2 {
+				continue
+			}
 			proto = "-u"
 			if items[0] == "TCP" {
 				proto = "-t"
 			}
 			ipports := strings.Split(items[1], ":")
+			if len(ipports) < 2 {
+				continue
+			}
 			frontIp = strings.Join(ipports[0:len(ipports)-1], ":")
 			frontIp = strings.Trim(frontIp, "[")
 			frontIp = strings.Trim(frontIp, "]")
 			frontPort = ipports[len(ipports)-1]
 		} else if items[0] == "->" {
+			if len(items) < 7 {
+				continue
+			}
 			ipports := strings.Split(items[1], ":")
+			if len(ipports) < 2 {
+				continue
+			}
 			backendIp = strings.Join(ipports[0:len(ipports)-1], ":")
 			backendIp = strings.Trim(backendIp, "[")
 			backendIp = strings.Trim(backendIp, "]")
@@ -1324,9 +1307,71 @@ func UpdateIpvsCounters() {
 			if bs == nil {
 				log.Debugf("GetIpvsCounters backend server for key:%s:%s:%s:%s:%s not found",
 					proto, frontIp, frontPort, backendIp, backendPort)
-				break
+				continue
 			}
 
+			bs.Counter.ip = backendIp
+			bs.Counter.Status = 1
+			bs.Counter.bytesIn, _ = strconv.ParseUint(strings.Trim(items[5], " "), 10, 64)
+			bs.Counter.bytesOut, _ = strconv.ParseUint(strings.Trim(items[6], " "), 10, 64)
+		} else {
+			frontIp = ""
+			frontPort = ""
+		}
+	}
+}
+
+func updateIpvsCountersFromThresholds(output string) {
+	frontIp := ""
+	frontPort := ""
+	proto := "-u"
+	backendIp := ""
+	backendPort := ""
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || len(line) == 0 {
+			continue
+		}
+		items := strings.Fields(line)
+		if items[0] == "TCP" || items[0] == "UDP" {
+			if len(items) < 2 {
+				continue
+			}
+			proto = "-u"
+			if items[0] == "TCP" {
+				proto = "-t"
+			}
+			ipports := strings.Split(items[1], ":")
+			if len(ipports) < 2 {
+				continue
+			}
+			frontIp = strings.Join(ipports[0:len(ipports)-1], ":")
+			frontIp = strings.Trim(frontIp, "[")
+			frontIp = strings.Trim(frontIp, "]")
+			frontPort = ipports[len(ipports)-1]
+		} else if items[0] == "->" {
+			if len(items) < 6 {
+				continue
+			}
+			ipports := strings.Split(items[1], ":")
+			if len(ipports) < 2 {
+				continue
+			}
+			backendIp = strings.Join(ipports[0:len(ipports)-1], ":")
+			backendIp = strings.Trim(backendIp, "[")
+			backendIp = strings.Trim(backendIp, "]")
+			backendPort = ipports[len(ipports)-1]
+
+			bs := getIpvsBackend(proto, frontIp, frontPort, backendIp, backendPort)
+			if bs == nil {
+				log.Debugf("GetIpvsCounters backend server for key:%s:%s:%s:%s:%s not found",
+					proto, frontIp, frontPort, backendIp, backendPort)
+				continue
+			}
+
+			bs.Counter.ip = backendIp
+			bs.Counter.Status = 1
 			bs.Counter.sessionNumber, _ = strconv.ParseUint(strings.Trim(items[4], " "), 10, 64)
 			bs.Counter.concurrentSessionNumber = bs.Counter.sessionNumber
 			bs.Counter.refusedSessionNumber, _ = strconv.ParseUint(strings.Trim(items[5], " "), 10, 64)
