@@ -1242,6 +1242,10 @@ func UpdateIpvsCounters() {
 		}
 		items := strings.Fields(line)
 		if items[0] == "TCP" || items[0] == "UDP" {
+			proto = "-u"
+			if items[0] == "TCP" {
+				proto = "-t"
+			}
 			ipports := strings.Split(items[1], ":")
 			frontIp = strings.Join(ipports[0:len(ipports)-1], ":")
 			frontIp = strings.Trim(frontIp, "[")
@@ -1300,6 +1304,10 @@ func UpdateIpvsCounters() {
 		}
 		items := strings.Fields(line)
 		if items[0] == "TCP" || items[0] == "UDP" {
+			proto = "-u"
+			if items[0] == "TCP" {
+				proto = "-t"
+			}
 			ipports := strings.Split(items[1], ":")
 			frontIp = strings.Join(ipports[0:len(ipports)-1], ":")
 			frontIp = strings.Trim(frontIp, "[")
