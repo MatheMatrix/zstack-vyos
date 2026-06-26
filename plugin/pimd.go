@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html/template"
 	"io/ioutil"
+	"os"
 	"path/filepath"
 	"strings"
 	"zstack-vyos/server"
@@ -18,6 +19,9 @@ const (
 	ENABLE_PIMD_PATH  = "/pimd/enable"
 	DISABLE_PIMD_PATH = "/pimd/disable"
 	GET_MROUTE_PATH   = "/pimd/route"
+
+	bondSlaveNameMarker = "-phy"
+	sysClassNetPath     = "/sys/class/net"
 )
 
 func getPimdConfDir() string {
@@ -75,6 +79,29 @@ func makePimdFirewallRuleDescription(name, nicname string) string {
 	return fmt.Sprintf("%s-for-%s", name, nicname)
 }
 
+func isPimdConfigurableNic(nic string) bool {
+	if strings.Contains(nic, bondSlaveNameMarker) {
+		return false
+	}
+
+	if _, err := os.Stat(filepath.Join(sysClassNetPath, nic, "master")); err == nil {
+		return false
+	}
+
+	return true
+}
+
+func getPimdConfigurableNics(nics map[string]utils.Nic) map[string]utils.Nic {
+	filtered := make(map[string]utils.Nic)
+	for name, nic := range nics {
+		if !isPimdConfigurableNic(nic.Name) {
+			continue
+		}
+		filtered[name] = nic
+	}
+	return filtered
+}
+
 func stopPimd() {
 	pid, err := utils.FindFirstPIDByPSExtern(true, getPimdBinPath())
 	if err == nil && pid != 0 {
@@ -122,6 +149,10 @@ rp-address {{.RpAddress}} {{.GroupAddress}}
 
 func (pimd *pimdAddNic) AddNic(nic string) error {
 	if pimdEnable == false {
+		return nil
+	}
+
+	if !isPimdConfigurableNic(nic) {
 		return nil
 	}
 
@@ -188,6 +219,10 @@ func (pimd *pimdAddNic) AddNic(nic string) error {
 func getPimdFirewallByNic(nics map[string]utils.Nic) []*utils.IpTableRule {
 	var rules []*utils.IpTableRule
 	for _, nic := range nics {
+		if !isPimdConfigurableNic(nic.Name) {
+			continue
+		}
+
 		/* pimd rule */
 		rule := utils.NewIpTableRule(utils.GetRuleSetName(nic.Name, utils.RULESET_LOCAL))
 		rule.SetAction(utils.IPTABLES_ACTION_RETURN).SetComment(utils.SystemTopRule)
@@ -250,6 +285,7 @@ func enablePimdHandler(ctx *server.CommandContext) interface{} {
 
 	/* enable firewall */
 	nics, _ := utils.GetAllNics()
+	nics = getPimdConfigurableNics(nics)
 	if utils.IsSkipVyosIptables() {
 		err := addPimdFirewallByIptables(nics)
 		utils.PanicOnError(err)
@@ -291,7 +327,7 @@ func enablePimdHandler(ctx *server.CommandContext) interface{} {
 		}
 		tree.Apply(false)
 	}
-  if !utils.IsEnableVyosCmd() {
+	if !utils.IsEnableVyosCmd() {
 		err := configurePimdByVtysh(cmd)
 		if err != nil {
 			utils.PanicOnError(err)
@@ -323,6 +359,7 @@ func disablePimdHandler(ctx *server.CommandContext) interface{} {
 	ctx.GetCommand(cmd)
 
 	nics, _ := utils.GetAllNics()
+	nics = getPimdConfigurableNics(nics)
 	if utils.IsSkipVyosIptables() {
 		removePimdFirewallByIptables(nics)
 	} else {
@@ -345,7 +382,7 @@ func disablePimdHandler(ctx *server.CommandContext) interface{} {
 		}
 		tree.Apply(false)
 	}
-  if !utils.IsEnableVyosCmd() {
+	if !utils.IsEnableVyosCmd() {
 		err := stopVtyshPimd()
 		if err != nil {
 			utils.PanicOnError(err)

@@ -890,6 +890,7 @@ func configurePimdByVtysh(cmd *enablePimdCmd) error {
 	if err != nil {
 		return err
 	}
+	nics = getPimdConfigurableNics(nics)
 	for _, nic := range nics {
 		newCmd.SetInterface(nic.Name)
 	}
@@ -1017,14 +1018,9 @@ func stopVtyshPimd() error {
 		deleteCmd.SetRp(rp.RpAddress, rp.GroupAddress)
 	}
 
-	// 2. get all nics and delete
-	nics, err := utils.GetAllNics()
-	if err != nil {
-		return fmt.Errorf("failed to get network interfaces: %v", err)
-	}
-
-	for _, nic := range nics {
-		deleteCmd.SetInterface(nic.Name)
+	// 2. remove currently configured PIMD interfaces, including legacy entries.
+	for _, iface := range currentCmd.InterfaceCmd {
+		deleteCmd.SetInterface(iface.Name)
 	}
 
 	// 3. no match return
