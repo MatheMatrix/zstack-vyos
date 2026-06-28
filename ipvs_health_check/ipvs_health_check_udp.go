@@ -18,7 +18,7 @@ func (bs *IpvsHealthCheckBackendServer) doUdpCheck() {
 		addr = fmt.Sprintf("[%s]", addr)
 	}
 	conn, err := net.DialTimeout("udp", fmt.Sprintf("%s:%d", addr, bs.HealthCheckPort),
-		time.Duration(bs.HealthCheckTimeout)*time.Second)
+		healthCheckTimeoutDuration(bs.HealthCheckTimeout))
 	if err != nil {
 		log.Debugf("[udp checher]: dial udp  %s:%d failed: %v", addr, bs.HealthCheckPort, err)
 		bs.result <- false
@@ -36,7 +36,7 @@ func (bs *IpvsHealthCheckBackendServer) doUdpCheck() {
 	}
 
 	buffer := make([]byte, 4)
-	conn.SetReadDeadline(time.Now().Add(time.Duration(bs.HealthCheckTimeout) * time.Second))
+	conn.SetReadDeadline(time.Now().Add(healthCheckTimeoutDuration(bs.HealthCheckTimeout)))
 	_, err = conn.Read(buffer)
 	if err != nil {
 		log.Debugf("[udp checher]: recv udp message from %s:%d failed: %v", bs.BackendIp, bs.HealthCheckPort, err)
@@ -62,7 +62,7 @@ func (bs *IpvsHealthCheckBackendServer) doUdpCheck() {
 			bs.result <- true
 		}
 	} else {
-		log.Debugf("[udp checher]: recv udp message from %s:%s, result:%s", bs.BackendIp, bs.HealthCheckPort, buffer)
+		log.Debugf("[udp checher]: recv udp message from %s:%d, result:%s", bs.BackendIp, bs.HealthCheckPort, buffer)
 		bs.result <- true
 	}
 }

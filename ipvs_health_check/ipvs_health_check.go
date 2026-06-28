@@ -8,9 +8,11 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -25,6 +27,7 @@ type IpvsHealthCheckBackendServer struct {
 	successCnt uint
 	failedCnt  uint
 	cancel     context.CancelFunc
+	cancelled  uint32
 	result     chan bool
 	plugin.IpvsHealthCheckBackendServer
 }
@@ -34,11 +37,74 @@ var confFile string
 var pidFile string
 
 var gHealthCheckMap map[string]*IpvsHealthCheckBackendServer
+var gDisabledHealthCheckMap map[string]*IpvsHealthCheckBackendServer
 var gHealthCheckMapLock sync.Mutex
 var ipvsadmLock sync.Mutex
 
+const (
+	healthCheckProtocolNone = "none"
+	healthCheckProtocolTCP  = "tcp"
+	healthCheckProtocolUDP  = "udp"
+
+	defaultHealthCheckTimeoutSeconds = 2
+)
+
 func isHealthCheckDisabled(protocol string) bool {
-	return strings.EqualFold(protocol, "none")
+	return strings.EqualFold(protocol, healthCheckProtocolNone)
+}
+
+func healthCheckTimeoutDuration(timeout int) time.Duration {
+	if timeout <= 0 {
+		return time.Duration(defaultHealthCheckTimeoutSeconds) * time.Second
+	}
+
+	return time.Duration(timeout) * time.Second
+}
+
+func shellQuoteArg(arg string) string {
+	return "'" + strings.ReplaceAll(arg, "'", `'"'"'`) + "'"
+}
+
+func formatIpvsHealthCheckAddress(address string) (string, error) {
+	ip := net.ParseIP(address)
+	if ip == nil {
+		return "", fmt.Errorf("invalid ipvs health check address %q", address)
+	}
+	if ip.To4() == nil {
+		return fmt.Sprintf("[%s]", address), nil
+	}
+
+	return address, nil
+}
+
+func validateIpvsHealthCheckPort(port string) error {
+	value, err := strconv.Atoi(port)
+	if err != nil || value <= 0 || value > 65535 {
+		return fmt.Errorf("invalid ipvs health check port %q", port)
+	}
+
+	return nil
+}
+
+func ipvsHealthCheckEndpoint(address, port string) (string, error) {
+	formattedAddress, err := formatIpvsHealthCheckAddress(address)
+	if err != nil {
+		return "", err
+	}
+	if err := validateIpvsHealthCheckPort(port); err != nil {
+		return "", err
+	}
+
+	return shellQuoteArg(fmt.Sprintf("%s:%s", formattedAddress, port)), nil
+}
+
+func ipvsHealthCheckWeight(weight string) (string, error) {
+	value, err := strconv.Atoi(weight)
+	if err != nil || value < 0 {
+		return "", fmt.Errorf("invalid ipvs health check weight %q", weight)
+	}
+
+	return shellQuoteArg(weight), nil
 }
 
 func parseCommandOptions() {
@@ -50,9 +116,9 @@ func parseCommandOptions() {
 }
 
 func (bs *IpvsHealthCheckBackendServer) getBackendKey() string {
-	proto := "udp"
-	if strings.ToLower(bs.ProtocolType) == "tcp" || strings.ToLower(bs.ProtocolType) == "-t" {
-		proto = "tcp"
+	proto := healthCheckProtocolUDP
+	if strings.ToLower(bs.ProtocolType) == healthCheckProtocolTCP || strings.ToLower(bs.ProtocolType) == "-t" {
+		proto = healthCheckProtocolTCP
 	}
 
 	return proto + "-" + bs.FrontIp + "-" + bs.FrontPort + "-" + bs.BackendIp + "-" + bs.BackendPort
@@ -69,6 +135,10 @@ func (bs *IpvsHealthCheckBackendServer) equal(other *IpvsHealthCheckBackendServe
 		bs.BackendPort == other.BackendPort &&
 		bs.HealthCheckProtocol == other.HealthCheckProtocol &&
 		bs.HealthCheckPort == other.HealthCheckPort &&
+		bs.HealthCheckInterval == other.HealthCheckInterval &&
+		bs.HealthCheckTimeout == other.HealthCheckTimeout &&
+		bs.HealthyThreshold == other.HealthyThreshold &&
+		bs.UnhealthyThreshold == other.UnhealthyThreshold &&
 		bs.MaxConnection == other.MaxConnection &&
 		bs.MinConnection == other.MinConnection
 }
@@ -76,14 +146,14 @@ func (bs *IpvsHealthCheckBackendServer) equal(other *IpvsHealthCheckBackendServe
 func (bs *IpvsHealthCheckBackendServer) doHealthCheck() {
 	protocol := strings.TrimSpace(strings.ToLower(bs.HealthCheckProtocol))
 	switch protocol {
-	case "none":
+	case healthCheckProtocolNone:
 		bs.result <- true
-	case "tcp":
+	case healthCheckProtocolTCP:
 		bs.doTcpCheck()
-	case "udp":
+	case healthCheckProtocolUDP:
 		bs.doUdpCheck()
 	default:
-		log.Debugf("unknow health check protocol %q", bs.HealthCheckProtocol)
+		log.Debugf("unknown health check protocol %q", bs.HealthCheckProtocol)
 		bs.result <- false
 	}
 }
@@ -97,22 +167,31 @@ func (bs *IpvsHealthCheckBackendServer) Install() {
 	if strings.ToLower(bs.ProtocolType) == "tcp" || strings.ToLower(bs.ProtocolType) == "-t" {
 		proto = "-t"
 	}
-	frontIp := bs.FrontIp
-	ip := net.ParseIP(frontIp)
-	if ip != nil && ip.To4() == nil {
-		frontIp = fmt.Sprintf("[%s]", frontIp)
+	frontService, err := ipvsHealthCheckEndpoint(bs.FrontIp, bs.FrontPort)
+	if err != nil {
+		log.Errorf("skip installing invalid ipvs health check service: %v", err)
+		return
 	}
-	backedIp := bs.BackendIp
-	ip = net.ParseIP(backedIp)
-	if ip != nil && ip.To4() == nil {
-		backedIp = fmt.Sprintf("[%s]", backedIp)
+	backendService, err := ipvsHealthCheckEndpoint(bs.BackendIp, bs.BackendPort)
+	if err != nil {
+		log.Errorf("skip installing invalid ipvs health check backend: %v", err)
+		return
+	}
+	scheduler := shellQuoteArg(bs.Scheduler)
+	connectionType := shellQuoteArg(bs.ConnectionType)
+	weight, err := ipvsHealthCheckWeight(bs.Weight)
+	if err != nil {
+		log.Errorf("skip installing invalid ipvs health check weight: %v", err)
+		return
 	}
 
-	cmd := fmt.Sprintf("(ipvsadm -L %s %s:%s || ipvsadm -A %s %s:%s -s %s); "+
-		"ipvsadm -a %s %s:%s -r  %s:%s %s -w %s -x %d -y %d",
-		proto, frontIp, bs.FrontPort,
-		proto, frontIp, bs.FrontPort, bs.Scheduler,
-		proto, frontIp, bs.FrontPort, backedIp, bs.BackendPort, bs.ConnectionType, bs.Weight, bs.MaxConnection, bs.MinConnection)
+	cmd := fmt.Sprintf("(ipvsadm -L %s %s || ipvsadm -A %s %s -s %s); "+
+		"(ipvsadm -e %s %s -r %s %s -w %s -x %d -y %d || "+
+		"ipvsadm -a %s %s -r %s %s -w %s -x %d -y %d)",
+		proto, frontService,
+		proto, frontService, scheduler,
+		proto, frontService, backendService, connectionType, weight, bs.MaxConnection, bs.MinConnection,
+		proto, frontService, backendService, connectionType, weight, bs.MaxConnection, bs.MinConnection)
 
 	b := utils.Bash{
 		Command: cmd,
@@ -131,51 +210,38 @@ func (bs *IpvsHealthCheckBackendServer) UnInstall() {
 	if strings.ToLower(bs.ProtocolType) == "tcp" || strings.ToLower(bs.ProtocolType) == "-t" {
 		proto = "-t"
 	}
-	frontIp := bs.FrontIp
-	ip := net.ParseIP(frontIp)
-	if ip != nil && ip.To4() == nil {
-		frontIp = fmt.Sprintf("[%s]", frontIp)
+	frontService, err := ipvsHealthCheckEndpoint(bs.FrontIp, bs.FrontPort)
+	if err != nil {
+		log.Errorf("skip uninstalling invalid ipvs health check service: %v", err)
+		return
 	}
-	backedIp := bs.BackendIp
-	ip = net.ParseIP(backedIp)
-	if ip != nil && ip.To4() == nil {
-		backedIp = fmt.Sprintf("[%s]", backedIp)
+	formattedFrontIp, err := formatIpvsHealthCheckAddress(bs.FrontIp)
+	if err != nil {
+		log.Errorf("skip uninstalling invalid ipvs health check service: %v", err)
+		return
+	}
+	frontServicePattern := shellQuoteArg(fmt.Sprintf("^-a[[:space:]]+%s[[:space:]]+%s:[[:space:]]*%s[[:space:]]",
+		proto, regexp.QuoteMeta(formattedFrontIp), regexp.QuoteMeta(bs.FrontPort)))
+	backendService, err := ipvsHealthCheckEndpoint(bs.BackendIp, bs.BackendPort)
+	if err != nil {
+		log.Errorf("skip uninstalling invalid ipvs health check backend: %v", err)
+		return
 	}
 
-	cmd := fmt.Sprintf("ipvsadm -d %s %s:%s -r %s:%s", proto, frontIp, bs.FrontPort, backedIp, bs.BackendPort)
+	cmd := fmt.Sprintf("ipvsadm -d %s %s -r %s", proto, frontService, backendService)
 	b := utils.Bash{
 		Command: cmd,
 		Sudo:    true,
 	}
 	b.Run()
 
-	/* if there is no backend, remove the service */
-	conf, err := plugin.NewIpvsConfFromSave()
-	if err != nil {
-		log.Debugf("[ipvsHealthCheck] ipvsadm-save to config failed %+v", err)
+	cmd = fmt.Sprintf("ipvsadm-save -n | grep -Eq %s || ipvsadm -D %s %s",
+		frontServicePattern, proto, frontService)
+	b = utils.Bash{
+		Command: cmd,
+		Sudo:    true,
 	}
-
-	for _, fs := range conf.Services {
-		if len(fs.BackendServers) == 0 {
-			proto := "-u"
-			if strings.ToLower(fs.ProtocolType) == "tcp" || strings.ToLower(fs.ProtocolType) == "-t" {
-				proto = "-t"
-			}
-			frontIp := fs.FrontIp
-			ip := net.ParseIP(frontIp)
-			if ip != nil && ip.To4() == nil {
-				frontIp = fmt.Sprintf("[%s]", frontIp)
-			}
-
-			cmd := fmt.Sprintf("ipvsadm -D %s %s:%s", proto, frontIp, fs.FrontPort)
-			b := utils.Bash{
-				Command: cmd,
-				Sudo:    true,
-			}
-			b.Run()
-		}
-	}
-
+	b.Run()
 }
 
 func (bs *IpvsHealthCheckBackendServer) EditBackendServer() {
@@ -186,19 +252,25 @@ func (bs *IpvsHealthCheckBackendServer) EditBackendServer() {
 	if strings.ToLower(bs.ProtocolType) == "tcp" || strings.ToLower(bs.ProtocolType) == "-t" {
 		proto = "-t"
 	}
-	frontIp := bs.FrontIp
-	ip := net.ParseIP(frontIp)
-	if ip != nil && ip.To4() == nil {
-		frontIp = fmt.Sprintf("[%s]", frontIp)
+	frontService, err := ipvsHealthCheckEndpoint(bs.FrontIp, bs.FrontPort)
+	if err != nil {
+		log.Errorf("skip editing invalid ipvs health check service: %v", err)
+		return
 	}
-	backedIp := bs.BackendIp
-	ip = net.ParseIP(backedIp)
-	if ip != nil && ip.To4() == nil {
-		backedIp = fmt.Sprintf("[%s]", backedIp)
+	backendService, err := ipvsHealthCheckEndpoint(bs.BackendIp, bs.BackendPort)
+	if err != nil {
+		log.Errorf("skip editing invalid ipvs health check backend: %v", err)
+		return
+	}
+	connectionType := shellQuoteArg(bs.ConnectionType)
+	weight, err := ipvsHealthCheckWeight(bs.Weight)
+	if err != nil {
+		log.Errorf("skip editing invalid ipvs health check weight: %v", err)
+		return
 	}
 
-	cmd := fmt.Sprintf("ipvsadm -e %s %s:%s -r  %s:%s %s -w %s -x %d -y %d",
-		proto, frontIp, bs.FrontPort, backedIp, bs.BackendPort, bs.ConnectionType, bs.Weight, bs.MaxConnection, bs.MinConnection)
+	cmd := fmt.Sprintf("ipvsadm -e %s %s -r  %s %s -w %s -x %d -y %d",
+		proto, frontService, backendService, connectionType, weight, bs.MaxConnection, bs.MinConnection)
 
 	b := utils.Bash{
 		Command: cmd,
@@ -215,13 +287,13 @@ func (bs *IpvsHealthCheckBackendServer) EditFrontService() {
 	if strings.ToLower(bs.ProtocolType) == "tcp" || strings.ToLower(bs.ProtocolType) == "-t" {
 		proto = "-t"
 	}
-	frontIp := bs.FrontIp
-	ip := net.ParseIP(frontIp)
-	if ip != nil && ip.To4() == nil {
-		frontIp = fmt.Sprintf("[%s]", frontIp)
+	frontService, err := ipvsHealthCheckEndpoint(bs.FrontIp, bs.FrontPort)
+	if err != nil {
+		log.Errorf("skip editing invalid ipvs health check service: %v", err)
+		return
 	}
 
-	cmd := fmt.Sprintf("ipvsadm -E %s %s:%s -s %s", proto, frontIp, bs.FrontPort, bs.Scheduler)
+	cmd := fmt.Sprintf("ipvsadm -E %s %s -s %s", proto, frontService, shellQuoteArg(bs.Scheduler))
 	b := utils.Bash{
 		Command: cmd,
 		Sudo:    true,
@@ -233,6 +305,46 @@ func (bs *IpvsHealthCheckBackendServer) setStatus(status bool) {
 	bs.status = status
 	bs.failedCnt = 0
 	bs.successCnt = 0
+}
+
+func (bs *IpvsHealthCheckBackendServer) isCancelled() bool {
+	return atomic.LoadUint32(&bs.cancelled) != 0
+}
+
+func (bs *IpvsHealthCheckBackendServer) applyHealthCheckResult(result bool) bool {
+	if bs.isCancelled() {
+		log.Debugf("[ipvsHealthCheck task] ignore health check result after cancellation for %s", bs.getBackendKey())
+		return false
+	}
+
+	if result {
+		if bs.successCnt == math.MaxUint-1 {
+			bs.successCnt = bs.HealthyThreshold
+		} else {
+			bs.successCnt++
+		}
+
+		bs.failedCnt = 0
+	} else {
+		if bs.failedCnt == math.MaxUint-1 {
+			bs.failedCnt = bs.UnhealthyThreshold
+		} else {
+			bs.failedCnt++
+		}
+		bs.successCnt = 0
+	}
+
+	log.Debugf("[ipvsHealthCheck task] %s: healthcheck resut:%v, current status %v:  successCnt: %d,%d failedCnt: %d:%d",
+		bs.getBackendKey(), result, bs.status,
+		bs.successCnt, bs.HealthyThreshold,
+		bs.failedCnt, bs.UnhealthyThreshold)
+	if bs.failedCnt >= bs.UnhealthyThreshold && bs.status {
+		bs.UnInstall()
+	} else if bs.successCnt >= bs.HealthyThreshold && !bs.status {
+		bs.Install()
+	}
+
+	return true
 }
 
 func (bs *IpvsHealthCheckBackendServer) Start() {
@@ -253,8 +365,11 @@ func (bs *IpvsHealthCheckBackendServer) Start() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	bs.cancel = cancel
+	if bs.isCancelled() {
+		cancel()
+		return
+	}
 	bs.result = make(chan bool, 1)
-	bs.status = false
 	bs.successCnt = 0
 	bs.failedCnt = 0
 
@@ -271,31 +386,9 @@ func (bs *IpvsHealthCheckBackendServer) Start() {
 	for {
 		select {
 		case result := <-bs.result:
-			if result {
-				if bs.successCnt == math.MaxUint-1 {
-					bs.successCnt = bs.HealthyThreshold
-				} else {
-					bs.successCnt++
-				}
-
-				bs.failedCnt = 0
-			} else {
-				if bs.failedCnt == math.MaxUint-1 {
-					bs.failedCnt = bs.UnhealthyThreshold
-				} else {
-					bs.failedCnt++
-				}
-				bs.successCnt = 0
-			}
-
-			log.Debugf("[ipvsHealthCheck task] %s: healthcheck resut:%v, current status %v:  successCnt: %d,%d failedCnt: %d:%d",
-				bs.getBackendKey(), result, bs.status,
-				bs.successCnt, bs.HealthyThreshold,
-				bs.failedCnt, bs.UnhealthyThreshold)
-			if bs.failedCnt >= bs.UnhealthyThreshold && bs.status {
-				bs.UnInstall()
-			} else if bs.successCnt >= bs.HealthyThreshold && !bs.status {
-				bs.Install()
+			if !bs.applyHealthCheckResult(result) {
+				taskTimer.Stop()
+				return
 			}
 			taskTimer.Reset(time.Duration(bs.HealthCheckInterval) * time.Second)
 
@@ -314,10 +407,15 @@ func (bs *IpvsHealthCheckBackendServer) Start() {
 
 func (bs *IpvsHealthCheckBackendServer) Stop() {
 	log.Debugf("[ipvsHealthCheck task] stop health check task for %s", bs.getBackendKey())
+	bs.Cancel()
+	bs.UnInstall()
+}
+
+func (bs *IpvsHealthCheckBackendServer) Cancel() {
+	atomic.StoreUint32(&bs.cancelled, 1)
 	if bs.cancel != nil {
 		bs.cancel()
 	}
-	bs.UnInstall()
 }
 
 func reloadIpvsHealthCheckConfig() {
@@ -336,6 +434,7 @@ func reloadIpvsHealthCheckConfig() {
 
 	log.Debugf("[ipvsHealthCheck reload] load config file success, %++v", conf)
 	checkers := map[string]*IpvsHealthCheckBackendServer{}
+	disabledBackends := map[string]*IpvsHealthCheckBackendServer{}
 	if conf.Services != nil {
 		for _, fs := range conf.Services {
 			log.Debugf("[ipvsHealthCheck reload] new Services: %+v", fs)
@@ -347,6 +446,10 @@ func reloadIpvsHealthCheckConfig() {
 				}
 
 				log.Debugf("[ipvsHealthCheck reload] new checker: %+v", nc)
+				if isHealthCheckDisabled(nc.HealthCheckProtocol) {
+					disabledBackends[nc.getBackendKey()] = &nc
+					continue
+				}
 				checkers[nc.getBackendKey()] = &nc
 			}
 		}
@@ -354,7 +457,9 @@ func reloadIpvsHealthCheckConfig() {
 
 	var toDeleted []string
 	var toStopped []*IpvsHealthCheckBackendServer
+	var toCancelled []*IpvsHealthCheckBackendServer
 	var toStarted []*IpvsHealthCheckBackendServer
+	var toInstalled []*IpvsHealthCheckBackendServer
 
 	func() {
 		gHealthCheckMapLock.Lock()
@@ -366,6 +471,11 @@ func reloadIpvsHealthCheckConfig() {
 			if !found {
 				log.Debugf("[ipvsHealthCheck reload] delete health check task for %s", old.getBackendKey())
 				toDeleted = append(toDeleted, old.getBackendKey())
+				if disabledBackends[old.getBackendKey()] != nil {
+					toCancelled = append(toCancelled, old)
+					continue
+				}
+				toStopped = append(toStopped, old)
 			} else {
 				/* 后端服务器的health check task 参数可能变化, 有两种处理方式:
 				1. copy health check配置参数给old
@@ -400,9 +510,6 @@ func reloadIpvsHealthCheckConfig() {
 
 		for _, key := range toDeleted {
 			log.Debugf("[ipvsHealthCheck reload] delete health check task for %s", key)
-			if gHealthCheckMap[key] != nil {
-				toStopped = append(toStopped, gHealthCheckMap[key])
-			}
 			delete(gHealthCheckMap, key)
 		}
 
@@ -411,14 +518,30 @@ func reloadIpvsHealthCheckConfig() {
 			_, found := gHealthCheckMap[check.getBackendKey()]
 			if !found {
 				log.Debugf("[ipvsHealthCheck reload] add new health check task %+v", check.getBackendKey())
+				if disabledBackend := gDisabledHealthCheckMap[check.getBackendKey()]; disabledBackend != nil && disabledBackend.status {
+					check.setStatus(true)
+				}
 				gHealthCheckMap[check.getBackendKey()] = check
 				toStarted = append(toStarted, check)
 			}
 		}
+
+		gDisabledHealthCheckMap = disabledBackends
+		for _, bs := range disabledBackends {
+			toInstalled = append(toInstalled, bs)
+		}
 	}()
+
+	for _, check := range toCancelled {
+		check.Cancel()
+	}
 
 	for _, check := range toStopped {
 		check.Stop()
+	}
+
+	for _, check := range toInstalled {
+		check.Install()
 	}
 
 	for _, check := range toStarted {
@@ -480,10 +603,10 @@ func syncIpvsadmWithHealthCheck() {
 
 				tempBsMap[temp.getBackendKey()] = &temp
 
-				if gHealthCheckMap[temp.getBackendKey()] == nil {
+				if gHealthCheckMap[temp.getBackendKey()] == nil && gDisabledHealthCheckMap[temp.getBackendKey()] == nil {
 					log.Debugf("[ipvsHealthCheck sync] delete backend server %+v", temp.getBackendKey())
 					go temp.UnInstall()
-				} else if !gHealthCheckMap[temp.getBackendKey()].status {
+				} else if gHealthCheckMap[temp.getBackendKey()] != nil && !gHealthCheckMap[temp.getBackendKey()].status {
 					log.Debugf("[ipvsHealthCheck sync] change backend server %+v status up", temp.getBackendKey())
 					gHealthCheckMap[temp.getBackendKey()].setStatus(true)
 				}
@@ -492,14 +615,15 @@ func syncIpvsadmWithHealthCheck() {
 
 		for _, gbs := range gHealthCheckMap {
 			if tempBsMap[gbs.getBackendKey()] == nil {
-				if isHealthCheckDisabled(gbs.HealthCheckProtocol) {
-					log.Debugf("[ipvsHealthCheck sync] reinstall disabled health check backend server %+v", gbs.getBackendKey())
-					toInstalled = append(toInstalled, gbs)
-					continue
-				}
-
 				log.Debugf("[ipvsHealthCheck sync] change backend server %+v status down", gbs.getBackendKey())
 				gbs.setStatus(false)
+			}
+		}
+
+		for _, gbs := range gDisabledHealthCheckMap {
+			if tempBsMap[gbs.getBackendKey()] == nil {
+				log.Debugf("[ipvsHealthCheck sync] reinstall disabled health check backend server %+v", gbs.getBackendKey())
+				toInstalled = append(toInstalled, gbs)
 			}
 		}
 	}()
@@ -524,6 +648,10 @@ func fastUpBackendServers() {
 		gbs.setStatus(false)
 		go gbs.doHealthCheck()
 	}
+
+	for _, gbs := range gDisabledHealthCheckMap {
+		go gbs.Install()
+	}
 }
 
 func main() {
@@ -544,6 +672,7 @@ func main() {
 	}
 
 	gHealthCheckMap = map[string]*IpvsHealthCheckBackendServer{}
+	gDisabledHealthCheckMap = map[string]*IpvsHealthCheckBackendServer{}
 
 	interruptChan := make(chan os.Signal, 1)
 	signal.Notify(interruptChan, syscall.SIGHUP, syscall.SIGUSR1)

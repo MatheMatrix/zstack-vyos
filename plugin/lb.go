@@ -42,6 +42,9 @@ const (
 	LB_MODE_TCP   = "tcp"
 	LB_MODE_UDP   = "udp"
 
+	LB_DATA_PLANE_IPVS       = "ipvs"
+	LB_FORWARD_MODE_FULL_NAT = "full_nat"
+
 	LB_BACKEND_PREFIX_REG = "^nic-"
 
 	LISTENER_MAP_SIZE = 128
@@ -142,6 +145,8 @@ type LbInfo struct {
 	InstancePort       int                `json:"instancePort"`
 	LoadBalancerPort   int                `json:"loadBalancerPort"`
 	Mode               string             `json:"mode"`
+	DataPlane          string             `json:"dataPlane"`
+	ForwardMode        string             `json:"forwardMode"`
 	Parameters         []string           `json:"parameters"`
 	CertificateUuid    string             `json:"certificateUuid"`
 	SecurityPolicyType string             `json:"securityPolicyType"`
@@ -264,11 +269,11 @@ func isIpvsDataPlane(info LbInfo) bool {
 		return false
 	}
 
-	return strings.EqualFold(ParseLbParams(info).dataPlane, "ipvs")
+	return strings.EqualFold(info.DataPlane, LB_DATA_PLANE_IPVS) && strings.EqualFold(info.ForwardMode, LB_FORWARD_MODE_FULL_NAT)
 }
 
 func isTcpIpvsDataPlane(info LbInfo) bool {
-	return info.Mode == LB_MODE_TCP && strings.EqualFold(ParseLbParams(info).dataPlane, "ipvs")
+	return info.Mode == LB_MODE_TCP && strings.EqualFold(info.DataPlane, LB_DATA_PLANE_IPVS) && strings.EqualFold(info.ForwardMode, LB_FORWARD_MODE_FULL_NAT)
 }
 
 type Listener interface {
@@ -2198,6 +2203,10 @@ func isIpvsListener(info LbInfo) bool {
 		return false
 	}
 
+	if isTcpIpvsDataPlane(info) {
+		return true
+	}
+
 	confPath := makeLbConfFilePath(info)
 	_, err := utils.FindFirstPIDByPSExtern(true, confPath)
 	if err == nil {
@@ -2294,6 +2303,9 @@ func DeleteLbInternal(cmd *deleteLbCmd) {
 	if len(cmd.Lbs) > 0 {
 		for _, lb := range cmd.Lbs {
 			if isTcpIpvsDataPlane(lb) {
+				if listener := GetListener(lb); listener != nil {
+					toDeleted = append(toDeleted, listener)
+				}
 				ipvs[lb.ListenerUuid] = lb
 				continue
 			}
@@ -2419,7 +2431,7 @@ func NewLbPrometheusCollector() MetricCollector {
 		curSessionNumEntry: prom.NewDesc(
 			"zstack_lb_cur_session_num",
 			"Backend server active session number",
-			[]string{LB_LISTENER_UUID, LB_LISTENER_BACKEND_IP, LB_UUID}, nil,
+			[]string{LB_LISTENER_UUID, LB_LISTENER_BACKEND_IP, LB_UUID, LB_ServerGroup_UUID}, nil,
 		),
 		inByteEntry: prom.NewDesc(
 			"zstack_lb_in_bytes",
@@ -2440,17 +2452,17 @@ func NewLbPrometheusCollector() MetricCollector {
 		refusedSessionNumEntry: prom.NewDesc(
 			"zstack_lb_refused_session_num",
 			"Backend server refused session number",
-			[]string{LB_LISTENER_UUID, LB_LISTENER_BACKEND_IP, LB_UUID}, nil,
+			[]string{LB_LISTENER_UUID, LB_LISTENER_BACKEND_IP, LB_UUID, LB_ServerGroup_UUID}, nil,
 		),
 		totalSessionNumEntry: prom.NewDesc(
 			"zstack_lb_total_session_num",
 			"Backend server total session number",
-			[]string{LB_LISTENER_UUID, LB_LISTENER_BACKEND_IP, LB_UUID}, nil,
+			[]string{LB_LISTENER_UUID, LB_LISTENER_BACKEND_IP, LB_UUID, LB_ServerGroup_UUID}, nil,
 		),
 		concurrentSessionUsageEntry: prom.NewDesc(
 			"zstack_lb_concurrent_session_num",
 			"Backend server session number including active and waiting state session",
-			[]string{LB_LISTENER_UUID, LB_LISTENER_BACKEND_IP, LB_UUID}, nil,
+			[]string{LB_LISTENER_UUID, LB_LISTENER_BACKEND_IP, LB_UUID, LB_ServerGroup_UUID}, nil,
 		),
 		hrsp1xxEntry: prom.NewDesc(
 			"zstack_lb_hrsp1xx",
@@ -2526,10 +2538,10 @@ func TransformToMetric(c *loadBalancerCollector, listenerUuid string, listener L
 		ch <- prom.MustNewConstMetric(c.statusEntry, prom.GaugeValue, float64(cnt.Status), cnt.listenerUuid, cnt.ip, lbUuid, cnt.serverGroupUuid)
 		ch <- prom.MustNewConstMetric(c.inByteEntry, prom.GaugeValue, float64(cnt.bytesIn), cnt.listenerUuid, cnt.ip, lbUuid, cnt.serverGroupUuid)
 		ch <- prom.MustNewConstMetric(c.outByteEntry, prom.GaugeValue, float64(cnt.bytesOut), cnt.listenerUuid, cnt.ip, lbUuid, cnt.serverGroupUuid)
-		ch <- prom.MustNewConstMetric(c.curSessionNumEntry, prom.GaugeValue, float64(cnt.sessionNumber), cnt.listenerUuid, cnt.ip, lbUuid)
-		ch <- prom.MustNewConstMetric(c.refusedSessionNumEntry, prom.GaugeValue, float64(cnt.refusedSessionNumber), cnt.listenerUuid, cnt.ip, lbUuid)
-		ch <- prom.MustNewConstMetric(c.totalSessionNumEntry, prom.GaugeValue, float64(cnt.totalSessionNumber), cnt.listenerUuid, cnt.ip, lbUuid)
-		ch <- prom.MustNewConstMetric(c.concurrentSessionUsageEntry, prom.GaugeValue, float64(cnt.concurrentSessionNumber), cnt.listenerUuid, cnt.ip, lbUuid)
+		ch <- prom.MustNewConstMetric(c.curSessionNumEntry, prom.GaugeValue, float64(cnt.sessionNumber), cnt.listenerUuid, cnt.ip, lbUuid, cnt.serverGroupUuid)
+		ch <- prom.MustNewConstMetric(c.refusedSessionNumEntry, prom.GaugeValue, float64(cnt.refusedSessionNumber), cnt.listenerUuid, cnt.ip, lbUuid, cnt.serverGroupUuid)
+		ch <- prom.MustNewConstMetric(c.totalSessionNumEntry, prom.GaugeValue, float64(cnt.totalSessionNumber), cnt.listenerUuid, cnt.ip, lbUuid, cnt.serverGroupUuid)
+		ch <- prom.MustNewConstMetric(c.concurrentSessionUsageEntry, prom.GaugeValue, float64(cnt.concurrentSessionNumber), cnt.listenerUuid, cnt.ip, lbUuid, cnt.serverGroupUuid)
 	}
 
 	ch <- prom.MustNewConstMetric(c.curSessionUsageEntry, prom.GaugeValue, float64(sessionNum*100/maxSessionNum), listenerUuid, lbUuid)
