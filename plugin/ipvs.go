@@ -143,6 +143,38 @@ type IpvsFrontendService struct {
 	LbParams
 }
 
+func parseIpvsAclConfig(params []string) (string, []string, bool) {
+	var aclType string
+	var aclEntries []string
+	enableAcl := false
+	for _, param := range params {
+		parts := strings.Split(param, "::")
+		if len(parts) != 2 {
+			continue
+		}
+
+		switch parts[0] {
+		case "accessControlStatus":
+			enableAcl = parts[1] == "enable"
+		case "aclType":
+			aclType = parts[1]
+		case "aclEntry":
+			for _, entry := range strings.Split(parts[1], ",") {
+				entry = strings.TrimSpace(entry)
+				if entry != "" {
+					aclEntries = append(aclEntries, entry)
+				}
+			}
+		}
+	}
+
+	if !enableAcl || aclType == "" || len(aclEntries) == 0 {
+		return "", nil, false
+	}
+
+	return aclType, aclEntries, true
+}
+
 type IpvsConf struct {
 	Services map[string]*IpvsFrontendService
 }
@@ -522,7 +554,7 @@ func refreshIpvsFirewallRuleByVyos(services map[string]*IpvsFrontendService) err
 			}
 		}
 		if fs.AclType != "" && len(fs.AclEntry) > 0 {
-			err := fmt.Errorf("can not set UDP Load Balancer ACL on VyOS;please upgrade to ZStack Euler VRouter image")
+			err := fmt.Errorf("can not set IPVS Load Balancer ACL on VyOS;please upgrade to ZStack Euler VRouter image")
 			utils.PanicOnError(err)
 		}
 	}
@@ -692,36 +724,13 @@ func RefreshIpvsBackend() error {
 	services := map[string]*IpvsFrontendService{}
 	for _, lb := range gIpvsLbInfoMap {
 		for _, listener := range lb {
-			if strings.ToLower(listener.Mode) != "udp" {
-				/* current only udp lb use ipvs */
+			if !isIpvsDataPlane(listener) {
 				continue
 			}
 
 			lbParam := ParseLbParams(listener)
 
-			// parse ACL config
-			var aclType string
-			var aclEntries []string
-			enableAcl := false
-			for _, param := range listener.Parameters {
-				parts := strings.Split(param, "::")
-				if len(parts) != 2 {
-					continue
-				}
-
-				switch parts[0] {
-				case "accessControlStatus":
-					// Acl are processed only when accessControlStatus is enabled
-					if parts[1] == "enable" {
-						enableAcl = true
-					}
-				case "aclType":
-					aclType = parts[1]
-				case "aclEntry":
-					// If multiple IP addresses are separated by commas (,), split them
-					aclEntries = strings.Split(parts[1], ",")
-				}
-			}
+			aclType, aclEntries, enableAcl := parseIpvsAclConfig(listener.Parameters)
 
 			var fs4, fs6 *IpvsFrontendService
 			if listener.Vip != "" {
