@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	neturl "net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -18,31 +19,42 @@ const (
 	ZSTACK_ROUTE_PROTO_IDENTIFFER = "201"
 	ZVR_ROUTE_PROTO               = "zvr"
 	ZVR_ROUTE_PROTO_IDENTIFFER    = 202
+	IPV4_PREFIX_BITS              = 32
+	IPV6_PREFIX_BITS              = 128
 )
 
 func NetmaskToCIDR(netmask string) (int, error) {
 	if strings.Contains(netmask, ".") {
-		ipv4Mask := net.IPMask(net.ParseIP(netmask).To4())
-		return calculateMaskLength(ipv4Mask), nil
-	} else {
-		ipv6Mask := net.IPMask(net.ParseIP(netmask).To16())
-		return calculateMaskLength(ipv6Mask), nil
-	}
-}
-
-func calculateMaskLength(mask net.IPMask) int {
-	maskBytes := []byte(mask)
-	length := 0
-
-	for _, byteValue := range maskBytes {
-		for i := 7; i >= 0; i-- {
-			if (byteValue>>i)&1 == 1 {
-				length++
-			}
+		ipv4 := net.ParseIP(netmask).To4()
+		if ipv4 == nil {
+			return 0, fmt.Errorf("invalid IPv4 netmask %s", netmask)
 		}
+
+		ipv4Mask := net.IPMask(ipv4)
+		prefix, bits := ipv4Mask.Size()
+		if bits != IPV4_PREFIX_BITS {
+			return 0, fmt.Errorf("invalid non-contiguous IPv4 netmask %s", netmask)
+		}
+		return prefix, nil
 	}
 
-	return length
+	if prefix, err := strconv.Atoi(netmask); err == nil {
+		if prefix < 0 || prefix > IPV6_PREFIX_BITS {
+			return 0, fmt.Errorf("invalid netmask prefix %d: must be 0..%d", prefix, IPV6_PREFIX_BITS)
+		}
+		return prefix, nil
+	}
+
+	ipv6MaskIp := net.ParseIP(netmask)
+	if ipv6MaskIp == nil {
+		return 0, fmt.Errorf("invalid netmask %s", netmask)
+	}
+	ipv6Mask := net.IPMask(ipv6MaskIp.To16())
+	prefix, bits := ipv6Mask.Size()
+	if bits != IPV6_PREFIX_BITS {
+		return 0, fmt.Errorf("invalid non-contiguous IPv6 netmask %s", netmask)
+	}
+	return prefix, nil
 }
 
 func GetNetworkNumber(ip, netmask string) (string, error) {
@@ -245,9 +257,13 @@ func GetIpByNicName(nic string) (string, error) {
 	return os[0], nil
 }
 
-func GetIpFromUrl(url string) (string, error) {
-	ip := strings.Split(strings.Split(url, "/")[2], ":")[0]
-	return ip, nil
+func GetIpFromUrl(rawUrl string) (string, error) {
+	parsedUrl, err := neturl.Parse(rawUrl)
+	if err != nil {
+		return "", err
+	}
+
+	return parsedUrl.Hostname(), nil
 }
 
 func CheckIpDuplicate(nicname, ip string) bool {
@@ -257,8 +273,9 @@ func CheckIpDuplicate(nicname, ip string) bool {
 }
 
 func CheckZStackRouteExists(ip string) bool {
+	route := routeCidr(ip)
 	bash := Bash{
-		Command: fmt.Sprintf("ip r list %s/32 proto zstack", ip),
+		Command: fmt.Sprintf("%s list %s proto zstack", ipRouteCommand(ip), route),
 	}
 	_, o, _, _ := bash.RunWithReturn()
 	if o == "" {
@@ -269,12 +286,13 @@ func CheckZStackRouteExists(ip string) bool {
 
 func DeleteRouteIfExists(ip string) error {
 	if CheckZStackRouteExists(ip) == true {
+		route := routeCidr(ip)
 		bash := Bash{
-			Command: fmt.Sprintf("sudo ip route del %s/32", ip),
+			Command: fmt.Sprintf("sudo %s del %s", ipRouteCommand(ip), route),
 		}
 		if IsEuler2203() {
 			bash = Bash{
-				Command: fmt.Sprintf("sudo vtysh -c 'configure terminal' -c 'no ip route %s/32'", ip),
+				Command: fmt.Sprintf("sudo vtysh -c 'configure terminal' -c 'no %s %s'", frrRouteCommand(ip), route),
 			}
 		}
 		_, _, _, err := bash.RunWithReturn()
@@ -292,13 +310,14 @@ func SetZStackRoute(ip string, nic string, gw string) error {
 	DeleteRouteIfExists(ip)
 
 	var bash Bash
+	route := routeCidr(ip)
 	if gw == "" {
 		bash = Bash{
-			Command: fmt.Sprintf("sudo ip route add %s/32 dev %s proto %s", ip, nic, ZSTACK_ROUTE_PROTO),
+			Command: fmt.Sprintf("sudo %s add %s dev %s proto %s", ipRouteCommand(ip), route, nic, ZSTACK_ROUTE_PROTO),
 		}
 	} else {
 		bash = Bash{
-			Command: fmt.Sprintf("sudo ip route add %s/32 via %s dev %s proto %s", ip, gw, nic, ZSTACK_ROUTE_PROTO),
+			Command: fmt.Sprintf("sudo %s add %s via %s dev %s proto %s", ipRouteCommand(ip), route, gw, nic, ZSTACK_ROUTE_PROTO),
 		}
 	}
 
@@ -308,7 +327,7 @@ func SetZStackRoute(ip string, nic string, gw string) error {
 	}
 	// NOTE(WeiW): It will return 2 if exists
 	if ret != 0 && ret != 2 {
-		return errors.New(fmt.Sprintf("add route to %s/32 via %s dev %s failed", ip, gw, nic))
+		return errors.New(fmt.Sprintf("add route to %s via %s dev %s failed", route, gw, nic))
 	}
 
 	return nil
@@ -384,9 +403,7 @@ func GetNicForRoute(ip string) string {
 	# ip -o r get 192.168.3.10      ###默认路由
 	192.168.3.10 via 172.25.0.1 dev eth0 src 172.25.116.190 uid 0 \    cache
 	*/
-	bash := Bash{
-		Command: fmt.Sprintf("ip -o r get %s", ip),
-	}
+	bash := Bash{Command: fmt.Sprintf("%s get %s", ipRouteCommand(ip), ip)}
 	_, o, _, err := bash.RunWithReturn()
 	if err != nil {
 		return ""
@@ -471,12 +488,84 @@ func GetNicNumber(nic string) (int, error) {
 }
 
 func CheckMgmtCidrContainsIp(ip string, mgmtNic map[string]interface{}) bool {
-	maskCidr, err := NetmaskToCIDR(mgmtNic["netmask"].(string))
-	PanicOnError(err)
-	_, mgmtNet, err := net.ParseCIDR(fmt.Sprintf("%s/%d", mgmtNic["ip"], maskCidr))
+	mgmtIp, prefix, ok := getMgmtNicAddressAndPrefix(ip, mgmtNic)
+	if !ok {
+		return false
+	}
+
+	_, mgmtNet, err := net.ParseCIDR(fmt.Sprintf("%s/%d", mgmtIp, prefix))
 	PanicOnError(err)
 
 	return mgmtNet.Contains(net.ParseIP(ip))
+}
+
+func GetManagementNicAddress(mgmtNic map[string]interface{}) string {
+	if mgmtNic == nil {
+		return ""
+	}
+
+	ip, _ := mgmtNic["ip"].(string)
+	ip = strings.TrimSpace(ip)
+	if ip != "" {
+		return ip
+	}
+
+	ip6, _ := mgmtNic["ip6"].(string)
+	return strings.TrimSpace(ip6)
+}
+
+func GetMgmtGatewayForIp(ip string, mgmtNic map[string]interface{}) string {
+	if mgmtNic == nil {
+		return ""
+	}
+
+	key := "gateway"
+	if isIpv6AddressOrCidr(ip) {
+		key = "gateway6"
+	}
+
+	gateway, _ := mgmtNic[key].(string)
+	return gateway
+}
+
+func isIpv6AddressOrCidr(address string) bool {
+	if ip, _, err := net.ParseCIDR(address); err == nil {
+		return ip.To4() == nil
+	}
+
+	return IsIpv6Address(address)
+}
+
+func getMgmtNicAddressAndPrefix(ip string, mgmtNic map[string]interface{}) (string, int, bool) {
+	if mgmtNic == nil {
+		return "", 0, false
+	}
+
+	if IsIpv6Address(ip) {
+		ip6, _ := mgmtNic["ip6"].(string)
+		if ip6 == "" {
+			return "", 0, false
+		}
+
+		switch prefixLength := mgmtNic["prefixLength"].(type) {
+		case float64:
+			return ip6, int(prefixLength), true
+		case int:
+			return ip6, prefixLength, true
+		default:
+			return "", 0, false
+		}
+	}
+
+	ip4, _ := mgmtNic["ip"].(string)
+	netmask, _ := mgmtNic["netmask"].(string)
+	if ip4 == "" || netmask == "" {
+		return "", 0, false
+	}
+
+	maskCidr, err := NetmaskToCIDR(netmask)
+	PanicOnError(err)
+	return ip4, maskCidr, true
 }
 
 func GetPrivteInterface() []string {
@@ -688,6 +777,46 @@ func IsIpv4Address(address string) bool {
 	}
 
 	return false
+}
+
+func IsIpv6Address(address string) bool {
+	parsedIP := net.ParseIP(address)
+	return parsedIP != nil && parsedIP.To4() == nil
+}
+
+func FormatURLHost(host string) string {
+	if IsIpv6Address(host) && !strings.HasPrefix(host, "[") {
+		return fmt.Sprintf("[%s]", host)
+	}
+	return host
+}
+
+func routeCidr(ip string) string {
+	if strings.Contains(ip, "/") {
+		return ip
+	}
+	if IsIpv6Address(ip) {
+		return ip + "/128"
+	}
+	return ip + "/32"
+}
+
+func ipRouteCommand(ip string) string {
+	if IsIpv6Address(routeCommandAddress(ip)) {
+		return "ip -6 route"
+	}
+	return "ip route"
+}
+
+func frrRouteCommand(ip string) string {
+	if IsIpv6Address(routeCommandAddress(ip)) {
+		return "ipv6 route"
+	}
+	return "ip route"
+}
+
+func routeCommandAddress(ip string) string {
+	return strings.SplitN(ip, "/", 2)[0]
 }
 
 func IsMgtNic(name string) bool {

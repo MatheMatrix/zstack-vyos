@@ -326,12 +326,14 @@ func initHandler(ctx *server.CommandContext) interface{} {
 	if initConfig.MgtCidr != "" {
 		mgmtNic := utils.GetMgmtInfoFromBootInfo()
 		nexthop, _ := utils.GetNexthop(initConfig.MgtCidr)
-		gw := mgmtNic["gateway"].(string)
-		if nexthop != gw {
+		gw := utils.GetMgmtGatewayForIp(initConfig.MgtCidr, mgmtNic)
+		if gw == "" {
+			log.Warnf("skip management cidr route[%s], gateway is empty", initConfig.MgtCidr)
+		} else if nexthop != gw {
 			if utils.IsEuler2203() {
-				_ = utils.AddRouteForMgmtEuler2203(initConfig.MgtCidr, "eth0", gw)
+				utils.PanicOnError(utils.AddRouteForMgmtEuler2203(initConfig.MgtCidr, "eth0", gw))
 			} else {
-				_ = utils.AddRoute(initConfig.MgtCidr, gw)
+				utils.PanicOnError(utils.AddRoute(initConfig.MgtCidr, gw))
 			}
 		}
 	}
@@ -426,8 +428,16 @@ func addRouteIfCallbackIpChanged(init bool) {
 		}
 
 		mgmtNic := utils.GetMgmtInfoFromBootInfo()
+		gateway := utils.GetMgmtGatewayForIp(server.CALLBACK_IP, mgmtNic)
+		if gateway == "" && utils.CheckMgmtCidrContainsIp(server.CALLBACK_IP, mgmtNic) == false {
+			log.Warnf("skip callback route for ip[%s], gateway is empty", server.CALLBACK_IP)
+			return
+		}
 		if utils.IsEuler2203() {
-			_ = utils.AddRouteForMgmtEuler2203(server.CALLBACK_IP, "eth0", mgmtNic["gateway"].(string))
+			if err := utils.AddRouteForMgmtEuler2203(server.CALLBACK_IP, "eth0", gateway); err != nil {
+				log.Warnf("failed to add callback route for ip[%s] via gateway[%s]: %v", server.CALLBACK_IP, gateway, err)
+				return
+			}
 			server.CURRENT_CALLBACK_IP = server.CALLBACK_IP
 			return
 		}
@@ -438,7 +448,7 @@ func addRouteIfCallbackIpChanged(init bool) {
 			utils.PanicOnError(err)
 		}
 		if mgmtNic != nil && utils.CheckMgmtCidrContainsIp(server.CALLBACK_IP, mgmtNic) == false {
-			err := utils.SetZStackRoute(server.CALLBACK_IP, "eth0", mgmtNic["gateway"].(string))
+			err := utils.SetZStackRoute(server.CALLBACK_IP, "eth0", gateway)
 			utils.PanicOnError(err)
 		} else if mgmtNic == nil {
 			log.Debugf("can not get mgmt nic info, skip to configure route")

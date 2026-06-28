@@ -3,7 +3,6 @@ package utils
 import (
 	"encoding/json"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +14,13 @@ const (
 	BOOTSTRAP_INFO_FILE     = "bootstrap-info.json"
 	DEFAULT_SSH_PORT        = 22
 	HA_DEFAULT_ROUTE_SCRIPT = "keepalived/script/defaultroute.sh"
+)
+
+const (
+	BootstrapParamManagementNodeIp      = "managementNodeIp"
+	BootstrapParamManagementPeerNodeIp  = "managementPeerNodeIp"
+	BootstrapParamManagementNodeCidr    = "managementNodeCidr"
+	BootstrapParamManagementNodeIp6Cidr = "managementNodeIp6Cidr"
 )
 
 const (
@@ -197,34 +203,40 @@ func GetVirtualRouterUuid() string {
 }
 
 func IsInManagementCidr(vipStr string) bool {
-	mgmtNic := BootstrapInfo["managementNic"].(map[string]interface{})
-	ipStr, _ := mgmtNic["ip"].(string)
-	netmaskStr, _ := mgmtNic["netmask"].(string)
+	mgmtNic, ok := BootstrapInfo["managementNic"].(map[string]interface{})
+	if !ok {
+		return false
+	}
 
-	ip := net.ParseIP(ipStr)
-	netmask := net.IPMask(net.ParseIP(netmaskStr).To4())
-
-	cidr := net.IPNet{IP: ip, Mask: netmask}
-
-	vip := net.ParseIP(vipStr)
-	return cidr.Contains(vip)
+	return CheckMgmtCidrContainsIp(vipStr, mgmtNic)
 }
 
 func GetMnNodeIps() map[string]string {
 	mnNodeIps := make(map[string]string)
-	mnNodeIp := BootstrapInfo["managementNodeIp"]
+	mnNodeIp := BootstrapInfo[BootstrapParamManagementNodeIp]
 	if mnNodeIp != nil {
 		mnNodeIpStr := mnNodeIp.(string)
 		mnNodeIps[mnNodeIpStr] = mnNodeIpStr
 	}
 
-	mnPeerNodeIp := BootstrapInfo["managementPeerNodeIp"]
+	mnPeerNodeIp := BootstrapInfo[BootstrapParamManagementPeerNodeIp]
 	if mnPeerNodeIp != nil {
 		mnPeerNodeStr := mnPeerNodeIp.(string)
 		mnNodeIps[mnPeerNodeStr] = mnPeerNodeStr
 	}
 
 	return mnNodeIps
+}
+
+func GetManagementNodeCidrs() []string {
+	cidrs := make([]string, 0, 2)
+	for _, key := range []string{BootstrapParamManagementNodeCidr, BootstrapParamManagementNodeIp6Cidr} {
+		if cidr, ok := BootstrapInfo[key].(string); ok && cidr != "" {
+			cidrs = append(cidrs, cidr)
+		}
+	}
+
+	return cidrs
 }
 
 func WriteDefaultHaScript(defaultNic *Nic) {
@@ -264,8 +276,9 @@ func GetBootStrapNicInfo() map[string]Nic {
 		name, ok1 := mgmtNic["deviceName"].(string)
 		mac, ok2 := mgmtNic["mac"].(string)
 		ip, ok3 := mgmtNic["ip"].(string)
-		if ok1 && ok2 && ok3 {
-			mnic := Nic{Name: name, Mac: mac, Ip: ip}
+		ip6, ok4 := mgmtNic["ip6"].(string)
+		if ok1 && ok2 && (ok3 || ok4) {
+			mnic := Nic{Name: name, Mac: mac, Ip: ip, Ip6: ip6}
 			mnic.Catatory, _ = mgmtNic["category"].(string)
 			bootstrapNics[mnic.Name] = mnic
 		}

@@ -11,6 +11,15 @@ import (
 	"github.com/pkg/errors"
 )
 
+func TestListenAddressSupportsIPv6(t *testing.T) {
+	if addr := listenAddress("2026:3:3:1::6011", 7272); addr != "[2026:3:3:1::6011]:7272" {
+		t.Fatalf("unexpected IPv6 listen address: %s", addr)
+	}
+	if addr := listenAddress("172.25.116.178", 7272); addr != "172.25.116.178:7272" {
+		t.Fatalf("unexpected IPv4 listen address: %s", addr)
+	}
+}
+
 func startMockServer() {
 	CommandOptions.Ip = "127.0.0.1"
 	CommandOptions.Port = 8989

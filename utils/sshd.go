@@ -22,6 +22,7 @@ const (
 type SshdInfo struct {
 	Port                   int
 	ListenAddress          string
+	ListenAddress6         string
 	Keys                   []string
 	PasswordAuthentication string
 }
@@ -38,6 +39,7 @@ func NewSshServer() *SshdInfo {
 	sshAttr := SshdInfo{
 		Port:                   22,
 		ListenAddress:          "0.0.0.0",
+		ListenAddress6:         "::",
 		PasswordAuthentication: "no",
 	}
 	return &sshAttr
@@ -53,7 +55,15 @@ func (s *SshdInfo) SetPorts(port int) *SshdInfo {
 
 func (s *SshdInfo) SetListen(address string) *SshdInfo {
 	if address != "" {
-		s.ListenAddress = address
+		parsed := net.ParseIP(address)
+		if parsed == nil {
+			return s
+		}
+		if parsed.To4() == nil {
+			s.ListenAddress6 = address
+		} else {
+			s.ListenAddress = address
+		}
 	}
 
 	return s
@@ -90,7 +100,7 @@ func (s *SshdInfo) ConfigService() error {
 		text = sshdTemplateArm
 		_ = Retry(func() error {
 			var e error
-			listener, e := net.Listen("tcp", fmt.Sprintf("%s:%d", s.ListenAddress, s.Port))
+			listener, e := net.Listen("tcp", net.JoinHostPort(s.ListenAddress, fmt.Sprintf("%d", s.Port)))
 			if e != nil {
 				return nil
 			} else {

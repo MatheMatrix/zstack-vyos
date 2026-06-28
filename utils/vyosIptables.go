@@ -528,7 +528,11 @@ func DestroyNicFirewall(nic string) error {
 func InitNicFirewall(nic string, ip string, pubNic bool, defaultAction string) error {
 	InitVyattaFilterTable()
 
-	table := NewIpTables(FirewallTable)
+	ipVersion := IP_VERSION_4
+	if IsIpv6Address(ip) {
+		ipVersion = IP_VERSION_6
+	}
+	table := NewIpTablesByIpVersion(FirewallTable, ipVersion)
 	localChain := GetRuleSetName(nic, RULESET_LOCAL)
 	forwardChain := GetRuleSetName(nic, RULESET_IN)
 	outChain := GetRuleSetName(nic, RULESET_OUT)
@@ -590,6 +594,29 @@ func InitNicFirewall(nic string, ip string, pubNic bool, defaultAction string) e
 			rule = NewIpTableRule(localChain)
 			rule.SetAction(IPTABLES_ACTION_REJECT).SetRejectType(REJECT_TYPE_ICMP_UNREACHABLE)
 			rule.SetComment(SystemTopRule).SetDstIp(ip + "/32").SetProto(IPTABLES_PROTO_TCP).SetDstPort(strconv.FormatFloat(sshPort, 'f', 0, 64))
+			rules = append(rules, rule)
+		}
+	} else if IsIpv6Address(ip) {
+		dstIp := ip + "/128"
+		rule = NewIpTableRule(localChain)
+		rule.SetAction(IPTABLES_ACTION_RETURN).SetComment(SystemTopRule)
+		rule.SetDstIp(dstIp).SetState([]string{IPTABLES_STATE_RELATED, IPTABLES_STATE_ESTABLISHED})
+		rules = append(rules, rule)
+
+		if IsMgtNic(nic) {
+			rule = NewIpTableRule(localChain)
+			rule.SetAction(IPTABLES_ACTION_RETURN).SetComment(SystemTopRule)
+			rule.SetDstIp(dstIp).SetProto(IPTABLES_PROTO_TCP).SetDstPort(strconv.FormatFloat(sshPort, 'f', 0, 64))
+			rules = append(rules, rule)
+
+			rule = NewIpTableRule(localChain)
+			rule.SetAction(IPTABLES_ACTION_RETURN).SetComment(SystemTopRule)
+			rule.SetDstIp(dstIp).SetProto(IPTABLES_PROTO_TCP).SetDstPort("7272")
+			rules = append(rules, rule)
+		} else {
+			rule = NewIpTableRule(localChain)
+			rule.SetAction(IPTABLES_ACTION_REJECT).SetRejectType(REJECT_TYPE_ICMP6_UNREACHABLE)
+			rule.SetComment(SystemTopRule).SetDstIp(dstIp).SetProto(IPTABLES_PROTO_TCP).SetDstPort(strconv.FormatFloat(sshPort, 'f', 0, 64))
 			rules = append(rules, rule)
 		}
 	}

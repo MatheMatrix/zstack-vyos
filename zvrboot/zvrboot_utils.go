@@ -17,6 +17,52 @@ var (
 	mgmtNic *utils.NicInfo            = &utils.NicInfo{}
 )
 
+func getStringValue(values map[string]interface{}, key string) string {
+	if value, ok := values[key].(string); ok {
+		return value
+	}
+
+	return ""
+}
+
+func addManagementNodeRoute(cidr, gateway, devName string) {
+	if cidr == "" {
+		return
+	}
+	if gateway == "" {
+		log.Warnf("skip management node route[%s], gateway is empty", cidr)
+		return
+	}
+
+	nexthop, _ := utils.IpRouteGet(cidr)
+	if nexthop == gateway {
+		return
+	}
+
+	if utils.IsEuler2203() {
+		if err := utils.AddRouteForMgmtEuler2203(cidr, devName, gateway); err != nil {
+			log.Debugf("AddRouteForMgmtEuler2203 route entry[Dst:%s gateway:%s dev:%s] error: %+v", cidr, gateway, devName, err)
+		}
+		return
+	}
+
+	route := utils.NewIpRoute().SetDst(cidr).SetGW(gateway)
+	if devName != "" {
+		route.SetDev(devName)
+	}
+	if err := utils.IpRouteAdd(route); err != nil {
+		log.Debugf("IpRouteAdd route entry[Dst:%s gateway:%s dev:%s] error: %+v", cidr, gateway, devName, err)
+	}
+}
+
+func addManagementNodeRoutes(nic *utils.NicInfo, devName string) {
+	if nic.Name != "eth0" {
+		return
+	}
+	addManagementNodeRoute(getStringValue(utils.BootstrapInfo, utils.BootstrapParamManagementNodeCidr), nic.Gateway, devName)
+	addManagementNodeRoute(getStringValue(utils.BootstrapInfo, utils.BootstrapParamManagementNodeIp6Cidr), nic.Gateway6, devName)
+}
+
 func renameNic() {
 	log.Debugf("[configure: rename nics]")
 	type deviceName struct {
@@ -191,7 +237,7 @@ func configureSshServer() {
 	sshkey := utils.BootstrapInfo["publicKey"].(string)
 	utils.Assert(sshkey != "", "cannot find 'publicKey' in bootstrap info")
 	sshport := utils.BootstrapInfo["sshPort"].(float64)
-	address := mgmtNic.Ip
+	address := managementNicSshListenAddress(mgmtNic)
 	utils.Assert(address != "", "cannot find eth0 ip address in bootstrap info")
 	passwordAuthentication := "no"
 	if _, ok := utils.BootstrapInfo["allowPasswordAuth"].(string); ok {
@@ -202,6 +248,20 @@ func configureSshServer() {
 	sshInfo.SetPasswordAuthentication(passwordAuthentication)
 	err := sshInfo.ConfigService()
 	utils.Assertf(err == nil, "configure SSH Server error: %s", err)
+}
+
+func managementNicSshListenAddress(nic *utils.NicInfo) string {
+	if nic.Ip != "" {
+		return nic.Ip
+	}
+	return nic.Ip6
+}
+
+func nicInfoFirewallAddress(nic *utils.NicInfo) string {
+	if nic.Ip != "" {
+		return nic.Ip
+	}
+	return nic.Ip6
 }
 
 func configureRadvdServer() {
@@ -334,6 +394,7 @@ func configureBondNic(nic *utils.NicInfo) {
 			}
 		}
 	}
+	addManagementNodeRoutes(nic, bondName)
 
 	// Set alias for bond interface
 	if nic.L2Type != "" {
@@ -348,10 +409,11 @@ func configureBondNic(nic *utils.NicInfo) {
 	}
 
 	// Initialize firewall for bond interface
+	firewallAddress := nicInfoFirewallAddress(nic)
 	if nic.Category == "Private" {
-		err = utils.InitNicFirewall(bondName, nic.Ip, false, utils.IPTABLES_ACTION_REJECT)
+		err = utils.InitNicFirewall(bondName, firewallAddress, false, utils.IPTABLES_ACTION_REJECT)
 	} else {
-		err = utils.InitNicFirewall(bondName, nic.Ip, true, utils.IPTABLES_ACTION_REJECT)
+		err = utils.InitNicFirewall(bondName, firewallAddress, true, utils.IPTABLES_ACTION_REJECT)
 	}
 	if err != nil {
 		log.Debugf("InitNicFirewall for bond: %s failed", err.Error())
@@ -447,29 +509,13 @@ func configureNicInfo(nic *utils.NicInfo) {
 		err := utils.IpLinkSetDown(nic.Name)
 		utils.Assertf(err == nil, "IpLinkSetDown[%s] error: %+v", nic.Name, err)
 	}
-	if nic.Name == "eth0" {
-		mgmtNodeCidr := utils.BootstrapInfo["managementNodeCidr"]
-		if mgmtNodeCidr != nil {
-			mgmtNodeCidrStr := mgmtNodeCidr.(string)
-			if utils.IsEuler2203() {
-				_ = utils.AddRouteForMgmtEuler2203(mgmtNodeCidrStr, nic.Name, nic.Gateway)
-			} else {
-				nexthop, _ := utils.IpRouteGet(mgmtNodeCidrStr)
-				if nexthop != nic.Gateway {
-					defaultRoute := utils.NewIpRoute().SetDst(mgmtNodeCidrStr).SetGW(nic.Gateway)
-					if err = utils.IpRouteAdd(defaultRoute); err != nil {
-						log.Debugf("IpRouteAdd route entry[Dst:%s gateway:%s] error: %+v", mgmtNodeCidrStr, nic.Gateway, err)
-					}
-					utils.AddRoute(mgmtNodeCidrStr, nic.Gateway)
-				}
-			}
-		}
-	}
+	addManagementNodeRoutes(nic, nic.Name)
 
+	firewallAddress := nicInfoFirewallAddress(nic)
 	if nic.Category == "Private" {
-		err = utils.InitNicFirewall(nic.Name, nic.Ip, false, utils.IPTABLES_ACTION_REJECT)
+		err = utils.InitNicFirewall(nic.Name, firewallAddress, false, utils.IPTABLES_ACTION_REJECT)
 	} else {
-		err = utils.InitNicFirewall(nic.Name, nic.Ip, true, utils.IPTABLES_ACTION_REJECT)
+		err = utils.InitNicFirewall(nic.Name, firewallAddress, true, utils.IPTABLES_ACTION_REJECT)
 	}
 	if err != nil {
 		log.Debugf("InitNicFirewall for nic: %s failed", err.Error())

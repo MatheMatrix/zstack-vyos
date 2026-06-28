@@ -65,6 +65,14 @@ const (
 	KeepalivedBinaryFile = "/usr/sbin/keepalived"
 )
 
+const (
+	keepalivedMonitorScriptNamePrefix = "monitor_"
+	keepalivedMonitorScriptFilePrefix = "check_monitor_"
+	keepalivedScriptExtension         = ".sh"
+)
+
+var keepalivedMonitorNameReplacer = regexp.MustCompile(`[^A-Za-z0-9_]+`)
+
 func getKeepalivedRootPath() string {
 	return filepath.Join(utils.GetZvrRootPath(), "keepalived/")
 }
@@ -132,10 +140,10 @@ const tSendGratiousARP = `#!/bin/sh
 logger "Sending gratious ARP" || true
 
 {{ range .VyosHaVipPairs }}
-{{ if .Vip }}
-(sudo arping -q -A -c 3 -I {{.NicName}} {{.Vip}}) &
-{{ else if .Vip6 }}
+{{ if .Vip6 }}
 (ndsend {{.Vip6}} {{.NicName}}) &
+{{ else if .Vip }}
+(sudo arping -q -A -c 3 -I {{.NicName}} {{.Vip}}) &
 {{end}}
 {{ end }}
 {{ range .NicIps }}
@@ -167,7 +175,7 @@ done
 const tKeepalivedNotifyMaster = `#!/bin/sh
 # This file is auto-generated, DO NOT EDIT! DO NOT EDIT!! DO NOT EDIT!!!
 {{ range .MgmtVipPairs }}
-sudo ip add add {{.Vip}}/{{.Prefix}} dev {{.NicName}} || true
+sudo ip add add {{.VipAddress}}/{{.Prefix}} dev {{.NicName}} || true
 {{ end }}
 
 {{ range $index, $name := .NicNames }}
@@ -223,12 +231,16 @@ const tKeepalivedNotifyBackup = `#!/bin/sh
 port=7272
 peerIp=$(echo $(grep -A1 -w unicast_peer {{.KeepalivedCfg}} | tail -1))
 test x"$2" != x"" && port=$2
-test x"$peerIp" != x"" && curl -X POST -H "User-Agent: curl/7.2.5" --connect-timeout 3 http://"$peerIp:$port"/keepalived/garp
+case "$peerIp" in
+    *:*) garpUrl="http://[$peerIp]:$port/keepalived/garp" ;;
+    *) garpUrl="http://$peerIp:$port/keepalived/garp" ;;
+esac
+test x"$peerIp" != x"" && curl -X POST -H "User-Agent: curl/7.2.5" --connect-timeout 3 "$garpUrl"
 
 #/bin/bash {{.PrimaryBackupScript}} "$1"
 
 {{ range .MgmtVipPairs }}
-sudo ip add del {{.Vip}}/{{.Prefix}} dev {{.NicName}} || true
+sudo ip add del {{.VipAddress}}/{{.Prefix}} dev {{.NicName}} || true
 {{ end }}
 
 {{ range $index, $name := .NicNames }}
@@ -454,6 +466,7 @@ type KeepalivedConf struct {
 	HeartBeatNic        string
 	Interval            int
 	MonitorIps          []string
+	MonitorConfigs      []keepalivedMonitorConfig
 	LocalIp             string
 	LocalIpV6           string
 	PeerIp              string
@@ -469,16 +482,26 @@ type KeepalivedConf struct {
 	IsEuler2203         bool
 }
 
-func NewKeepalivedConf(hearbeatNic, LocalIp, LocalIpV6, PeerIp, PeerIpV6 string, MonitorIps []string, Interval int, vips []nicVipPair) *KeepalivedConf {
+type keepalivedMonitorConfig struct {
+	Ip         string
+	ScriptName string
+	ScriptFile string
+}
+
+func NewKeepalivedConf(hearbeatNic, LocalIp, LocalIpV6, PeerIp, PeerIpV6 string, MonitorIps []string, Interval int, vips []nicVipPair) (*KeepalivedConf, error) {
+	if len(vips) == 0 {
+		return nil, fmt.Errorf("missing HA VIPs for keepalived configuration")
+	}
+
 	var vipV4, vipV6 *nicVipPair
-	if len(vips) == 2 {
-		vipV4 = &vips[0]
-		vipV6 = &vips[1]
-	} else {
-		if utils.IsIpv4Address(vips[0].Vip) {
-			vipV4 = &vips[0]
+	for index := range vips {
+		vip := vips[index].getVip()
+		if utils.IsIpv4Address(vip) {
+			vipV4 = &vips[index]
+		} else if utils.IsIpv6Address(vip) {
+			vipV6 = &vips[index]
 		} else {
-			vipV6 = &vips[0]
+			return nil, fmt.Errorf("invalid HA VIP address: %s", vip)
 		}
 	}
 
@@ -486,6 +509,7 @@ func NewKeepalivedConf(hearbeatNic, LocalIp, LocalIpV6, PeerIp, PeerIpV6 string,
 		HeartBeatNic:        hearbeatNic,
 		Interval:            Interval,
 		MonitorIps:          MonitorIps,
+		MonitorConfigs:      newKeepalivedMonitorConfigs(MonitorIps),
 		LocalIp:             LocalIp,
 		LocalIpV6:           LocalIpV6,
 		PeerIp:              PeerIp,
@@ -507,7 +531,28 @@ func NewKeepalivedConf(hearbeatNic, LocalIp, LocalIpV6, PeerIp, PeerIpV6 string,
 		kc.ScriptUser = "root"
 	}
 
-	return kc
+	return kc, nil
+}
+
+func newKeepalivedMonitorConfigs(ips []string) []keepalivedMonitorConfig {
+	configs := make([]keepalivedMonitorConfig, 0, len(ips))
+	for _, ip := range ips {
+		scriptIp := ip
+		if !utils.IsIpv4Address(ip) {
+			scriptIp = keepalivedMonitorNameReplacer.ReplaceAllString(ip, "_")
+			scriptIp = strings.Trim(scriptIp, "_")
+			if scriptIp == "" {
+				scriptIp = "unknown"
+			}
+		}
+		configs = append(configs, keepalivedMonitorConfig{
+			Ip:         ip,
+			ScriptName: keepalivedMonitorScriptNamePrefix + scriptIp,
+			ScriptFile: keepalivedMonitorScriptFilePrefix + scriptIp + keepalivedScriptExtension,
+		})
+	}
+
+	return configs
 }
 
 const tConntrackdConf = `# This file is auto-generated, edit with caution!
@@ -580,9 +625,9 @@ vrrp_script monitor_zvr {
        rise 2                          # require 2 successes for OK
 }
 
-{{ range .MonitorIps }}
-vrrp_script monitor_{{.}} {
-	script "{{$.ScriptPath}}/check_monitor_{{.}}.sh"
+{{ range .MonitorConfigs }}
+vrrp_script {{.ScriptName}} {
+	script "{{$.ScriptPath}}/{{.ScriptFile}}"
 	interval 2
 	weight -2
 	fall 3
@@ -597,16 +642,27 @@ vrrp_instance vyos-ha {
 	priority 100
 	advert_int {{.Interval}}
 	nopreempt
+{{- if .VipV6 }}
+	virtual_ipaddress {
+{{ range .Vips }}
+            {{.VipAddress}}/{{.Prefix}} dev {{.NicName}} no_track
+{{ end }}
+	}
+{{- end }}
 
-	unicast_src_ip {{.LocalIp}}
+{{ if .VipV4 }}	unicast_src_ip {{.LocalIp}}
 	unicast_peer {
 		{{.PeerIp}}
 	}
-
+{{ else if .VipV6 }}	unicast_src_ip {{.LocalIpV6}}
+	unicast_peer {
+		{{.PeerIpV6}}
+	}
+{{end}}
 	track_script {
 		monitor_zvr
-{{ range .MonitorIps }}
-                monitor_{{.}}
+{{ range .MonitorConfigs }}
+                {{.ScriptName}}
 {{ end }}
 	}
 
@@ -637,9 +693,9 @@ vrrp_script monitor_zvr {
        rise 2                          # require 2 successes for OK
 }
 
-{{ range .MonitorIps }}
-vrrp_script monitor_{{.}} {
-	script "{{$.ScriptPath}}/check_monitor_{{.}}.sh"
+{{ range .MonitorConfigs }}
+vrrp_script {{.ScriptName}} {
+	script "{{$.ScriptPath}}/{{.ScriptFile}}"
 	interval 2
 	weight -2
 	fall 3
@@ -655,27 +711,24 @@ vrrp_instance vyos-ha {
 	advert_int {{.Interval}}
 	nopreempt
 
-{{ if .VipV4 }}
-	unicast_src_ip {{.LocalIp}}
+{{ if .VipV4 }}	unicast_src_ip {{.LocalIp}}
 	unicast_peer {
 		{{.PeerIp}}
 	}
-{{ else if .VipV6 }}
-	unicast_src_ip {{.LocalIpV6}}
+{{ else if .VipV6 }}	unicast_src_ip {{.LocalIpV6}}
 	unicast_peer {
 		{{.PeerIpV6}}
 	}
 {{end}}
-
 	track_script {
 		monitor_zvr
-{{ range .MonitorIps }}
-                monitor_{{.}}
+{{ range .MonitorConfigs }}
+                {{.ScriptName}}
 {{ end }}
 	}
 	virtual_ipaddress {
 {{ range .Vips }}
-            {{.Vip}}/{{.Prefix}}
+            {{.VipAddress}}/{{.Prefix}}
 {{ end }}
 	}
 
@@ -705,9 +758,9 @@ vrrp_script monitor_zvr {
        rise 2                          # require 2 successes for OK
 }
 
-{{ range .MonitorIps }}
-vrrp_script monitor_{{.}} {
-	script "{{$.ScriptPath}}/check_monitor_{{.}}.sh"
+{{ range .MonitorConfigs }}
+vrrp_script {{.ScriptName}} {
+	script "{{$.ScriptPath}}/{{.ScriptFile}}"
 	interval 2
 	weight -2
 	fall 3
@@ -737,12 +790,12 @@ vrrp_instance vyos-ha {
 
 	track_script {
 		monitor_zvr
-{{ range .MonitorIps }}
-                monitor_{{.}}
+{{ range .MonitorConfigs }}
+                {{.ScriptName}}
 {{ end }}
 	}
 	virtual_ipaddress {
-            {{.VipV4.Vip}}/{{.VipV4.Prefix}}
+            {{.VipV4.VipAddress}}/{{.VipV4.Prefix}}
 	}
 
 	notify_master "{{.MasterScript}} MASTER"
@@ -764,12 +817,12 @@ vrrp_instance vyos-ha-v6 {
 
 	track_script {
 		monitor_zvr
-{{ range .MonitorIps }}
-                monitor_{{.}}
+{{ range .MonitorConfigs }}
+                {{.ScriptName}}
 {{ end }}
 	}
 	virtual_ipaddress {
-            {{.VipV6.Vip}}/{{.VipV6.Prefix}}
+            {{.VipV6.VipAddress}}/{{.VipV6.Prefix}}
 	}
 
 	notify_master "{{.MasterScript}} MASTER"
@@ -793,10 +846,13 @@ sudo pidof %s > /dev/null
 		utils.PanicOnError(err)
 	}
 
-	for _, ip := range k.MonitorIps {
-		check_monitor := fmt.Sprintf("#! /bin/bash\nsudo /bin/ping %s -w 1 -c 1 > /dev/null", ip)
-		script_name := fmt.Sprintf("/check_monitor_%s.sh", ip)
-		check_monitor_file := filepath.Join(GetKeepalivedScriptPath(), script_name)
+	for _, monitor := range k.MonitorConfigs {
+		pingCommand := "sudo /bin/ping"
+		if utils.IsIpv6Address(monitor.Ip) {
+			pingCommand = "sudo /bin/ping -6"
+		}
+		check_monitor := fmt.Sprintf("#! /bin/bash\n%s %s -w 1 -c 1 > /dev/null", pingCommand, monitor.Ip)
+		check_monitor_file := filepath.Join(GetKeepalivedScriptPath(), monitor.ScriptFile)
 		if utils.IsEuler2203() {
 			err := os.WriteFile(check_monitor_file, []byte(check_monitor), 0700)
 			utils.PanicOnError(err)

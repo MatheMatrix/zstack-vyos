@@ -15,6 +15,24 @@ import (
 )
 
 var _ = Describe("zvrboot_test", func() {
+	It("[REPLACE_VYOS] zvrboot: ipv6-only skips IPv4 firewall address", func() {
+		n := &nic{ip6: "2001:db8::10"}
+		Expect(nicIPv4FirewallAddress(n)).To(BeEmpty())
+		Expect(nicSSHListenAddress(n)).To(Equal("2001:db8::10"))
+		Expect(setDestinationAddress([]string{"action accept"}, nicIPv4FirewallAddress(n))).To(Equal([]string{"action accept"}))
+	})
+	It("[REPLACE_VYOS] euler zvrboot: ipv6-only management nic uses IPv6 ssh listen address", func() {
+		n := &utils.NicInfo{Ip6: "2001:db8::10"}
+		Expect(managementNicSshListenAddress(n)).To(Equal("2001:db8::10"))
+		Expect(nicInfoFirewallAddress(n)).To(Equal("2001:db8::10"))
+
+		n.Ip = "192.168.1.10"
+		Expect(managementNicSshListenAddress(n)).To(Equal("192.168.1.10"))
+		Expect(nicInfoFirewallAddress(n)).To(Equal("192.168.1.10"))
+	})
+	It("[REPLACE_VYOS] zvrboot: skip empty firewall address", func() {
+		Expect(setDestinationAddress([]string{"action accept"}, "")).To(Equal([]string{"action accept"}))
+	})
 	It("[REPLACE_VYOS] zvrboot: pre env", func() {
 		utils.InitLog(utils.GetVyosUtLogDir()+"zvrboot_test.log", utils.IsRuingUT())
 		utils.SetEnableVyosCmdForUT(false)
@@ -47,7 +65,7 @@ var _ = Describe("zvrboot_test", func() {
 
 func checkSshMonitor() {
 	testMap := make(utils.CronjobMap)
-	err := utils.JsonLoadConfig(utils.CROND_JSON_FILE, &testMap)
+	err := utils.JsonLoadConfig(utils.GetCronjobJsonFile(), &testMap)
 	Expect(err).To(BeNil(), fmt.Sprintf("load crond json error: %+v", err))
 
 	cronJob := testMap[1]
@@ -58,7 +76,7 @@ func checkSshMonitor() {
 
 func cleanUpCrondConfig() {
 	bash := utils.Bash{
-		Command: fmt.Sprintf("rm -f %s/.zstack_config/cronjob", utils.GetZvrRootPath()),
+		Command: fmt.Sprintf("rm -f %s", utils.GetCronjobJsonFile()),
 		Sudo:    true,
 	}
 	bash.Run()
