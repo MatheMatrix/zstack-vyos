@@ -1257,7 +1257,25 @@ func mergeIpvsServiceUpdates(current map[string]map[string]LbInfo, lbs map[strin
 	return merged
 }
 
+func validateIpvsServicesSupportedByAppliance(lbs map[string]LbInfo) error {
+	if !utils.IsSLB() {
+		return nil
+	}
+
+	for _, lb := range lbs {
+		if isTcpIpvsDataPlane(lb) {
+			return fmt.Errorf("vyos slb doesn't support tcp ipvs listener %s", lb.ListenerUuid)
+		}
+	}
+
+	return nil
+}
+
 func RefreshIpvsService(lbs map[string]LbInfo, enableLog bool) error {
+	if err := validateIpvsServicesSupportedByAppliance(lbs); err != nil {
+		return err
+	}
+
 	gIpvsLbInfoMap = mergeIpvsServiceUpdates(gIpvsLbInfoMap, lbs)
 	gEnableLog = enableLog
 	err := RefreshIpvsBackend()

@@ -2263,7 +2263,8 @@ func RefreshLbInternal(cmd *RefreshLbCmd) {
 	}
 
 	if len(ipvsAdded) > 0 {
-		RefreshIpvsService(ipvsAdded, cmd.EnableHaproxyLog)
+		err := RefreshIpvsService(ipvsAdded, cmd.EnableHaproxyLog)
+		utils.PanicOnError(err)
 	}
 
 }

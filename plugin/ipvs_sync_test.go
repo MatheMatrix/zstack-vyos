@@ -58,6 +58,36 @@ func TestIpvsEnsureCommandsFallbackToEdit(t *testing.T) {
 	}
 }
 
+func TestUdpIpvsFullNatUsesMasqBackendPort(t *testing.T) {
+	lb := LbInfo{
+		LbUuid:           "lb-udp",
+		ListenerUuid:     "listener-udp",
+		Vip:              "172.24.7.153",
+		LoadBalancerPort: 19095,
+		InstancePort:     8080,
+		Mode:             LB_MODE_UDP,
+		DataPlane:        LB_DATA_PLANE_IPVS,
+		ForwardMode:      LB_FORWARD_MODE_FULL_NAT,
+		Parameters:       []string{"balancerAlgorithm::roundrobin"},
+	}
+	param := ParseLbParams(lb)
+	fs := NewIpvsFrontService(lb, param, lb.Vip, map[string]*IpvsBackendServer{})
+	bs := NewIpvsBackendServer("10.2.227.185", "8080", "100", fs)
+
+	if fs.ProtocolType != "-u" {
+		t.Fatalf("expected udp protocol, got %s", fs.ProtocolType)
+	}
+	if fs.ConnectionType != IpvsConnectionTypeNAT.String() {
+		t.Fatalf("expected IPVS Masq/NAT connection, got %s", fs.ConnectionType)
+	}
+	if got, want := makeIpvsAddServiceCommand(fs), "ipvsadm -A -u 172.24.7.153:19095 -s rr"; got != want {
+		t.Fatalf("unexpected udp add service command:\nwant: %s\n got: %s", want, got)
+	}
+	if got, want := makeIpvsAddBackendCommand(bs), "ipvsadm -a -u 172.24.7.153:19095 -r 10.2.227.185:8080 -m -w 100 -x 0 -y 0"; got != want {
+		t.Fatalf("unexpected udp backend command:\nwant: %s\n got: %s", want, got)
+	}
+}
+
 func TestTcpIpvsFullNatUsesSharedVRouterMasqSemantics(t *testing.T) {
 	lb := LbInfo{
 		LbUuid:           "lb-shared",
@@ -127,6 +157,55 @@ func TestTcpIpvsEmptyNicIpsRefreshRemovesOnlyTargetListener(t *testing.T) {
 			LbUuid:       "lb-shared",
 			ListenerUuid: "listener-remove",
 			Mode:         LB_MODE_TCP,
+			DataPlane:    LB_DATA_PLANE_IPVS,
+			ForwardMode:  LB_FORWARD_MODE_FULL_NAT,
+			NicIps:       []string{},
+		},
+	}
+
+	merged := mergeIpvsServiceUpdates(current, updates)
+	if _, ok := merged["lb-shared"]["listener-remove"]; ok {
+		t.Fatal("expected empty nicIps update to remove only the target listener")
+	}
+	if got := merged["lb-shared"]["listener-keep"].ListenerUuid; got != "listener-keep" {
+		t.Fatalf("expected sibling listener to be preserved, got %s", got)
+	}
+}
+
+func TestUdpIpvsEmptyNicIpsRefreshRemovesOnlyTargetListener(t *testing.T) {
+	current := map[string]map[string]LbInfo{
+		"lb-shared": {
+			"listener-remove": {
+				LbUuid:           "lb-shared",
+				ListenerUuid:     "listener-remove",
+				Mode:             LB_MODE_UDP,
+				DataPlane:        LB_DATA_PLANE_IPVS,
+				ForwardMode:      LB_FORWARD_MODE_FULL_NAT,
+				NicIps:           []string{"10.2.227.185"},
+				ServerGroups:     []ServerGroupInfo{{BackendServers: []BackendServerInfo{{Ip: "10.2.227.185", Weight: 100}}}},
+				InstancePort:     8080,
+				PublicNic:        "fa:00:00:00:00:01",
+				LoadBalancerPort: 19095,
+			},
+			"listener-keep": {
+				LbUuid:           "lb-shared",
+				ListenerUuid:     "listener-keep",
+				Mode:             LB_MODE_UDP,
+				DataPlane:        LB_DATA_PLANE_IPVS,
+				ForwardMode:      LB_FORWARD_MODE_FULL_NAT,
+				NicIps:           []string{"10.2.227.186"},
+				ServerGroups:     []ServerGroupInfo{{BackendServers: []BackendServerInfo{{Ip: "10.2.227.186", Weight: 100}}}},
+				InstancePort:     8081,
+				PublicNic:        "fa:00:00:00:00:01",
+				LoadBalancerPort: 19096,
+			},
+		},
+	}
+	updates := map[string]LbInfo{
+		"listener-remove": {
+			LbUuid:       "lb-shared",
+			ListenerUuid: "listener-remove",
+			Mode:         LB_MODE_UDP,
 			DataPlane:    LB_DATA_PLANE_IPVS,
 			ForwardMode:  LB_FORWARD_MODE_FULL_NAT,
 			NicIps:       []string{},
@@ -322,6 +401,36 @@ func TestIpvsFullNatSnatRulesSkipNatAndDrModes(t *testing.T) {
 
 	if rules := makeIpvsFullNatSnatRules(services); len(rules) != 0 {
 		t.Fatalf("expected nat/dr modes to skip full_nat snat rules, got %d", len(rules))
+	}
+}
+
+func TestVyosSlbRejectsTcpIpvsServices(t *testing.T) {
+	oldBootstrapInfo := utils.BootstrapInfo
+	utils.BootstrapInfo = map[string]interface{}{
+		"applianceVmSubType": utils.APPLIANCETYPE_SLB,
+	}
+	defer func() {
+		utils.BootstrapInfo = oldBootstrapInfo
+	}()
+
+	lb := LbInfo{
+		LbUuid:       "lb-slb",
+		ListenerUuid: "listener-tcp-ipvs",
+		Mode:         LB_MODE_TCP,
+		DataPlane:    LB_DATA_PLANE_IPVS,
+		ForwardMode:  LB_FORWARD_MODE_FULL_NAT,
+	}
+	err := validateIpvsServicesSupportedByAppliance(map[string]LbInfo{lb.ListenerUuid: lb})
+	if err == nil {
+		t.Fatal("expected vyos slb tcp ipvs listener to be rejected")
+	}
+	if !strings.Contains(err.Error(), "vyos slb doesn't support tcp ipvs listener listener-tcp-ipvs") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	lb.Mode = LB_MODE_UDP
+	if err := validateIpvsServicesSupportedByAppliance(map[string]LbInfo{lb.ListenerUuid: lb}); err != nil {
+		t.Fatalf("expected udp ipvs listener to stay supported on slb, got %v", err)
 	}
 }
 

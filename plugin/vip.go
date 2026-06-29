@@ -1816,6 +1816,43 @@ type VipCounter struct {
 	OutBytes   uint64
 }
 
+type VipCounterIptablesRule struct {
+	Destination  string
+	Destination6 string
+	Source       string
+	Source6      string
+}
+
+func ParseVipCounterFromIptables(chainName string, outbound bool) map[string]VipCounterIptablesRule {
+	rules := map[string]VipCounterIptablesRule{}
+	for _, ipVersion := range []int{utils.IP_VERSION_4, utils.IP_VERSION_6} {
+		table := utils.NewIpTablesByIpVersion(utils.NatTable, ipVersion)
+		for _, rule := range table.Rules {
+			if rule.GetChainName() != chainName || rule.GetComment() == "" {
+				continue
+			}
+
+			counterRule := rules[rule.GetComment()]
+			if outbound {
+				if ipVersion == utils.IP_VERSION_6 {
+					counterRule.Source6 = strings.TrimSuffix(rule.GetSrcIp(), "/128")
+				} else {
+					counterRule.Source = strings.TrimSuffix(rule.GetSrcIp(), "/32")
+				}
+			} else {
+				if ipVersion == utils.IP_VERSION_6 {
+					counterRule.Destination6 = strings.TrimSuffix(rule.GetDstIp(), "/128")
+				} else {
+					counterRule.Destination = strings.TrimSuffix(rule.GetDstIp(), "/32")
+				}
+			}
+			rules[rule.GetComment()] = counterRule
+		}
+	}
+
+	return rules
+}
+
 // SessionStat holds the parsed statistics for a single connection track entry.
 type SessionStat struct {
 	Protocol      string
