@@ -127,6 +127,16 @@ func makeIpvsFirewallRuleDescription(lb LbInfo) string {
 	return fmt.Sprintf("%s-%v-%v", utils.IpvsComment, lb.LbUuid, lb.ListenerUuid)
 }
 
+func needsTcpIpvsFullNatRule(fs *IpvsFrontendService) bool {
+	if fs == nil {
+		return false
+	}
+
+	return isTcpIpvsDataPlane(fs.LbInfo) &&
+		fs.LbInfo.ForwardMode == LB_FORWARD_MODE_FULL_NAT &&
+		fs.ConnectionType == IpvsConnectionTypeNAT.String()
+}
+
 type IpvsBackendServer struct {
 	/* for ipvsadm, ConnectionType is configure for each backend server */
 	ConnectionType string // "dr", "tunnel", "nat"
@@ -832,7 +842,8 @@ func refreshIpvsFirewallRuleByVyos(services map[string]*IpvsFrontendService) err
 
 func refreshIpvsFullNatRules(services map[string]*IpvsFrontendService) {
 	if !utils.IsSLB() {
-		// only slb need full nat rule
+		// Shared VRouter follows IPVS Masq plus its gateway return path.
+		// Do not install SLB-only SNAT rules on ordinary VRouter appliances.
 		return
 	}
 
@@ -1059,53 +1070,64 @@ func RefreshIpvsBackend() error {
 	return nil
 }
 
-func RefreshIpvsService(lbs map[string]LbInfo, enableLog bool) error {
-	tempLbMaps := map[string]map[string]LbInfo{}
-	for _, info := range lbs {
-		if _, ok := tempLbMaps[info.LbUuid]; !ok {
-			tempLbMaps[info.LbUuid] = make(map[string]LbInfo)
-			tempLbMaps[info.LbUuid][info.ListenerUuid] = info
-		} else {
-			tempLbMaps[info.LbUuid][info.ListenerUuid] = info
+func shouldDeleteIpvsListener(listener LbInfo) bool {
+	if len(listener.NicIps) == 0 {
+		log.Debugf("no nics: %s", listener.ListenerUuid)
+		return true
+	}
+
+	if len(listener.ServerGroups) == 0 {
+		log.Debugf("no server group: %s", listener.ListenerUuid)
+		return true
+	}
+
+	var servers []string
+	for _, serverGroup := range listener.ServerGroups {
+		for _, bs := range serverGroup.BackendServers {
+			servers = append(servers, bs.Ip)
+		}
+	}
+	if len(servers) == 0 {
+		log.Debugf("no server group backend: %s", listener.ListenerUuid)
+		return true
+	}
+
+	return false
+}
+
+func mergeIpvsServiceUpdates(current map[string]map[string]LbInfo, lbs map[string]LbInfo) map[string]map[string]LbInfo {
+	merged := map[string]map[string]LbInfo{}
+	for lbUuid, listeners := range current {
+		merged[lbUuid] = map[string]LbInfo{}
+		for listenerUuid, listener := range listeners {
+			merged[lbUuid][listenerUuid] = listener
 		}
 	}
 
-	for lbUuid, lb := range tempLbMaps {
-		for listenerUuid, listener := range lb {
-			/* if there is no backend, delete listener */
-			if len(listener.NicIps) == 0 {
-				log.Debugf("no nics: %s", listenerUuid)
-				delete(lb, listenerUuid)
-				continue
-			}
-
-			if len(listener.ServerGroups) == 0 {
-				log.Debugf("no server group: %s", listenerUuid)
-				delete(lb, listenerUuid)
-				continue
-			}
-
-			var servers []string
-			for _, serverGroup := range listener.ServerGroups {
-				for _, bs := range serverGroup.BackendServers {
-					servers = append(servers, bs.Ip)
-				}
-			}
-			if len(servers) == 0 {
-				log.Debugf("no server group backend: %s", listenerUuid)
-				delete(lb, listenerUuid)
-				continue
-			}
+	for _, listener := range lbs {
+		lbUuid := listener.LbUuid
+		listenerUuid := listener.ListenerUuid
+		if _, ok := merged[lbUuid]; !ok {
+			merged[lbUuid] = map[string]LbInfo{}
 		}
 
-		if len(lb) == 0 {
+		if shouldDeleteIpvsListener(listener) {
+			delete(merged[lbUuid], listenerUuid)
+		} else {
+			merged[lbUuid][listenerUuid] = listener
+		}
+
+		if len(merged[lbUuid]) == 0 {
 			log.Debugf("delete lb: %s", lbUuid)
-			delete(gIpvsLbInfoMap, lbUuid)
-		} else {
-			gIpvsLbInfoMap[lbUuid] = lb
+			delete(merged, lbUuid)
 		}
 	}
 
+	return merged
+}
+
+func RefreshIpvsService(lbs map[string]LbInfo, enableLog bool) error {
+	gIpvsLbInfoMap = mergeIpvsServiceUpdates(gIpvsLbInfoMap, lbs)
 	gEnableLog = enableLog
 	err := RefreshIpvsBackend()
 	utils.PanicOnError(err)

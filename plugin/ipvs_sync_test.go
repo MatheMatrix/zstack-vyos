@@ -29,6 +29,117 @@ func TestIpvsCommandBuildersUseTcpFullNatBackendPort(t *testing.T) {
 	}
 }
 
+func TestTcpIpvsFullNatUsesSharedVRouterMasqSemantics(t *testing.T) {
+	lb := LbInfo{
+		LbUuid:           "lb-shared",
+		ListenerUuid:     "listener-shared",
+		Vip:              "172.24.7.153",
+		LoadBalancerPort: 19094,
+		InstancePort:     8080,
+		Mode:             LB_MODE_TCP,
+		DataPlane:        LB_DATA_PLANE_IPVS,
+		ForwardMode:      LB_FORWARD_MODE_FULL_NAT,
+		NicIps:           []string{"10.2.226.104"},
+		Parameters:       []string{"balancerAlgorithm::roundrobin"},
+		ServerGroups: []ServerGroupInfo{{
+			Name:            "default-server-group",
+			ServerGroupUuid: "sg",
+			BackendServers:  []BackendServerInfo{{Ip: "10.2.226.104", Weight: 100}},
+		}},
+	}
+
+	param := ParseLbParams(lb)
+	fs := NewIpvsFrontService(lb, param, lb.Vip, map[string]*IpvsBackendServer{})
+	bs := NewIpvsBackendServer("10.2.226.104", "8080", "100", fs)
+	fs.BackendServers[bs.GetBackendKey()] = bs
+
+	if fs.ProtocolType != "-t" {
+		t.Fatalf("expected tcp protocol, got %s", fs.ProtocolType)
+	}
+	if fs.ConnectionType != IpvsConnectionTypeNAT.String() {
+		t.Fatalf("expected IPVS Masq/NAT connection, got %s", fs.ConnectionType)
+	}
+	if !needsTcpIpvsFullNatRule(fs) {
+		t.Fatal("expected shared tcp ipvs full_nat listener to be eligible for tcp ipvs rule handling")
+	}
+	if got, want := makeIpvsAddBackendCommand(bs), "ipvsadm -a -t 172.24.7.153:19094 -r 10.2.226.104:8080 -m -w 100 -x 0 -y 0"; got != want {
+		t.Fatalf("unexpected shared tcp ipvs backend command:\nwant: %s\n got: %s", want, got)
+	}
+}
+
+func TestTcpIpvsFullNatRuleEligibilityDoesNotMatchUdpOrHaproxyTcp(t *testing.T) {
+	udp := LbInfo{
+		Mode:             LB_MODE_UDP,
+		Vip:              "172.24.7.153",
+		LoadBalancerPort: 19094,
+		ForwardMode:      LB_FORWARD_MODE_FULL_NAT,
+	}
+	udpFs := NewIpvsFrontService(udp, ParseLbParams(udp), udp.Vip, map[string]*IpvsBackendServer{})
+	if needsTcpIpvsFullNatRule(udpFs) {
+		t.Fatal("expected udp ipvs listener not to match tcp ipvs full_nat rule handling")
+	}
+
+	haproxyTcp := LbInfo{
+		Mode:             LB_MODE_TCP,
+		Vip:              "172.24.7.153",
+		LoadBalancerPort: 19094,
+		ForwardMode:      LB_FORWARD_MODE_FULL_NAT,
+	}
+	haproxyFs := NewIpvsFrontService(haproxyTcp, ParseLbParams(haproxyTcp), haproxyTcp.Vip, map[string]*IpvsBackendServer{})
+	if needsTcpIpvsFullNatRule(haproxyFs) {
+		t.Fatal("expected haproxy tcp listener not to match tcp ipvs full_nat rule handling")
+	}
+}
+
+func TestTcpIpvsEmptyNicIpsRefreshRemovesOnlyTargetListener(t *testing.T) {
+	current := map[string]map[string]LbInfo{
+		"lb-shared": {
+			"listener-remove": {
+				LbUuid:           "lb-shared",
+				ListenerUuid:     "listener-remove",
+				Mode:             LB_MODE_TCP,
+				DataPlane:        LB_DATA_PLANE_IPVS,
+				ForwardMode:      LB_FORWARD_MODE_FULL_NAT,
+				NicIps:           []string{"10.2.226.104"},
+				ServerGroups:     []ServerGroupInfo{{BackendServers: []BackendServerInfo{{Ip: "10.2.226.104", Weight: 100}}}},
+				InstancePort:     8080,
+				PublicNic:        "fa:00:00:00:00:01",
+				LoadBalancerPort: 19094,
+			},
+			"listener-keep": {
+				LbUuid:           "lb-shared",
+				ListenerUuid:     "listener-keep",
+				Mode:             LB_MODE_TCP,
+				DataPlane:        LB_DATA_PLANE_IPVS,
+				ForwardMode:      LB_FORWARD_MODE_FULL_NAT,
+				NicIps:           []string{"10.2.226.105"},
+				ServerGroups:     []ServerGroupInfo{{BackendServers: []BackendServerInfo{{Ip: "10.2.226.105", Weight: 100}}}},
+				InstancePort:     8081,
+				PublicNic:        "fa:00:00:00:00:01",
+				LoadBalancerPort: 19095,
+			},
+		},
+	}
+	updates := map[string]LbInfo{
+		"listener-remove": {
+			LbUuid:       "lb-shared",
+			ListenerUuid: "listener-remove",
+			Mode:         LB_MODE_TCP,
+			DataPlane:    LB_DATA_PLANE_IPVS,
+			ForwardMode:  LB_FORWARD_MODE_FULL_NAT,
+			NicIps:       []string{},
+		},
+	}
+
+	merged := mergeIpvsServiceUpdates(current, updates)
+	if _, ok := merged["lb-shared"]["listener-remove"]; ok {
+		t.Fatal("expected empty nicIps update to remove only the target listener")
+	}
+	if got := merged["lb-shared"]["listener-keep"].ListenerUuid; got != "listener-keep" {
+		t.Fatalf("expected sibling listener to be preserved, got %s", got)
+	}
+}
+
 func TestTcpIpvsListenerIsRoutedToIpvsDataPlane(t *testing.T) {
 	lb := LbInfo{
 		Mode:        LB_MODE_TCP,
@@ -88,16 +199,14 @@ func TestIpvsCommandBuildersRejectInvalidAddress(t *testing.T) {
 
 func TestSameIpvsBackendComparesConnectionLimits(t *testing.T) {
 	current := &IpvsBackendServer{
-		ConnectionType: "-m",
-		Weight:         "100",
-		maxConnection:  10,
-		minConnection:  1,
+		ConnectionType:      "-m",
+		Weight:              "100",
+		IpvsFrontendService: &IpvsFrontendService{LbParams: LbParams{maxConnection: 10, minConnection: 1}},
 	}
 	desired := &IpvsBackendServer{
-		ConnectionType: "-m",
-		Weight:         "100",
-		maxConnection:  20,
-		minConnection:  1,
+		ConnectionType:      "-m",
+		Weight:              "100",
+		IpvsFrontendService: &IpvsFrontendService{LbParams: LbParams{maxConnection: 20, minConnection: 1}},
 	}
 
 	if sameIpvsBackend(current, desired) {
