@@ -25,7 +25,9 @@ LOG_DIR=`dirname $LOGFILE`; mkdir -p $LOG_DIR
 # ETH0_IP=`ip route | grep eth0 | awk '{printf $9}'`
 # for ZSTAC-19196 zhanyong.miao
 ETH0_IP=`ip -4 -o a show dev eth0 primary | awk '{print $4; exit}' | cut -f1 -d '/'`
-if [ x$ETH0_IP == "x" ]; then
+ETH0_IP6=`ip -6 -o a show dev eth0 scope global | awk '{print $4; exit}' | cut -f1 -d '/'`
+ETH0_LISTEN_IP=${ETH0_IP:-$ETH0_IP6}
+if [ x$ETH0_LISTEN_IP == "x" ]; then
    err_exit "unable to get the IP of eth0"
 fi
 
@@ -68,7 +70,7 @@ do_start() {
     cleanup_tmp_dir
     chown -R $USER:users $HOMDIR
     su - $USER -c "echo $(date) start zstack virtual router >> $BOOTLOG"
-    su - $USER -c "sudo nohup $SERVER -ip $ETH0_IP -logfile $LOGFILE >>$BOOTLOG 2>&1 < /dev/null &"
+    su - $USER -c "sudo nohup $SERVER -ip $ETH0_LISTEN_IP -logfile $LOGFILE >>$BOOTLOG 2>&1 < /dev/null &"
 
     sleep 1
 
@@ -81,7 +83,7 @@ do_start() {
         then
             echo "failed, retrying the $retry time"
             su - $USER -c "echo $(date) start zstack virtual router failed, retrying the $retry time >> $BOOTLOG"
-            su - $USER -c "sudo nohup $SERVER -ip $ETH0_IP -logfile $LOGFILE >>$BOOTLOG 2>&1 < /dev/null &"
+            su - $USER -c "sudo nohup $SERVER -ip $ETH0_LISTEN_IP -logfile $LOGFILE >>$BOOTLOG 2>&1 < /dev/null &"
             sleep $(( retry++ ))
         else
             ((retry=maxRetries+1))

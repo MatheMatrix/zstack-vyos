@@ -90,6 +90,14 @@ func TestBuildSnatRsyslogConf(t *testing.T) {
 			t.Fatalf("expect conf contains %s", c)
 		}
 	}
+
+	conf = buildSnatRsyslogConf("2001:db8::10")
+	if !strings.Contains(conf, "target=\"2001:db8::10\"") {
+		t.Fatalf("expect rsyslog IPv6 target to be raw IP, got %s", conf)
+	}
+	if strings.Contains(conf, "target=\"[2001:db8::10]\"") {
+		t.Fatalf("expect rsyslog IPv6 target not to be bracketed, got %s", conf)
+	}
 }
 
 func TestBuildSnatLogRuntimeEnv(t *testing.T) {
@@ -115,6 +123,25 @@ func TestBuildSnatLogRuntimeEnv(t *testing.T) {
 		if !strings.Contains(content, c) {
 			t.Fatalf("expect runtime env contains %s", c)
 		}
+	}
+}
+
+func TestGetSnatLogRuntimeConfigUsesIpv6OnlyManagementNic(t *testing.T) {
+	original := utils.BootstrapInfo
+	defer func() {
+		utils.BootstrapInfo = original
+	}()
+
+	utils.BootstrapInfo = map[string]interface{}{
+		"uuid": "vpc-uuid-1",
+		"managementNic": map[string]interface{}{
+			"ip6": "2001:db8::10",
+		},
+		"additionalNics": []interface{}{},
+	}
+
+	if conf := getSnatLogRuntimeConfig(); conf.MgmtIP != "2001:db8::10" {
+		t.Fatalf("expect IPv6-only management IP in runtime config, got %+v", conf)
 	}
 }
 

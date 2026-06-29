@@ -441,7 +441,7 @@ func (r *IpTableRule) isMatcherEqual(o *IpTableRule) error {
 	}
 
 	if r.ipvs != o.ipvs {
-		return fmt.Errorf("not match, old ipvs: %s, new ipvs: %s", r.ipvs, o.ipvs)
+		return fmt.Errorf("not match, old ipvs: %t, new ipvs: %t", r.ipvs, o.ipvs)
 	}
 
 	if r.ipvsVaddr != o.ipvsVaddr {

@@ -106,9 +106,7 @@ func getSnatLogRuntimeConfig() snatLogRuntimeConfig {
 	conf.MnPeerIP = getBootstrapStringValue("managementPeerNodeIp")
 
 	if mgmtNic, ok := utils.BootstrapInfo["managementNic"].(map[string]interface{}); ok {
-		if ip, ok := mgmtNic["ip"].(string); ok {
-			conf.MgmtIP = strings.TrimSpace(ip)
-		}
+		conf.MgmtIP = utils.GetManagementNicAddress(mgmtNic)
 	}
 
 	return conf

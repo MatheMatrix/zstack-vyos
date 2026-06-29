@@ -88,6 +88,7 @@ run
 mount /dev/openeuler/root /
 mkdir-p /usr/local/zstack/zsn-agent/bin
 upload $tmpdir/zsn-agent $ZSN_DIR/zsn-agent
+chmod 755 $ZSN_DIR/zsn-agent
 upload $tmpdir/zstack-network-agent  /usr/local/bin/zstack-network-agent
 chmod 777  /usr/local/bin/zstack-network-agent
 upload $BOOTSCRIPT   /usr/local/bin/zstack-vrouter-bootup

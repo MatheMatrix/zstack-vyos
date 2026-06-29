@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	CROND_CONFIG_FILE      = "/etc/cron.d/zstack_cronjob"
+	CROND_CONFIG_FILE = "/etc/cron.d/zstack_cronjob"
 )
 
 func getCrondConfigFileTemp() string {
@@ -20,6 +20,10 @@ func getCrondConfigFileTemp() string {
 
 func getCrondJsonFile() string {
 	return filepath.Join(GetZvrRootPath(), ".zstack_config/cronjob")
+}
+
+func GetCronjobJsonFile() string {
+	return getCrondJsonFile()
 }
 
 type CronjobMap map[int]*Cronjob
@@ -143,7 +147,7 @@ func (c CronjobMap) ConfigService() error {
 				continue
 			}
 			log.Debugf("cronjob[%d] will be add", k)
-			newCronjobAttrs[i] =v
+			newCronjobAttrs[i] = v
 			i++
 		}
 	}
