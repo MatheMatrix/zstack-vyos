@@ -204,6 +204,7 @@ type LbParams struct {
 	httpRedirectHttps     bool
 	accessControlStatus   bool
 	balancerAlgorithm     string
+	dataPlane             string
 	aclEntry              []string
 }
 
@@ -264,6 +265,8 @@ func ParseLbParams(lb LbInfo) LbParams {
 			}
 		case "balancerAlgorithm":
 			param.balancerAlgorithm = kv[1]
+		case "dataPlane":
+			param.dataPlane = kv[1]
 		}
 	}
 
@@ -2263,6 +2266,15 @@ func RefreshLbInternal(cmd *RefreshLbCmd) {
 
 	EnableHaproxyLog = cmd.EnableHaproxyLog
 	for _, lb := range cmd.Lbs {
+		if isTcpIpvsDataPlane(lb) {
+			listener := GetListener(lb)
+			if listener != nil {
+				toDeleted = append(toDeleted, listener)
+			}
+			ipvsAdded[lb.ListenerUuid] = lb
+			continue
+		}
+
 		if isIpvsListener(lb) {
 			ipvsAdded[lb.ListenerUuid] = lb
 			continue
@@ -2461,7 +2473,7 @@ func NewLbPrometheusCollector() MetricCollector {
 		curSessionNumEntry: prom.NewDesc(
 			"zstack_lb_cur_session_num",
 			"Backend server active session number",
-			[]string{LB_LISTENER_UUID, LB_LISTENER_BACKEND_IP, LB_UUID}, nil,
+			[]string{LB_LISTENER_UUID, LB_LISTENER_BACKEND_IP, LB_UUID, LB_ServerGroup_UUID}, nil,
 		),
 		inByteEntry: prom.NewDesc(
 			"zstack_lb_in_bytes",
@@ -2482,17 +2494,17 @@ func NewLbPrometheusCollector() MetricCollector {
 		refusedSessionNumEntry: prom.NewDesc(
 			"zstack_lb_refused_session_num",
 			"Backend server refused session number",
-			[]string{LB_LISTENER_UUID, LB_LISTENER_BACKEND_IP, LB_UUID}, nil,
+			[]string{LB_LISTENER_UUID, LB_LISTENER_BACKEND_IP, LB_UUID, LB_ServerGroup_UUID}, nil,
 		),
 		totalSessionNumEntry: prom.NewDesc(
 			"zstack_lb_total_session_num",
 			"Backend server total session number",
-			[]string{LB_LISTENER_UUID, LB_LISTENER_BACKEND_IP, LB_UUID}, nil,
+			[]string{LB_LISTENER_UUID, LB_LISTENER_BACKEND_IP, LB_UUID, LB_ServerGroup_UUID}, nil,
 		),
 		concurrentSessionUsageEntry: prom.NewDesc(
 			"zstack_lb_concurrent_session_num",
 			"Backend server session number including active and waiting state session",
-			[]string{LB_LISTENER_UUID, LB_LISTENER_BACKEND_IP, LB_UUID}, nil,
+			[]string{LB_LISTENER_UUID, LB_LISTENER_BACKEND_IP, LB_UUID, LB_ServerGroup_UUID}, nil,
 		),
 		hrsp1xxEntry: prom.NewDesc(
 			"zstack_lb_hrsp1xx",
@@ -2568,10 +2580,10 @@ func TransformToMetric(c *loadBalancerCollector, listenerUuid string, listener L
 		ch <- prom.MustNewConstMetric(c.statusEntry, prom.GaugeValue, float64(cnt.Status), cnt.listenerUuid, cnt.ip, lbUuid, cnt.serverGroupUuid)
 		ch <- prom.MustNewConstMetric(c.inByteEntry, prom.GaugeValue, float64(cnt.bytesIn), cnt.listenerUuid, cnt.ip, lbUuid, cnt.serverGroupUuid)
 		ch <- prom.MustNewConstMetric(c.outByteEntry, prom.GaugeValue, float64(cnt.bytesOut), cnt.listenerUuid, cnt.ip, lbUuid, cnt.serverGroupUuid)
-		ch <- prom.MustNewConstMetric(c.curSessionNumEntry, prom.GaugeValue, float64(cnt.sessionNumber), cnt.listenerUuid, cnt.ip, lbUuid)
-		ch <- prom.MustNewConstMetric(c.refusedSessionNumEntry, prom.GaugeValue, float64(cnt.refusedSessionNumber), cnt.listenerUuid, cnt.ip, lbUuid)
-		ch <- prom.MustNewConstMetric(c.totalSessionNumEntry, prom.GaugeValue, float64(cnt.totalSessionNumber), cnt.listenerUuid, cnt.ip, lbUuid)
-		ch <- prom.MustNewConstMetric(c.concurrentSessionUsageEntry, prom.GaugeValue, float64(cnt.concurrentSessionNumber), cnt.listenerUuid, cnt.ip, lbUuid)
+		ch <- prom.MustNewConstMetric(c.curSessionNumEntry, prom.GaugeValue, float64(cnt.sessionNumber), cnt.listenerUuid, cnt.ip, lbUuid, cnt.serverGroupUuid)
+		ch <- prom.MustNewConstMetric(c.refusedSessionNumEntry, prom.GaugeValue, float64(cnt.refusedSessionNumber), cnt.listenerUuid, cnt.ip, lbUuid, cnt.serverGroupUuid)
+		ch <- prom.MustNewConstMetric(c.totalSessionNumEntry, prom.GaugeValue, float64(cnt.totalSessionNumber), cnt.listenerUuid, cnt.ip, lbUuid, cnt.serverGroupUuid)
+		ch <- prom.MustNewConstMetric(c.concurrentSessionUsageEntry, prom.GaugeValue, float64(cnt.concurrentSessionNumber), cnt.listenerUuid, cnt.ip, lbUuid, cnt.serverGroupUuid)
 	}
 
 	ch <- prom.MustNewConstMetric(c.curSessionUsageEntry, prom.GaugeValue, float64(sessionNum*100/maxSessionNum), listenerUuid, lbUuid)
