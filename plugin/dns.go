@@ -20,9 +20,7 @@ type dnsInfo struct {
 }
 
 type setDnsCmd struct {
-	Dns           []dnsInfo `json:"dns"`
-	DnsForwardMax int       `json:"dnsForwardMax"`
-	CacheSize     int       `json:"cacheSize"`
+	Dns []dnsInfo `json:"dns"`
 }
 
 type removeDnsCmd struct {
@@ -88,7 +86,7 @@ func setDnsHandler(ctx *server.CommandContext) interface{} {
 }
 
 func setDns(cmd *setDnsCmd) interface{} {
-	setDnsmasqOptions(cmd.DnsForwardMax, cmd.CacheSize)
+	resetDnsmasqOptions()
 	dnsByMac := make(map[string][]dnsInfo)
 	for _, info := range cmd.Dns {
 		dns := dnsByMac[info.NicMac]
