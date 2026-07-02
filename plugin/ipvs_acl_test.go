@@ -112,3 +112,22 @@ func TestTcpIpvsBlacklistRejectsMatchedSources(t *testing.T) {
 		t.Fatalf("unexpected tcp blacklist reject rule: %s", reject.String())
 	}
 }
+
+func TestCleanupIpvsAclChainsOnlyRemovesIpvsAclChains(t *testing.T) {
+	table := &utils.IpTables{Name: utils.FirewallTable}
+	table.AddChain("acl-rules@eth1@33013")
+	table.AddChain("acl-rules@eth0@33014")
+	table.AddChain("eth1.local")
+
+	cleanupIpvsAclChains(table)
+
+	if table.CheckChain("acl-rules@eth1@33013") {
+		t.Fatal("expected stale shared ipvs acl chain to be removed")
+	}
+	if table.CheckChain("acl-rules@eth0@33014") {
+		t.Fatal("expected stale separate ipvs acl chain to be removed")
+	}
+	if !table.CheckChain("eth1.local") {
+		t.Fatal("non-ipvs acl chain must not be removed")
+	}
+}
