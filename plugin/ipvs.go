@@ -27,6 +27,7 @@ const (
 	IPVS_LOG_IPSET_NAME      = "ipvs-set"
 	IPVS_LOG_IPSET6_NAME     = "ipvs6-set"
 	IPVS_LOG_PREFIX          = "ipvs-log"
+	IPVS_ACL_CHAIN_PREFIX    = "acl-rules@"
 
 	IPVS_HEALTH_CHECK_BIN_FILE      = "/usr/local/bin/ipvsHealthCheck"
 	IPVS_HEALTH_CHECK_BIN_FILE_VYOS = "/opt/vyatta/sbin/ipvsHealthCheck"
@@ -113,12 +114,11 @@ func GetIpvsSchedulerTypeFromString(sch string) IpvsSchedulerType {
 
 func getIpvsConnectionTypeFromForwardMode(forwardMode string) IpvsConnectionType {
 	switch strings.ToLower(forwardMode) {
-	case LB_FORWARD_MODE_FULL_NAT:
+	case LB_FORWARD_MODE_FULL_NAT, LB_FORWARD_MODE_NAT:
 		return IpvsConnectionTypeNAT
+	case LB_FORWARD_MODE_DR:
+		return IpvsConnectionTypeDR
 	default:
-		// TODO(SUG-2795): add explicit nat/dr mappings when those forward
-		// modes are supported. Keep NAT as the current fallback for existing
-		// UDP IPVS listeners, which do not carry forwardMode.
 		return IpvsConnectionTypeNAT
 	}
 }
@@ -584,6 +584,10 @@ func makeIpvsAddServiceCommand(fs *IpvsFrontendService) string {
 	return fmt.Sprintf("ipvsadm -A %s %s -s %s", proto, fs.frontServiceAddress(), fs.Scheduler)
 }
 
+func makeIpvsEnsureServiceCommand(fs *IpvsFrontendService) string {
+	return fmt.Sprintf("%s || %s", makeIpvsAddServiceCommand(fs), makeIpvsEditServiceCommand(fs))
+}
+
 func makeIpvsEditServiceCommand(fs *IpvsFrontendService) string {
 	proto := ipvsProtocolArg(fs.ProtocolType)
 	return fmt.Sprintf("ipvsadm -E %s %s -s %s", proto, fs.frontServiceAddress(), fs.Scheduler)
@@ -599,6 +603,10 @@ func makeIpvsAddBackendCommand(bs *IpvsBackendServer) string {
 	return fmt.Sprintf("ipvsadm -a %s %s -r %s %s -w %s -x %d -y %d",
 		proto, bs.frontServiceAddress(), bs.backendAddress(), bs.ConnectionType, bs.Weight,
 		bs.maxConnection, bs.minConnection)
+}
+
+func makeIpvsEnsureBackendCommand(bs *IpvsBackendServer) string {
+	return fmt.Sprintf("%s || %s", makeIpvsAddBackendCommand(bs), makeIpvsEditBackendCommand(bs))
 }
 
 func makeIpvsEditBackendCommand(bs *IpvsBackendServer) string {
@@ -645,7 +653,7 @@ func syncIpvsadm(oldConf, desiredConf *IpvsConf) error {
 		}
 		current := currentConf.Services[key]
 		if current == nil {
-			appendIpvsCommand(&commands, makeIpvsAddServiceCommand(fs))
+			appendIpvsCommand(&commands, makeIpvsEnsureServiceCommand(fs))
 		} else if current.Scheduler != fs.Scheduler {
 			appendIpvsCommand(&commands, makeIpvsEditServiceCommand(fs))
 		}
@@ -660,7 +668,7 @@ func syncIpvsadm(oldConf, desiredConf *IpvsConf) error {
 			}
 
 			if currentBackend == nil {
-				appendIpvsCommand(&commands, makeIpvsAddBackendCommand(bs))
+				appendIpvsCommand(&commands, makeIpvsEnsureBackendCommand(bs))
 			} else if !sameIpvsBackend(currentBackend, bs) {
 				appendIpvsCommand(&commands, makeIpvsEditBackendCommand(bs))
 			}
@@ -830,19 +838,95 @@ func refreshIpvsFirewallRuleByVyos(services map[string]*IpvsFrontendService) err
 	return nil
 }
 
-func refreshIpvsFullNatRules(services map[string]*IpvsFrontendService) {
-	if !utils.IsSLB() {
-		// Shared VRouter follows IPVS Masq plus its gateway return path.
-		// Do not install SLB-only SNAT rules on ordinary VRouter appliances.
-		return
-	}
-
-	table := utils.NewIpTables(utils.NatTable)
+func makeIpvsFullLogRules(services map[string]*IpvsFrontendService) []*utils.IpTableRule {
 	var rules []*utils.IpTableRule
 
-	table.RemoveIpTableRuleByComments(utils.IpvsComment)
+	if !gEnableLog {
+		return rules
+	}
 
 	for _, fs := range services {
+		if !fs.LbInfo.EnableFullLog {
+			continue
+		}
+
+		if ip := net.ParseIP(fs.FrontIp); ip != nil && ip.To4() == nil {
+			/* TODO: add ipv6 rules */
+			continue
+		}
+
+		rule := utils.NewIpTableRule(IPVS_LOG_CHAIN_NAME)
+		rule.SetIpvs(true).SetIpvsVaddr(fs.FrontIp).SetIpvsVport(fs.FrontPort)
+		rule.SetActionLog(IPVS_LOG_PREFIX).SetComment(utils.IpvsComment)
+		rules = append(rules, rule)
+	}
+
+	return rules
+}
+
+func shouldInstallIpvsFullNatSnat(fs *IpvsFrontendService) bool {
+	return fs.LbInfo.Mode != LB_MODE_TCP || strings.EqualFold(fs.LbInfo.ForwardMode, LB_FORWARD_MODE_FULL_NAT)
+}
+
+func shouldBypassPrivateNicSnat(fs *IpvsFrontendService) bool {
+	return fs.LbInfo.Mode == LB_MODE_TCP &&
+		(strings.EqualFold(fs.LbInfo.ForwardMode, LB_FORWARD_MODE_NAT) ||
+			strings.EqualFold(fs.LbInfo.ForwardMode, LB_FORWARD_MODE_DR))
+}
+
+func isIpv6Address(ip string) bool {
+	parsed := net.ParseIP(ip)
+	return parsed != nil && parsed.To4() == nil
+}
+
+func makeIpvsFullNatSnatRule(fs *IpvsFrontendService, bs *IpvsBackendServer, proto, nicIp string) *utils.IpTableRule {
+	rule := utils.NewIpTableRule(IPVS_FULL_NAT_CHAIN_NAME)
+	rule.SetIpvs(true).SetIpvsVaddr(fs.FrontIp).SetIpvsVport(fs.FrontPort)
+	rule.SetDstIp(bs.BackendIp + "/32").SetDstPort(bs.BackendPort).SetProto(proto)
+	rule.SetAction(utils.IPTABLES_ACTION_SNAT).SetSnatTargetIp(nicIp)
+	rule.SetComment(utils.IpvsComment).SetPriority(utils.IpvsSnatRulePriority)
+	return rule
+}
+
+func getIpvsPrivateNicSnatBypassDstIp(fs *IpvsFrontendService, bs *IpvsBackendServer) string {
+	if strings.EqualFold(fs.LbInfo.ForwardMode, LB_FORWARD_MODE_DR) {
+		return fs.FrontIp
+	}
+
+	return bs.BackendIp
+}
+
+func getIpvsPrivateNicSnatBypassDstPort(fs *IpvsFrontendService, bs *IpvsBackendServer) string {
+	if strings.EqualFold(fs.LbInfo.ForwardMode, LB_FORWARD_MODE_DR) {
+		return fs.FrontPort
+	}
+
+	return bs.BackendPort
+}
+
+func makeIpvsPrivateNicSnatBypassRule(fs *IpvsFrontendService, bs *IpvsBackendServer, proto string) *utils.IpTableRule {
+	dstIp := getIpvsPrivateNicSnatBypassDstIp(fs, bs)
+	dstPort := getIpvsPrivateNicSnatBypassDstPort(fs, bs)
+	rule := utils.NewIpTableRule(utils.RULESET_SNAT.String())
+	rule.SetIpvs(true).SetIpvsVaddr(fs.FrontIp).SetIpvsVport(fs.FrontPort)
+	rule.SetDstIp(dstIp + "/32").SetDstPort(dstPort).SetProto(proto)
+	rule.SetAction(utils.IPTABLES_ACTION_ACCEPT)
+	rule.SetComment(utils.IpvsComment)
+	return rule
+}
+
+func makeIpvsFullNatSnatRules(services map[string]*IpvsFrontendService) []*utils.IpTableRule {
+	var rules []*utils.IpTableRule
+
+	for _, fs := range services {
+		if !shouldInstallIpvsFullNatSnat(fs) {
+			continue
+		}
+		if isIpv6Address(fs.FrontIp) {
+			/* TODO: add ipv6 rules */
+			continue
+		}
+
 		log.Debugf("refreshIpvsFullNatRules service %+v", fs)
 		proto := utils.IPTABLES_PROTO_UDP
 		if fs.ProtocolType == "-t" || fs.ProtocolType == "tcp" {
@@ -859,18 +943,70 @@ func refreshIpvsFullNatRules(services map[string]*IpvsFrontendService) {
 			nicname = strings.TrimSpace(nicname)
 			nicIp, err := utils.GetIpByNicName(nicname)
 			utils.PanicOnError(err)
-			rule := utils.NewIpTableRule(IPVS_FULL_NAT_CHAIN_NAME)
-			rule.SetDstIp(bs.BackendIp + "/32").SetDstPort(bs.BackendPort).SetProto(proto)
-			rule.SetAction(utils.IPTABLES_ACTION_SNAT).SetSnatTargetIp(nicIp)
-			rule.SetComment(utils.IpvsComment)
-			rules = append(rules, rule)
+			rules = append(rules, makeIpvsFullNatSnatRule(fs, bs, proto, nicIp))
 		}
 	}
 
-	if gEnableLog {
-		rule := utils.NewIpTableRule(IPVS_LOG_CHAIN_NAME)
-		rule.SetActionLog(IPVS_LOG_PREFIX)
-		rules = append(rules, rule)
+	return rules
+}
+
+func makeIpvsPrivateNicSnatBypassRules(services map[string]*IpvsFrontendService) []*utils.IpTableRule {
+	var rules []*utils.IpTableRule
+
+	for _, fs := range services {
+		if !shouldBypassPrivateNicSnat(fs) {
+			continue
+		}
+		if isIpv6Address(fs.FrontIp) {
+			/* TODO: add ipv6 rules */
+			continue
+		}
+
+		proto := utils.IPTABLES_PROTO_UDP
+		if fs.ProtocolType == "-t" || fs.ProtocolType == "tcp" {
+			proto = utils.IPTABLES_PROTO_TCP
+		}
+
+		for _, bs := range fs.BackendServers {
+			dstIp := getIpvsPrivateNicSnatBypassDstIp(fs, bs)
+			if strings.Contains(dstIp, ":") {
+				/* TODO: add ipv6 rules */
+				continue
+			}
+
+			rules = append(rules, makeIpvsPrivateNicSnatBypassRule(fs, bs, proto))
+		}
+	}
+
+	return rules
+}
+
+func makeIpvsNatRulesForAppliance(services map[string]*IpvsFrontendService, isSLB bool) []*utils.IpTableRule {
+	rules := makeIpvsFullLogRules(services)
+	if !isSLB {
+		return append(rules, makeIpvsPrivateNicSnatBypassRules(services)...)
+	}
+
+	return append(rules, makeIpvsFullNatSnatRules(services)...)
+}
+
+func refreshIpvsFullNatRules(services map[string]*IpvsFrontendService) {
+	table := utils.NewIpTables(utils.NatTable)
+	isSLB := utils.IsSLB()
+	rules := makeIpvsNatRulesForAppliance(services, isSLB)
+
+	table.RemoveIpTableRuleByComments(utils.IpvsComment)
+
+	if !isSLB {
+		// Shared VRouter must bypass private-nic SNAT for TCP NAT/DR IPVS
+		// flows, but still skips SLB-only full_nat SNAT rules.
+		if len(rules) != 0 {
+			table.AddIpTableRules(rules)
+		}
+
+		err := table.Apply()
+		utils.PanicOnError(err)
+		return
 	}
 
 	if len(rules) != 0 {
@@ -886,6 +1022,7 @@ func refreshIpvsFirewallRuleByIptables(services map[string]*IpvsFrontendService)
 	var rules []*utils.IpTableRule
 
 	table.RemoveIpTableRuleByComments(utils.IpvsComment)
+	cleanupIpvsAclChains(table)
 
 	for _, fs := range services {
 		nicname, err := utils.GetNicNameByMac(fs.LbInfo.PublicNic)
@@ -941,7 +1078,7 @@ func addAclRules(table *utils.IpTables, fs *IpvsFrontendService, nicname string,
 	}
 
 	// create new chain
-	chainName := fmt.Sprintf("acl-rules@%s@%v", nicname, fs.FrontPort)
+	chainName := fmt.Sprintf("%s%s@%v", IPVS_ACL_CHAIN_PREFIX, nicname, fs.FrontPort)
 	table.AddChain(chainName)
 	rule := utils.NewIpTableRule(utils.GetRuleSetName(nicname, utils.RULESET_LOCAL))
 	// Make sure this firewall rule is positioned at the top
@@ -983,6 +1120,10 @@ func addAclRules(table *utils.IpTables, fs *IpvsFrontendService, nicname string,
 	rules = append(rules, rule)
 
 	return rules
+}
+
+func cleanupIpvsAclChains(table *utils.IpTables) {
+	table.DeleteChainByKey(IPVS_ACL_CHAIN_PREFIX)
 }
 
 func RefreshIpvsBackend() error {

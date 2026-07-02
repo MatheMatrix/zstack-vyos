@@ -352,6 +352,14 @@ var _ = Describe("vyosIptables_test", func() {
 		priority, err := getPriorityFromComment(rule)
 		Expect(err).To(BeNil(), fmt.Sprintf("get priority failed: %v", err))
 		Expect(priority == 1234).To(BeTrue(), fmt.Sprintf("get priority failed: %d", priority))
+
+		rule = NewIpTableRule(RULESET_SNAT.String())
+		rule.SetComment(IpvsComment)
+		priority, err = getPriorityFromComment(rule)
+		Expect(err).To(BeNil(), fmt.Sprintf("get ipvs snat priority failed: %v", err))
+		Expect(priority < snatRulesPriority[PrivateNicSNATComment]).To(BeTrue(),
+			fmt.Sprintf("ipvs snat priority %d must be before private-local snat %d",
+				priority, snatRulesPriority[PrivateNicSNATComment]))
 	})
 
 	It("vyosIptables_test add rule by customer", func() {

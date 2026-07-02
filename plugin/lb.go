@@ -44,6 +44,8 @@ const (
 
 	LB_DATA_PLANE_IPVS       = "ipvs"
 	LB_FORWARD_MODE_FULL_NAT = "full_nat"
+	LB_FORWARD_MODE_NAT      = "nat"
+	LB_FORWARD_MODE_DR       = "dr"
 
 	LB_BACKEND_PREFIX_REG = "^nic-"
 
@@ -269,11 +271,11 @@ func isIpvsDataPlane(info LbInfo) bool {
 		return false
 	}
 
-	return strings.EqualFold(info.DataPlane, LB_DATA_PLANE_IPVS) && strings.EqualFold(info.ForwardMode, LB_FORWARD_MODE_FULL_NAT)
+	return strings.EqualFold(info.DataPlane, LB_DATA_PLANE_IPVS)
 }
 
 func isTcpIpvsDataPlane(info LbInfo) bool {
-	return info.Mode == LB_MODE_TCP && strings.EqualFold(info.DataPlane, LB_DATA_PLANE_IPVS) && strings.EqualFold(info.ForwardMode, LB_FORWARD_MODE_FULL_NAT)
+	return info.Mode == LB_MODE_TCP && strings.EqualFold(info.DataPlane, LB_DATA_PLANE_IPVS)
 }
 
 type Listener interface {
