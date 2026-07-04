@@ -9,6 +9,8 @@ import (
 const (
 	IPTABLES_RULENUMBER_9999 = 9999
 	IPTABLES_RULENUMBER_MAX  = 10000
+
+	IpvsSnatRulePriority = 5000
 )
 
 const (
@@ -88,6 +90,7 @@ var snatRulesPriority = map[string]int{
 	SystemTopRule:         1,
 	IpsecRuleComment:      1000,
 	EipRuleComment:        2000,
+	IpvsComment:           IpvsSnatRulePriority,
 	PrivateNicSNATComment: 6000,
 	SNATComment:           7000,
 	SystemLastLastRule:    IPTABLES_RULENUMBER_9999,
