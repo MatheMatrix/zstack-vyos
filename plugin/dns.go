@@ -28,8 +28,10 @@ type removeDnsCmd struct {
 }
 
 type setVpcDnsCmd struct {
-	Dns    []string `json:"dns"`
-	NicMac []string `json:"nicMac"`
+	Dns           []string `json:"dns"`
+	NicMac        []string `json:"nicMac"`
+	DnsForwardMax int      `json:"dnsForwardMax"`
+	CacheSize     int      `json:"cacheSize"`
 }
 
 var dnsServers map[string]string
@@ -84,6 +86,7 @@ func setDnsHandler(ctx *server.CommandContext) interface{} {
 }
 
 func setDns(cmd *setDnsCmd) interface{} {
+	resetDnsmasqOptions()
 	dnsByMac := make(map[string][]dnsInfo)
 	for _, info := range cmd.Dns {
 		dns := dnsByMac[info.NicMac]
@@ -145,6 +148,7 @@ func removeDnsHandler(ctx *server.CommandContext) interface{} {
 }
 
 func removeDns(cmd *removeDnsCmd) interface{} {
+	resetDnsmasqOptions()
 	for _, info := range cmd.Dns {
 		delete(dnsServers, info.DnsAddress)
 	}
@@ -163,6 +167,7 @@ func setVpcDnsHandler(ctx *server.CommandContext) interface{} {
 }
 
 func setVpcDns(cmd *setVpcDnsCmd) interface{} {
+	setDnsmasqOptions(cmd.DnsForwardMax, cmd.CacheSize)
 	var tree *server.VyosConfigTree
 	if !utils.IsSkipVyosIptables() {
 		tree = server.NewParserFromShowConfiguration().Tree
