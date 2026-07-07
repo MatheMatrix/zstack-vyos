@@ -46,9 +46,9 @@ func (bs *IpvsHealthCheckBackendServer) doUdpCheck() {
 			return
 		}
 
-		cmd := fmt.Sprintf("ping %s -c 1 -t 1", bs.BackendIp)
+		cmd := fmt.Sprintf("ping %s -c 1", bs.BackendIp)
 		if strings.Contains(bs.BackendIp, ":") {
-			cmd = fmt.Sprintf("ping6 %s -c 1 -t 1", bs.BackendIp)
+			cmd = fmt.Sprintf("ping6 %s -c 1", bs.BackendIp)
 		}
 
 		b := utils.Bash{
@@ -62,7 +62,7 @@ func (bs *IpvsHealthCheckBackendServer) doUdpCheck() {
 			bs.result <- true
 		}
 	} else {
-		log.Debugf("[udp checher]: recv udp message from %s:%s, result:%s", bs.BackendIp, bs.HealthCheckPort, buffer)
+		log.Debugf("[udp checher]: recv udp message from %s:%d, result:%s", bs.BackendIp, bs.HealthCheckPort, buffer)
 		bs.result <- true
 	}
 }
