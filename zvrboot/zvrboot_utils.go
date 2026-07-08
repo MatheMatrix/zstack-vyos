@@ -237,17 +237,29 @@ func configureSshServer() {
 	sshkey := utils.BootstrapInfo["publicKey"].(string)
 	utils.Assert(sshkey != "", "cannot find 'publicKey' in bootstrap info")
 	sshport := utils.BootstrapInfo["sshPort"].(float64)
-	address := managementNicSshListenAddress(mgmtNic)
-	utils.Assert(address != "", "cannot find eth0 ip address in bootstrap info")
 	passwordAuthentication := "no"
 	if _, ok := utils.BootstrapInfo["allowPasswordAuth"].(string); ok {
 		passwordAuthentication = utils.BootstrapInfo["allowPasswordAuth"].(string)
 	}
 
-	sshInfo := utils.NewSshServer().SetListen(address).SetPorts(int(sshport)).SetKeys(sshkey)
+	sshInfo := utils.NewSshServer().SetPorts(int(sshport)).SetKeys(sshkey)
+	configureSshListenAddresses(sshInfo, mgmtNic)
+	utils.Assert(sshInfo.ListenAddress != "" || sshInfo.ListenAddress6 != "", "cannot find eth0 ip address in bootstrap info")
 	sshInfo.SetPasswordAuthentication(passwordAuthentication)
 	err := sshInfo.ConfigService()
 	utils.Assertf(err == nil, "configure SSH Server error: %s", err)
+}
+
+func configureSshListenAddresses(sshInfo *utils.SshdInfo, nic *utils.NicInfo) {
+	if nic == nil {
+		return
+	}
+	if nic.Ip != "" {
+		sshInfo.SetListen(nic.Ip)
+	}
+	if nic.Ip6 != "" {
+		sshInfo.SetListen(nic.Ip6)
+	}
 }
 
 func managementNicSshListenAddress(nic *utils.NicInfo) string {

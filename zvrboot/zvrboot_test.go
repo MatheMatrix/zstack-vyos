@@ -30,6 +30,22 @@ var _ = Describe("zvrboot_test", func() {
 		Expect(managementNicSshListenAddress(n)).To(Equal("192.168.1.10"))
 		Expect(nicInfoFirewallAddress(n)).To(Equal("192.168.1.10"))
 	})
+	It("[REPLACE_VYOS] euler zvrboot: management nic configures concrete ssh listen addresses", func() {
+		sshInfo := utils.NewSshServer()
+		configureSshListenAddresses(sshInfo, &utils.NicInfo{Ip: "192.168.1.10"})
+		Expect(sshInfo.ListenAddress).To(Equal("192.168.1.10"))
+		Expect(sshInfo.ListenAddress6).To(BeEmpty())
+
+		sshInfo = utils.NewSshServer()
+		configureSshListenAddresses(sshInfo, &utils.NicInfo{Ip6: "2001:db8::10"})
+		Expect(sshInfo.ListenAddress).To(BeEmpty())
+		Expect(sshInfo.ListenAddress6).To(Equal("2001:db8::10"))
+
+		sshInfo = utils.NewSshServer()
+		configureSshListenAddresses(sshInfo, &utils.NicInfo{Ip: "192.168.1.10", Ip6: "2001:db8::10"})
+		Expect(sshInfo.ListenAddress).To(Equal("192.168.1.10"))
+		Expect(sshInfo.ListenAddress6).To(Equal("2001:db8::10"))
+	})
 	It("[REPLACE_VYOS] zvrboot: skip empty firewall address", func() {
 		Expect(setDestinationAddress([]string{"action accept"}, "")).To(Equal([]string{"action accept"}))
 	})
