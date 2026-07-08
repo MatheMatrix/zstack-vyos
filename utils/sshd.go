@@ -38,11 +38,22 @@ func getSshKeysPath() string {
 func NewSshServer() *SshdInfo {
 	sshAttr := SshdInfo{
 		Port:                   22,
-		ListenAddress:          "0.0.0.0",
-		ListenAddress6:         "::",
 		PasswordAuthentication: "no",
 	}
 	return &sshAttr
+}
+
+func normalizeSshListenAddress(address string) string {
+	parsed := net.ParseIP(address)
+	if parsed == nil || parsed.IsUnspecified() {
+		return ""
+	}
+	return address
+}
+
+func (s *SshdInfo) normalizeListenAddresses() {
+	s.ListenAddress = normalizeSshListenAddress(s.ListenAddress)
+	s.ListenAddress6 = normalizeSshListenAddress(s.ListenAddress6)
 }
 
 func (s *SshdInfo) SetPorts(port int) *SshdInfo {
@@ -55,10 +66,11 @@ func (s *SshdInfo) SetPorts(port int) *SshdInfo {
 
 func (s *SshdInfo) SetListen(address string) *SshdInfo {
 	if address != "" {
-		parsed := net.ParseIP(address)
-		if parsed == nil {
+		address = normalizeSshListenAddress(address)
+		if address == "" {
 			return s
 		}
+		parsed := net.ParseIP(address)
 		if parsed.To4() == nil {
 			s.ListenAddress6 = address
 		} else {
@@ -98,18 +110,25 @@ func (s *SshdInfo) ConfigService() error {
 		text = sshdTemplateEuler
 	} else if runtime.GOARCH == "arm64" {
 		text = sshdTemplateArm
-		_ = Retry(func() error {
-			var e error
-			listener, e := net.Listen("tcp", net.JoinHostPort(s.ListenAddress, fmt.Sprintf("%d", s.Port)))
-			if e != nil {
-				return nil
-			} else {
-				_ = listener.Close()
-				return errors.New("ssh is not configured, wait 5 seconds")
-			}
-		}, 5, 5)
+		listenAddress := s.ListenAddress
+		if listenAddress == "" {
+			listenAddress = s.ListenAddress6
+		}
+		if listenAddress != "" {
+			_ = Retry(func() error {
+				var e error
+				listener, e := net.Listen("tcp", net.JoinHostPort(listenAddress, fmt.Sprintf("%d", s.Port)))
+				if e != nil {
+					return nil
+				} else {
+					_ = listener.Close()
+					return errors.New("ssh is not configured, wait 5 seconds")
+				}
+			}, 5, 5)
+		}
 	}
 
+	s.normalizeListenAddresses()
 	if tmpl, err = template.New("ssh.conf").Parse(text); err != nil {
 		return err
 	}
