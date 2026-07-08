@@ -93,12 +93,30 @@ func TestSshdTemplatesRenderDualStackListenAddresses(t *testing.T) {
 func TestSshdSetListenIgnoresInvalidAddress(t *testing.T) {
 	sshdInfo := NewSshServer()
 	sshdInfo.SetListen("not-an-ip")
+	sshdInfo.SetListen("0.0.0.0")
+	sshdInfo.SetListen("::")
 
 	if sshdInfo.ListenAddress != "" {
 		t.Fatalf("expected IPv4 listen address unchanged, got %s", sshdInfo.ListenAddress)
 	}
 	if sshdInfo.ListenAddress6 != "" {
 		t.Fatalf("expected IPv6 listen address unchanged, got %s", sshdInfo.ListenAddress6)
+	}
+}
+
+func TestSshdNormalizeListenAddressesDropsWildcardValues(t *testing.T) {
+	sshdInfo := &SshdInfo{
+		ListenAddress:  "0.0.0.0",
+		ListenAddress6: "::",
+	}
+
+	sshdInfo.normalizeListenAddresses()
+
+	if sshdInfo.ListenAddress != "" {
+		t.Fatalf("expected IPv4 wildcard listen address removed, got %s", sshdInfo.ListenAddress)
+	}
+	if sshdInfo.ListenAddress6 != "" {
+		t.Fatalf("expected IPv6 wildcard listen address removed, got %s", sshdInfo.ListenAddress6)
 	}
 }
 

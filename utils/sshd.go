@@ -43,6 +43,19 @@ func NewSshServer() *SshdInfo {
 	return &sshAttr
 }
 
+func normalizeSshListenAddress(address string) string {
+	parsed := net.ParseIP(address)
+	if parsed == nil || parsed.IsUnspecified() {
+		return ""
+	}
+	return address
+}
+
+func (s *SshdInfo) normalizeListenAddresses() {
+	s.ListenAddress = normalizeSshListenAddress(s.ListenAddress)
+	s.ListenAddress6 = normalizeSshListenAddress(s.ListenAddress6)
+}
+
 func (s *SshdInfo) SetPorts(port int) *SshdInfo {
 	if port > 0 {
 		s.Port = port
@@ -53,10 +66,11 @@ func (s *SshdInfo) SetPorts(port int) *SshdInfo {
 
 func (s *SshdInfo) SetListen(address string) *SshdInfo {
 	if address != "" {
-		parsed := net.ParseIP(address)
-		if parsed == nil {
+		address = normalizeSshListenAddress(address)
+		if address == "" {
 			return s
 		}
+		parsed := net.ParseIP(address)
 		if parsed.To4() == nil {
 			s.ListenAddress6 = address
 		} else {
@@ -114,6 +128,7 @@ func (s *SshdInfo) ConfigService() error {
 		}
 	}
 
+	s.normalizeListenAddresses()
 	if tmpl, err = template.New("ssh.conf").Parse(text); err != nil {
 		return err
 	}

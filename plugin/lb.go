@@ -90,6 +90,19 @@ func getHaproxyBindPath() string {
 	}
 }
 
+func haproxyEndpoint(ip string, port interface{}) string {
+	return net.JoinHostPort(ip, fmt.Sprint(port))
+}
+
+func haproxyBackendName(ip string) string {
+	return strings.ReplaceAll(ip, ":", "_")
+}
+
+func ipFromHaproxyBackendName(name string) string {
+	backend := strings.TrimPrefix(name, "nic-")
+	return strings.ReplaceAll(backend, "_", ":")
+}
+
 const (
 	TLS_CIPHER_POLICY_DEFAULT             = "tls_cipher_policy_default"
 	TLS_CIPHER_POLICY_1_0                 = "tls_cipher_policy_1_0"
@@ -673,9 +686,9 @@ frontend {{.ListenerUuid}}
 {{- with .Vips }}
 {{- range . }}
 {{- if eq $.Mode "https"}}
-    bind {{ . }}:{{$.LoadBalancerPort}} ssl crt {{$.CertificatePath}} {{$.HttpVersions}}
+    bind {{ haproxyEndpoint . $.LoadBalancerPort }} ssl crt {{$.CertificatePath}} {{$.HttpVersions}}
 {{- else }}
-    bind {{ . }}:{{$.LoadBalancerPort}}
+    bind {{ haproxyEndpoint . $.LoadBalancerPort }}
 {{- end }}
 {{- end }}
 {{- end }}
@@ -745,18 +758,18 @@ backend {{.ServerGroupUuid}}-{{.RedirectPort}}
 
 	{{$redirectPort := .RedirectPort}}
 	{{- with .BackendServers }}
-	{{- range . }}
+{{- range . }}
 {{- if eq $.BalancerAlgorithm "static-rr" }}
 {{- if eq $.SessionPersistence "insert" "rewrite"}}
-	server nic-{{.Ip}} {{.Ip}}:{{$redirectPort}} cookie {{.Ip}} weight {{.Weight}} check port {{$redirectPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
+	server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $redirectPort }} cookie {{ haproxyBackendName .Ip }} weight {{.Weight}} check port {{$redirectPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
 {{- else }}
-	server nic-{{.Ip}} {{.Ip}}:{{$redirectPort}} weight {{.Weight}} check port {{$redirectPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
+	server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $redirectPort }} weight {{.Weight}} check port {{$redirectPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
 {{- end }}
 {{- else }}
 {{- if eq $.SessionPersistence "insert" "rewrite"}}
-	server nic-{{.Ip}} {{.Ip}}:{{$redirectPort}} cookie {{.Ip}} check port {{$redirectPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
+	server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $redirectPort }} cookie {{ haproxyBackendName .Ip }} check port {{$redirectPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
 {{- else }}
-	server nic-{{.Ip}} {{.Ip}}:{{$redirectPort}} check port {{$redirectPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
+	server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $redirectPort }} check port {{$redirectPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
 {{- end }}
 {{- end }}
 	{{- end }}
@@ -797,15 +810,15 @@ backend {{ .ServerGroupUuid}}
 {{- range . }}
 {{- if eq $.BalancerAlgorithm "static-rr" }}
 {{- if eq $.SessionPersistence "insert" "rewrite"}}
-    server nic-{{.Ip}} {{.Ip}}:{{$.InstancePort}} cookie {{.Ip}} weight {{.Weight}} check port {{$.CheckPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
+    server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $.InstancePort }} cookie {{ haproxyBackendName .Ip }} weight {{.Weight}} check port {{$.CheckPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
 {{- else }}    
-    server nic-{{.Ip}} {{.Ip}}:{{$.InstancePort}} weight {{.Weight}} check port {{$.CheckPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
+    server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $.InstancePort }} weight {{.Weight}} check port {{$.CheckPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
 {{- end }}
 {{- else }}
 {{- if eq $.SessionPersistence "insert" "rewrite"}}
-    server nic-{{.Ip}} {{.Ip}}:{{$.InstancePort}} cookie {{.Ip}} check port {{$.CheckPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
+    server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $.InstancePort }} cookie {{ haproxyBackendName .Ip }} check port {{$.CheckPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
 {{- else }}
-    server nic-{{.Ip}} {{.Ip}}:{{$.InstancePort}} check port {{$.CheckPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
+    server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $.InstancePort }} check port {{$.CheckPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
 {{- end }}
 {{- end }}
 {{- end }}
@@ -816,7 +829,10 @@ backend {{ .ServerGroupUuid}}
 `
 	var buf, acl_buf bytes.Buffer
 	var m map[string]interface{}
-	tmpl, err := template.New("conf").Parse(conf)
+	tmpl, err := template.New("conf").Funcs(template.FuncMap{
+		"haproxyEndpoint":    haproxyEndpoint,
+		"haproxyBackendName": haproxyBackendName,
+	}).Parse(conf)
 	utils.PanicOnError(err)
 	m, err = parseListenerPrameter(lb)
 	utils.PanicOnError(err)
@@ -2637,8 +2653,7 @@ type LbCounter struct {
 }
 
 func getIpFromLbStat(name string) string {
-	res := strings.Split(name, "-")
-	return res[1]
+	return ipFromHaproxyBackendName(name)
 }
 
 func statusFormat(status string) int {
