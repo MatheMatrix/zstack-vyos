@@ -3,13 +3,16 @@ package plugin
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -482,16 +485,29 @@ func (rules *interfaceQosRules) InterfaceQosRuleInit(direct direction) interface
 				utils.PanicOnError(err)
 			}
 			_ = utils.IpLinkSetUp(rules.ifbName)
-			bash := utils.Bash{
-				Command: fmt.Sprintf("tc qdisc add dev %s handle ffff: ingress;"+
-					"tc filter add dev %s parent ffff: protocol ip u32 match u32 0 0 action mirred egress redirect dev %s;"+
-					"tc filter add dev %s parent ffff: protocol ipv6 u32 match u32 0 0 action mirred egress redirect dev %s",
-					rules.name,
-					rules.name, rules.ifbName,
-					rules.name, rules.ifbName),
-				Sudo: true,
+			if HasClsact(rules.name) {
+				// clsact qdisc is owned by eBPF; add mirred redirect on its ingress hook.
+				bash := utils.Bash{
+					Command: fmt.Sprintf(
+						"tc filter replace dev %s ingress prio 49152 protocol ip u32 match u32 0 0 action mirred egress redirect dev %s;"+
+							"tc filter replace dev %s ingress prio 49151 protocol ipv6 u32 match u32 0 0 action mirred egress redirect dev %s",
+						rules.name, rules.ifbName,
+						rules.name, rules.ifbName),
+					Sudo: true,
+				}
+				bash.Run()
+			} else {
+				bash := utils.Bash{
+					Command: fmt.Sprintf("tc qdisc add dev %s handle ffff: ingress;"+
+						"tc filter add dev %s parent ffff: protocol ip u32 match u32 0 0 action mirred egress redirect dev %s;"+
+						"tc filter add dev %s parent ffff: protocol ipv6 u32 match u32 0 0 action mirred egress redirect dev %s",
+						rules.name,
+						rules.name, rules.ifbName,
+						rules.name, rules.ifbName),
+					Sudo: true,
+				}
+				bash.Run()
 			}
-			bash.Run()
 			name = rules.ifbName
 
 			mtu, _ := utils.IpLinkGetMTU(rules.name)
@@ -567,16 +583,28 @@ func (rules *interfaceQosRules) InterfaceQosRuleCleanUp() interface{} {
 
 	if rules.direct == INGRESS {
 		if !utils.IsEnableVyosCmd() {
-			bash := utils.Bash{
-				Command: fmt.Sprintf("tc qdisc del dev %s handle ffff: ingress;"+
-					"tc filter del dev %s parent ffff: protocol ip u32 match u32 0 0 action mirred egress redirect dev %s;"+
-					"tc filter del dev %s parent ffff: protocol ipv6 u32 match u32 0 0 action mirred egress redirect dev %s",
-					rules.name,
-					rules.ifbName, rules.ifbName,
-					rules.name, rules.ifbName),
-				Sudo: true,
+			if HasClsact(rules.name) {
+				// clsact is managed by eBPF; only remove mirred filters, leave clsact intact.
+				bash := utils.Bash{
+					Command: fmt.Sprintf(
+						"tc filter del dev %s ingress prio 49152 protocol ip || true;"+
+							"tc filter del dev %s ingress prio 49151 protocol ipv6 || true",
+						rules.name, rules.name),
+					Sudo: true,
+				}
+				bash.Run()
+			} else {
+				bash := utils.Bash{
+					Command: fmt.Sprintf("tc qdisc del dev %s handle ffff: ingress;"+
+						"tc filter del dev %s parent ffff: protocol ip u32 match u32 0 0 action mirred egress redirect dev %s;"+
+						"tc filter del dev %s parent ffff: protocol ipv6 u32 match u32 0 0 action mirred egress redirect dev %s",
+						rules.name,
+						rules.name, rules.ifbName,
+						rules.name, rules.ifbName),
+					Sudo: true,
+				}
+				bash.Run()
 			}
-			bash.Run()
 			if utils.IpLinkIsExist(rules.ifbName) {
 				err := utils.IpLinkDel(rules.ifbName)
 				utils.PanicOnError(err)
@@ -1093,8 +1121,22 @@ func initVipCounterChains() error {
 		Command: "sysctl -w net.netfilter.nf_conntrack_acct=1",
 		Sudo:    true,
 	}
-
 	bash.Run()
+
+	if utils.IsEuler2203() {
+		log.Infof("VIP counter: OpenEuler 22.03 detected, attempting eBPF mode")
+		if err := initEbpfVipCounter(); err != nil {
+			if errors.Is(err, ErrEbpfArchUnsupported) {
+				log.Infof("VIP counter: eBPF not supported on this architecture, using conntrack mode")
+			} else {
+				log.Warnf("VIP counter: eBPF init failed, falling back to conntrack mode: %v", err)
+			}
+		} else {
+			log.Infof("VIP counter: eBPF mode active")
+		}
+	} else {
+		log.Infof("VIP counter: non-OpenEuler platform, using conntrack mode")
+	}
 	return nil
 }
 
@@ -1120,6 +1162,24 @@ func SetVip(cmd *setVipCmd) interface{} {
 				}
 			}
 			vipPromCollector.mu.Unlock()
+		}
+
+		if ebpfObjs != nil {
+			nicName, err := utils.GetNicNameByMac(vip.OwnerEthernetMac)
+			if err != nil || nicName == "" {
+				log.Warnf("VIP eBPF: cannot resolve NIC for VIP %s (mac=%s): %v — TC filter may not cover this VIP", vip.Ip, vip.OwnerEthernetMac, err)
+			} else {
+				log.Debugf("VIP eBPF: resolved NIC %s for VIP %s (mac=%s), ensuring TC filters", nicName, vip.Ip, vip.OwnerEthernetMac)
+				ensureEbpfOnInterface(nicName)
+			}
+			if vip.Ip != "" {
+				log.Debugf("VIP eBPF: registering IPv4 VIP %s (uuid=%s) in eBPF map", vip.Ip, vip.VipUuid)
+				ebpfAddVip(net.ParseIP(vip.Ip))
+			}
+			if vip.Ip6 != "" {
+				log.Debugf("VIP eBPF: registering IPv6 VIP %s (uuid=%s) in eBPF map", vip.Ip6, vip.VipUuid)
+				ebpfAddVip(net.ParseIP(vip.Ip6))
+			}
 		}
 	}
 
@@ -1443,11 +1503,22 @@ func RemoveVip(cmd *removeVipCmd) interface{} {
 			vipPromCollector.mu.Lock()
 			if vip.Ip != "" {
 				delete(vipPromCollector.counters, vip.Ip)
+				vipPromCollector.removePreviousStatsByVip(vip.Ip)
 			}
 			if vip.Ip6 != "" {
 				delete(vipPromCollector.counters, vip.Ip6)
+				vipPromCollector.removePreviousStatsByVip(vip.Ip6)
 			}
 			vipPromCollector.mu.Unlock()
+		}
+
+		if ebpfObjs != nil {
+			if vip.Ip != "" {
+				ebpfDelVip(net.ParseIP(vip.Ip))
+			}
+			if vip.Ip6 != "" {
+				ebpfDelVip(net.ParseIP(vip.Ip6))
+			}
 		}
 	}
 
@@ -1685,15 +1756,18 @@ type vipCollector struct {
 	outPktEntry  *prom.Desc
 
 	// Fields for conntrack-based monitoring
-	mu            sync.Mutex
-	previousStats map[string]*SessionStat
-	counters      map[string]*VipCounter
+	mu                  sync.Mutex
+	previousStats       map[string]*SessionStat
+	counters            map[string]*VipCounter
+	conntrackCollecting atomic.Bool
 }
 
 var vipPromCollector *vipCollector
 
 const (
-	LABEL_VIP_UUID = "VipUUID"
+	LABEL_VIP_UUID             = "VipUUID"
+	conntrackCollectInterval   = 10 * time.Second
+	conntrackSessionStaleAfter = 300
 )
 
 func NewVipPrometheusCollector() MetricCollector {
@@ -1722,6 +1796,7 @@ func NewVipPrometheusCollector() MetricCollector {
 		previousStats: make(map[string]*SessionStat),
 		counters:      make(map[string]*VipCounter),
 	}
+	vipPromCollector.startConntrackCollectLoop()
 	return vipPromCollector
 }
 
@@ -1765,10 +1840,39 @@ type SessionStat struct {
 
 func (s *SessionStat) Key() string {
 	if s.Protocol == "icmp" {
-		return fmt.Sprintf("%s-%s-%s-%s-%s", s.Protocol, s.SrcIp, s.DstIp, s.IcmpType, s.IcmpCode)
-	} else {
-		return fmt.Sprintf("%s-%s-%s-%s-%s", s.Protocol, s.SrcIp, s.SrcPort, s.DstIp, s.DstPort)
+		return s.Protocol + "-" + s.SrcIp + "-" + s.DstIp + "-" + s.IcmpType + "-" + s.IcmpCode
 	}
+	return s.Protocol + "-" + s.SrcIp + "-" + s.SrcPort + "-" + s.DstIp + "-" + s.DstPort
+}
+
+// extractDstIps extracts the two dst= IP addresses from a conntrack line.
+// A conntrack line contains two tuples: the original direction and the reply direction.
+// Example: ipv4 2 tcp 6 86390 ESTABLISHED src=10.0.0.1 dst=192.168.1.100 sport=12345 dport=80 packets=10 bytes=600 src=192.168.1.100 dst=10.0.0.1 sport=80 dport=12345 packets=8 bytes=480 mark=0 zone=0 use=2
+// Returns (original-dst, reply-dst), i.e. ("192.168.1.100", "10.0.0.1") in the example above.
+func extractDstIps(line string) (string, string) {
+	var first, second string
+	searchFrom := 0
+	for i := 0; i < 2; i++ {
+		idx := strings.Index(line[searchFrom:], "dst=")
+		if idx < 0 {
+			break
+		}
+
+		start := searchFrom + idx + 4
+		end := start
+		for end < len(line) && line[end] != ' ' && line[end] != '\t' {
+			end++
+		}
+
+		if i == 0 {
+			first = line[start:end]
+		} else {
+			second = line[start:end]
+		}
+		searchFrom = end
+	}
+
+	return first, second
 }
 
 // parseConntrackLine parses a single line from /proc/net/nf_conntrack.
@@ -1872,9 +1976,75 @@ func parseConntrackLine(line string) (*SessionStat, bool) {
 	return stat, true
 }
 
-func (c *vipCollector) updateCountersByConntrack() {
+type conntrackCollectStats struct {
+	totalSessions   int
+	parsedSessions  int
+	skippedSessions int
+	newSessions     int
+	staleSessions   int
+	matchedSessions int
+}
+
+func (c *vipCollector) snapshotVipCounters() []VipCounter {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	counters := make([]VipCounter, 0, len(c.counters))
+	for _, counter := range c.counters {
+		if counter == nil {
+			continue
+		}
+		counters = append(counters, *counter)
+	}
+	return counters
+}
+
+func (c *vipCollector) snapshotConntrackVips() map[string]string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	vips := make(map[string]string, len(c.counters))
+	for vip, counter := range c.counters {
+		if counter == nil {
+			continue
+		}
+		vips[vip] = counter.VipUuid
+	}
+	return vips
+}
+
+func (c *vipCollector) startConntrackCollectLoop() {
+	go func() {
+		ticker := time.NewTicker(conntrackCollectInterval)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			c.tryUpdateCountersByConntrack()
+		}
+	}()
+}
+
+func (c *vipCollector) tryUpdateCountersByConntrack() {
+	if ebpfObjs != nil || !IsMaster() {
+		return
+	}
+	if !c.conntrackCollecting.CompareAndSwap(false, true) {
+		return
+	}
+
+	defer c.conntrackCollecting.Store(false)
+	c.updateCountersByConntrack()
+}
+
+// updateCountersByConntrack runs in the background instead of the Prometheus
+// request path. It only takes c.mu to copy the VIP set and later merge deltas,
+// so SetVip/RemoveVip cannot be blocked by a full /proc/net/nf_conntrack scan.
+func (c *vipCollector) updateCountersByConntrack() {
+	startTime := time.Now()
+	vips := c.snapshotConntrackVips()
+	if len(vips) == 0 {
+		return
+	}
 
 	file, err := os.Open("/proc/net/nf_conntrack")
 	if err != nil {
@@ -1883,16 +2053,35 @@ func (c *vipCollector) updateCountersByConntrack() {
 	}
 	defer file.Close()
 
+	deltas, stats := c.collectConntrackCounters(file, vips, time.Now().Unix())
+	c.applyConntrackDeltas(deltas)
+
+	log.Debugf("updateCountersByConntrack completed: duration=%v, totalSessions=%d, skippedSessions=%d, parsedSessions=%d, newSessions=%d, matchedSessions=%d, staleSessions=%d",
+		time.Since(startTime), stats.totalSessions, stats.skippedSessions, stats.parsedSessions, stats.newSessions, stats.matchedSessions, stats.staleSessions)
+}
+
+func (c *vipCollector) collectConntrackCounters(reader io.Reader, vips map[string]string, currentTime int64) (map[string]*VipCounter, conntrackCollectStats) {
+	var stats conntrackCollectStats
+	deltas := make(map[string]*VipCounter)
 	currentStats := make(map[string]*SessionStat)
-	currentTime := time.Now().Unix()
-	scanner := bufio.NewScanner(file)
+	scanner := bufio.NewScanner(reader)
 	for scanner.Scan() {
 		line := scanner.Text()
-		stat, ok := parseConntrackLine(line)
-		if !ok {
-			log.Debugf("failed to parse conntrack line: %s", line)
+		stats.totalSessions++
+
+		firstDst, secondDst := extractDstIps(line)
+		_, matchFirst := vips[firstDst]
+		_, matchSecond := vips[secondDst]
+		if !matchFirst && !matchSecond {
+			stats.skippedSessions++
 			continue
 		}
+
+		stat, ok := parseConntrackLine(line)
+		if !ok {
+			continue
+		}
+		stats.parsedSessions++
 		stat.LastUpdate = currentTime
 		currentStats[stat.Key()] = stat
 	}
@@ -1903,6 +2092,9 @@ func (c *vipCollector) updateCountersByConntrack() {
 
 	for key, current := range currentStats {
 		previous, exists := c.previousStats[key]
+		if !exists {
+			stats.newSessions++
+		}
 
 		var pktIn, bytesIn, pktOut, bytesOut uint64
 
@@ -1920,16 +2112,24 @@ func (c *vipCollector) updateCountersByConntrack() {
 			bytesOut = current.ReplyBytes
 		}
 
-		if counter, ok := c.counters[current.DstIp]; ok {
-			log.Debugf("update incoming counter, vip: %s:%s, pktIn: %d, bytesIn: %d, pktOut: %d, bytesOut: %d",
-				counter.VipUuid, current.DstIp, pktIn, bytesIn, pktOut, bytesOut)
+		if vipUuid, ok := vips[current.DstIp]; ok {
+			stats.matchedSessions++
+			counter := deltas[current.DstIp]
+			if counter == nil {
+				counter = &VipCounter{VipUuid: vipUuid}
+				deltas[current.DstIp] = counter
+			}
 			counter.InPackets += pktIn
 			counter.InBytes += bytesIn
 			counter.OutPackets += pktOut
 			counter.OutBytes += bytesOut
-		} else if counter, ok := c.counters[current.ReplyDstIp]; ok {
-			log.Debugf("update out counter, vip: %s:%s, pktIn: %d, bytesIn: %d, pktOut: %d, bytesOut: %d",
-				counter.VipUuid, current.ReplyDstIp, pktIn, bytesIn, pktOut, bytesOut)
+		} else if vipUuid, ok := vips[current.ReplyDstIp]; ok {
+			stats.matchedSessions++
+			counter := deltas[current.ReplyDstIp]
+			if counter == nil {
+				counter = &VipCounter{VipUuid: vipUuid}
+				deltas[current.ReplyDstIp] = counter
+			}
 			counter.OutPackets += pktIn
 			counter.OutBytes += bytesIn
 			counter.InPackets += pktOut
@@ -1942,8 +2142,39 @@ func (c *vipCollector) updateCountersByConntrack() {
 
 	// Clean up sessions older than 300 seconds from previousStats
 	for key, previous := range c.previousStats {
-		if currentTime-previous.LastUpdate > 300 {
-			log.Debugf("Removing stale session from previousStats: %s, age: %d seconds", key, currentTime-previous.LastUpdate)
+		if currentTime-previous.LastUpdate > conntrackSessionStaleAfter {
+			stats.staleSessions++
+			delete(c.previousStats, key)
+		}
+	}
+
+	return deltas, stats
+}
+
+func (c *vipCollector) applyConntrackDeltas(deltas map[string]*VipCounter) {
+	if len(deltas) == 0 {
+		return
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for vip, delta := range deltas {
+		counter, ok := c.counters[vip]
+		if !ok || counter == nil {
+			continue
+		}
+
+		counter.InPackets += delta.InPackets
+		counter.InBytes += delta.InBytes
+		counter.OutPackets += delta.OutPackets
+		counter.OutBytes += delta.OutBytes
+	}
+}
+
+func (c *vipCollector) removePreviousStatsByVip(vip string) {
+	for key, stat := range c.previousStats {
+		if stat.DstIp == vip || stat.ReplyDstIp == vip {
 			delete(c.previousStats, key)
 		}
 	}
@@ -1954,11 +2185,27 @@ func (c *vipCollector) Update(ch chan<- prom.Metric) error {
 		return nil
 	}
 
-	c.updateCountersByConntrack()
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	var counters []VipCounter
 
-	for _, rule := range c.counters {
+	if ebpfObjs != nil {
+		func() {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+
+			log.Debugf("VIP metrics: eBPF mode — collecting stats for %d VIPs", len(c.counters))
+			updateCountersByEbpf(c.counters)
+			for _, counter := range c.counters {
+				if counter != nil {
+					counters = append(counters, *counter)
+				}
+			}
+		}()
+	} else {
+		counters = c.snapshotVipCounters()
+		log.Debugf("VIP metrics: conntrack mode — returning cached stats for %d VIPs", len(counters))
+	}
+
+	for _, rule := range counters {
 		vipUuid := rule.VipUuid
 		ch <- prom.MustNewConstMetric(c.inByteEntry, prom.CounterValue, float64(rule.InBytes), vipUuid)
 		ch <- prom.MustNewConstMetric(c.inPktEntry, prom.CounterValue, float64(rule.InPackets), vipUuid)
