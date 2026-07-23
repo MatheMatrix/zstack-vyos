@@ -70,6 +70,119 @@ func TestNewKeepalivedConfBuildsIpv6OnlyConfig(t *testing.T) {
 	}
 }
 
+func TestZSTAC86958UsesIpv6HeartbeatForIpv4Vip(t *testing.T) {
+	conf, err := NewKeepalivedConf(
+		"eth0",
+		"",
+		"fd66:6:6:6:ac18:f151:0:142",
+		"",
+		"fd66:6:6:6:ac18:f151:0:1b8",
+		[]string{"192.168.0.1"},
+		5,
+		[]nicVipPair{{NicName: "eth1", Vip: "172.24.13.9", Prefix: 16}},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	conf.IsEuler2203 = true
+
+	tmpl, err := template.New("keepalived.conf").Parse(tKeepalivedConf)
+	if err != nil {
+		t.Fatalf("failed to parse keepalived template: %v", err)
+	}
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, conf); err != nil {
+		t.Fatalf("failed to render keepalived template: %v", err)
+	}
+
+	rendered := buf.String()
+	for _, expected := range []string{
+		"unicast_src_ip fd66:6:6:6:ac18:f151:0:142",
+		"fd66:6:6:6:ac18:f151:0:1b8",
+		"no_virtual_ipaddress",
+	} {
+		if !strings.Contains(rendered, expected) {
+			t.Fatalf("rendered keepalived config does not contain %q:\n%s", expected, rendered)
+		}
+	}
+}
+
+func TestNewKeepalivedConfRejectsIncompleteHeartbeatPairs(t *testing.T) {
+	_, err := NewKeepalivedConf(
+		"eth0",
+		"192.168.1.10",
+		"",
+		"",
+		"fd66:6:6:6:ac18:f151:0:1b8",
+		nil,
+		5,
+		[]nicVipPair{{NicName: "eth1", Vip: "172.24.13.9", Prefix: 16}},
+	)
+	if err == nil {
+		t.Fatalf("expected incomplete heartbeat pairs to be rejected")
+	}
+}
+
+func TestNewKeepalivedConfFallsBackToValidIpv6HeartbeatPair(t *testing.T) {
+	conf, err := NewKeepalivedConf(
+		"eth0",
+		"192.168.1.10",
+		"fd66:6:6:6:ac18:f151:0:142",
+		"",
+		"fd66:6:6:6:ac18:f151:0:1b8",
+		nil,
+		5,
+		[]nicVipPair{{NicName: "eth1", Vip: "172.24.13.9", Prefix: 16}},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if conf.UnicastSrcIp != "fd66:6:6:6:ac18:f151:0:142" ||
+		conf.UnicastPeerIp != "fd66:6:6:6:ac18:f151:0:1b8" {
+		t.Fatalf("unexpected unicast heartbeat pair: %s, %s", conf.UnicastSrcIp, conf.UnicastPeerIp)
+	}
+}
+
+func TestSlbIpv6UsesVipFamilyHeartbeat(t *testing.T) {
+	conf, err := NewKeepalivedConf(
+		"eth0",
+		"192.168.1.10",
+		"fd66:6:6:6:ac18:f151:0:142",
+		"192.168.1.11",
+		"fd66:6:6:6:ac18:f151:0:1b8",
+		nil,
+		5,
+		[]nicVipPair{{NicName: "eth1", Vip6: "fd00:10::100", Prefix: 64}},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	tmpl, err := template.New("keepalived.conf").Parse(tKeepalivedSlbConf)
+	if err != nil {
+		t.Fatalf("failed to parse keepalived template: %v", err)
+	}
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, conf); err != nil {
+		t.Fatalf("failed to render keepalived template: %v", err)
+	}
+
+	rendered := buf.String()
+	for _, expected := range []string{
+		"unicast_src_ip fd66:6:6:6:ac18:f151:0:142",
+		"fd66:6:6:6:ac18:f151:0:1b8",
+		"virtual_ipaddress",
+		"fd00:10::100/64",
+	} {
+		if !strings.Contains(rendered, expected) {
+			t.Fatalf("rendered SLB config does not contain %q:\n%s", expected, rendered)
+		}
+	}
+	if strings.Contains(rendered, "unicast_src_ip 192.168.1.10") {
+		t.Fatalf("rendered IPv6 SLB config selected the IPv4 heartbeat:\n%s", rendered)
+	}
+}
+
 func TestNewKeepalivedConfKeepsIpv4MonitorNamesCompatible(t *testing.T) {
 	conf, err := NewKeepalivedConf(
 		"eth0",
@@ -84,6 +197,7 @@ func TestNewKeepalivedConfKeepsIpv4MonitorNamesCompatible(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	conf.IsEuler2203 = true
 	if len(conf.MonitorConfigs) != 1 {
 		t.Fatalf("expected one monitor config, got %d", len(conf.MonitorConfigs))
 	}

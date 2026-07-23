@@ -54,6 +54,7 @@ zs-tools/guesttools                /usr/local/zstack/guesttools                 
 # this files just for x86_64
 # format: [source file]  [dst file]  [file mode]  [file owner]
 #
+keepalived.2.2.8 /usr/sbin/keepalived                  0755      root:root
 zvr_x86_64       __BIN_PATH__/zvr            0755      __USER__:users
 zvrboot_x86_64   __BIN_PATH__/zvrboot        0755      root:root
 ipvsHealthCheck_x86_64       __BIN_PATH__/ipvsHealthCheck                       0755      __USER__:users
