@@ -471,6 +471,8 @@ type KeepalivedConf struct {
 	LocalIpV6           string
 	PeerIp              string
 	PeerIpV6            string
+	UnicastSrcIp        string
+	UnicastPeerIp       string
 	MasterScript        string
 	BackupScript        string
 	ScriptPath          string
@@ -480,6 +482,7 @@ type KeepalivedConf struct {
 	VipV4               *nicVipPair
 	VipV6               *nicVipPair
 	IsEuler2203         bool
+	IsIpv6Heartbeat     bool
 }
 
 type keepalivedMonitorConfig struct {
@@ -505,6 +508,18 @@ func NewKeepalivedConf(hearbeatNic, LocalIp, LocalIpV6, PeerIp, PeerIpV6 string,
 		}
 	}
 
+	unicastSrcIp := LocalIp
+	unicastPeerIp := PeerIp
+	if vipV4 == nil || !utils.IsIpv4Address(unicastSrcIp) || !utils.IsIpv4Address(unicastPeerIp) {
+		unicastSrcIp = LocalIpV6
+		unicastPeerIp = PeerIpV6
+	}
+	if !utils.IsIpv6Address(unicastSrcIp) || !utils.IsIpv6Address(unicastPeerIp) {
+		if !utils.IsIpv4Address(unicastSrcIp) || !utils.IsIpv4Address(unicastPeerIp) {
+			return nil, fmt.Errorf("missing valid heartbeat address pair")
+		}
+	}
+
 	kc := &KeepalivedConf{
 		HeartBeatNic:        hearbeatNic,
 		Interval:            Interval,
@@ -514,6 +529,8 @@ func NewKeepalivedConf(hearbeatNic, LocalIp, LocalIpV6, PeerIp, PeerIpV6 string,
 		LocalIpV6:           LocalIpV6,
 		PeerIp:              PeerIp,
 		PeerIpV6:            PeerIpV6,
+		UnicastSrcIp:        unicastSrcIp,
+		UnicastPeerIp:       unicastPeerIp,
 		MasterScript:        getKeepalivedScriptNotifyMaster(),
 		BackupScript:        getKeepalivedScriptNotifyBackup(),
 		ScriptPath:          GetKeepalivedScriptPath(),
@@ -522,6 +539,7 @@ func NewKeepalivedConf(hearbeatNic, LocalIp, LocalIpV6, PeerIp, PeerIpV6 string,
 		Vips:                vips,
 		VipV4:               vipV4,
 		VipV6:               vipV6,
+		IsIpv6Heartbeat:     utils.IsIpv6Address(unicastSrcIp),
 	}
 
 	if utils.IsEuler2203() {
@@ -648,15 +666,17 @@ vrrp_instance vyos-ha {
             {{.VipAddress}}/{{.Prefix}} dev {{.NicName}} no_track
 {{ end }}
 	}
+{{- else if and .IsEuler2203 .IsIpv6Heartbeat }}
+	no_virtual_ipaddress
 {{- end }}
 
-{{ if .VipV4 }}	unicast_src_ip {{.LocalIp}}
+{{ if .VipV4 }}	unicast_src_ip {{.UnicastSrcIp}}
 	unicast_peer {
-		{{.PeerIp}}
+		{{.UnicastPeerIp}}
 	}
-{{ else if .VipV6 }}	unicast_src_ip {{.LocalIpV6}}
+{{ else if .VipV6 }}	unicast_src_ip {{.UnicastSrcIp}}
 	unicast_peer {
-		{{.PeerIpV6}}
+		{{.UnicastPeerIp}}
 	}
 {{end}}
 	track_script {
