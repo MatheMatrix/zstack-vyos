@@ -486,7 +486,7 @@ func configureVyos() {
 			var err error
 			setNicTree := server.NewParserFromShowConfiguration().Tree
 			setNic(nic, setNicTree)
-			setNicTree.Apply(false)
+			setNicTree.Apply(true)
 			if nic.isDefaultRoute {
 				defaultNic = utils.Nic{Name: nic.name, Mac: nic.mac, Ip: nic.ip, Ip6: nic.ip6,
 					Gateway: nic.gateway, Gateway6: nic.gateway6}
