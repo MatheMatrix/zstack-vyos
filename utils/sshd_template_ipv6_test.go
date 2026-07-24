@@ -22,7 +22,7 @@ func renderSshdTemplate(t *testing.T, text, listenAddress, listenAddress6 string
 		ListenAddress6         string
 		PasswordAuthentication string
 	}{
-		Port:                   22,
+		Port:                   222,
 		ListenAddress:          listenAddress,
 		ListenAddress6:         listenAddress6,
 		PasswordAuthentication: "no",
@@ -49,15 +49,21 @@ func assertNoWildcardListenAddress(t *testing.T, rendered string) {
 	if strings.Contains(rendered, "ListenAddress ::") {
 		t.Fatalf("ssh template should not contain IPv6 wildcard listen address, got %s", rendered)
 	}
+	if strings.Contains(rendered, "ListenAddress [::]") {
+		t.Fatalf("ssh template should not contain bracketed IPv6 wildcard listen address, got %s", rendered)
+	}
+	if strings.Contains(rendered, "\nPort 222\n") {
+		t.Fatalf("ssh template should specify the port on each listen address, got %s", rendered)
+	}
 }
 
 func TestSshdTemplatesRenderIpv4ListenAddressOnly(t *testing.T) {
 	for name, text := range sshdTemplateCases {
 		rendered := renderSshdTemplate(t, text, "192.168.1.10", "")
-		if !strings.Contains(rendered, "ListenAddress 192.168.1.10") {
+		if !strings.Contains(rendered, "ListenAddress 192.168.1.10:222") {
 			t.Fatalf("expect %s template to contain IPv4 listen address, got %s", name, rendered)
 		}
-		if strings.Contains(rendered, "ListenAddress 2001:db8::10") {
+		if strings.Contains(rendered, "2001:db8::10") {
 			t.Fatalf("expect %s template to skip IPv6 listen address, got %s", name, rendered)
 		}
 		assertNoWildcardListenAddress(t, rendered)
@@ -67,7 +73,7 @@ func TestSshdTemplatesRenderIpv4ListenAddressOnly(t *testing.T) {
 func TestSshdTemplatesRenderIpv6ListenAddressOnly(t *testing.T) {
 	for name, text := range sshdTemplateCases {
 		rendered := renderSshdTemplate(t, text, "", "2001:db8::10")
-		if !strings.Contains(rendered, "ListenAddress 2001:db8::10") {
+		if !strings.Contains(rendered, "ListenAddress [2001:db8::10]:222") {
 			t.Fatalf("expect %s template to contain IPv6 listen address, got %s", name, rendered)
 		}
 		if strings.Contains(rendered, "ListenAddress 192.168.1.10") {
@@ -80,10 +86,10 @@ func TestSshdTemplatesRenderIpv6ListenAddressOnly(t *testing.T) {
 func TestSshdTemplatesRenderDualStackListenAddresses(t *testing.T) {
 	for name, text := range sshdTemplateCases {
 		rendered := renderSshdTemplate(t, text, "192.168.1.10", "2001:db8::10")
-		if !strings.Contains(rendered, "ListenAddress 192.168.1.10") {
+		if !strings.Contains(rendered, "ListenAddress 192.168.1.10:222") {
 			t.Fatalf("expect %s template to contain IPv4 listen address, got %s", name, rendered)
 		}
-		if !strings.Contains(rendered, "ListenAddress 2001:db8::10") {
+		if !strings.Contains(rendered, "ListenAddress [2001:db8::10]:222") {
 			t.Fatalf("expect %s template to contain IPv6 listen address, got %s", name, rendered)
 		}
 		assertNoWildcardListenAddress(t, rendered)
