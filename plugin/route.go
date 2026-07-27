@@ -98,7 +98,7 @@ func SetRoutes(infos []RouteInfo) {
 	}
 
 	for _, o := range oldStaticRoutes {
-		if o.Destination == "0.0.0.0/0" {
+		if isProtectedSystemRoute(o) {
 			continue
 		}
 		delete := true
@@ -139,6 +139,17 @@ func SetRoutes(infos []RouteInfo) {
 	}
 
 	tree.Apply(false)
+}
+
+func isProtectedSystemRoute(route RouteInfo) bool {
+	if route.Destination == "0.0.0.0/0" {
+		return true
+	}
+	mgmtNodeCidr, _ := utils.BootstrapInfo["managementNodeCidr"].(string)
+	if mgmtNodeCidr != "" && route.Destination == mgmtNodeCidr {
+		return true
+	}
+	return false
 }
 
 func GetLinuxRoutes() (ret int, output string, stderr string, err error) {
