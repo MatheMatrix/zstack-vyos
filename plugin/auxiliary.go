@@ -324,13 +324,9 @@ func SetZebraRoutes(infos []RouteInfo) {
 		}
 
 		if !found {
-			if old.Dst == "0.0.0.0/0" && !changeDefaultRoute {
+			if routes, retained := retainUnchangedDefaultRoute(newRoutes, old, changeDefaultRoute, changeDefaultRoute6); retained {
 				// mn don't want to change default
-				continue
-			}
-
-			if old.Dst == "::/0" && !changeDefaultRoute6 {
-				// mn don't want to change default
+				newRoutes = routes
 				continue
 			}
 
@@ -384,6 +380,15 @@ func SetZebraRoutes(infos []RouteInfo) {
 			log.Debugf("load old zebra route error: %+v", err)
 		}
 	}
+}
+
+func retainUnchangedDefaultRoute(routes []*utils.ZebraRoute, old *utils.ZebraRoute, changeDefaultRoute, changeDefaultRoute6 bool) ([]*utils.ZebraRoute, bool) {
+	if (old.Dst == "0.0.0.0/0" && !changeDefaultRoute) ||
+		(old.Dst == "::/0" && !changeDefaultRoute6) {
+		return append(routes, old), true
+	}
+
+	return routes, false
 }
 
 func parseOspfToVtyshCmd(cmd *setOspfCmd) (*utils.VtyshOspfCmd, error) {
