@@ -1539,6 +1539,17 @@ func getIpv4PrivateInterfacesWithLocalChain(table *utils.IpTables) []string {
 	return ipv4Nics
 }
 
+func getListenersWithIpv4Vip(lbs []Listener) []Listener {
+	listeners := make([]Listener, 0, len(lbs))
+	for _, lb := range lbs {
+		if lb.getLbInfo().Vip != "" {
+			listeners = append(listeners, lb)
+		}
+	}
+
+	return listeners
+}
+
 func setLb(lb LbInfo) bool {
 	listener := GetListener(lb)
 	if listener == nil {
@@ -1670,6 +1681,11 @@ func addRuleForTcpSyncByVyos(lbs []Listener) error {
 }
 
 func addRuleForTcpSyncByIptables(lbs []Listener) error {
+	lbs = getListenersWithIpv4Vip(lbs)
+	if len(lbs) == 0 {
+		return nil
+	}
+
 	table := utils.NewIpTables(utils.FirewallTable)
 
 	for _, lb := range lbs {
@@ -1724,6 +1740,11 @@ func DelRuleForTcpSyncByVyos(lbs []Listener) error {
 }
 
 func DelRuleForTcpSyncByLinux(lbs []Listener) error {
+	lbs = getListenersWithIpv4Vip(lbs)
+	if len(lbs) == 0 {
+		return nil
+	}
+
 	table := utils.NewIpTables(utils.FirewallTable)
 	for _, lb := range lbs {
 		rule, _ := lb.getSynIptablesRule()
@@ -1815,6 +1836,11 @@ func addRuleForTcpListenerByVyos(lbs []Listener) error {
 }
 
 func addRuleForTcpListenerByLinux(lbs []Listener) error {
+	lbs = getListenersWithIpv4Vip(lbs)
+	if len(lbs) == 0 {
+		return nil
+	}
+
 	table := utils.NewIpTables(utils.FirewallTable)
 
 	changed := false
@@ -1822,11 +1848,6 @@ func addRuleForTcpListenerByLinux(lbs []Listener) error {
 		info := lb.getLbInfo()
 		if info.Mode == "udp" {
 			continue
-		}
-
-		if info.Vip == "" {
-			/* TODO: add ipv6 tables */
-			return nil
 		}
 
 		changed = true
@@ -1937,6 +1958,11 @@ func addRuleForUdpListenerByVyos(lbs []Listener) error {
 }
 
 func addRuleForUdpListenerByLinux(lbs []Listener) error {
+	lbs = getListenersWithIpv4Vip(lbs)
+	if len(lbs) == 0 {
+		return nil
+	}
+
 	table := utils.NewIpTables(utils.FirewallTable)
 
 	changed := false
@@ -1946,10 +1972,6 @@ func addRuleForUdpListenerByLinux(lbs []Listener) error {
 			continue
 		}
 
-		if info.Vip == "" {
-			/* TODO: add ipv6 tables */
-			return nil
-		}
 		changed = true
 
 		rules, _ := lb.getIptablesRule()
@@ -2027,6 +2049,11 @@ func delRuleForTcpListenerByVyos(lbs []Listener) error {
 }
 
 func delRuleForTcpListenerByLinux(lbs []Listener) error {
+	lbs = getListenersWithIpv4Vip(lbs)
+	if len(lbs) == 0 {
+		return nil
+	}
+
 	table := utils.NewIpTables(utils.FirewallTable)
 	excludeSet := make(map[string]struct{}, len(lbs))
 	for _, lb := range lbs {
@@ -2038,11 +2065,6 @@ func delRuleForTcpListenerByLinux(lbs []Listener) error {
 		info := lb.getLbInfo()
 		if info.Mode == "udp" {
 			continue
-		}
-
-		if info.Vip == "" {
-			/* TODO: add ipv6 tables */
-			return nil
 		}
 
 		changed = true
@@ -2128,6 +2150,11 @@ func delRuleForUdpListenerByVyos(lbs []Listener) error {
 }
 
 func delRuleForUdpListenerByLinux(lbs []Listener) error {
+	lbs = getListenersWithIpv4Vip(lbs)
+	if len(lbs) == 0 {
+		return nil
+	}
+
 	table := utils.NewIpTables(utils.FirewallTable)
 	excludeSet := make(map[string]struct{}, len(lbs))
 	for _, lb := range lbs {
@@ -2139,11 +2166,6 @@ func delRuleForUdpListenerByLinux(lbs []Listener) error {
 		info := lb.getLbInfo()
 		if info.Mode != "udp" {
 			continue
-		}
-
-		if info.Vip == "" {
-			/* TODO: add ipv6 tables */
-			return nil
 		}
 
 		changed = true

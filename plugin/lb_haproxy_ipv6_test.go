@@ -24,3 +24,18 @@ func TestHaproxyBackendNameCanRoundTripIpv6(t *testing.T) {
 		t.Fatalf("unexpected backend IP: %s", got)
 	}
 }
+
+func TestGetListenersWithIpv4VipSkipsIpv6WithoutSkippingIpv4(t *testing.T) {
+	listeners := getListenersWithIpv4Vip([]Listener{
+		&HaproxyListener{lb: LbInfo{ListenerUuid: "ipv6", Vip6: "fd86:8635:6:4::f:d16e"}},
+		&HaproxyListener{lb: LbInfo{ListenerUuid: "ipv4-first", Vip: "172.24.14.175"}},
+		&HaproxyListener{lb: LbInfo{ListenerUuid: "ipv4-second", Vip: "172.24.14.176"}},
+	})
+
+	if len(listeners) != 2 {
+		t.Fatalf("expected two IPv4 listeners, got %#v", listeners)
+	}
+	if listeners[0].getLbInfo().ListenerUuid != "ipv4-first" || listeners[1].getLbInfo().ListenerUuid != "ipv4-second" {
+		t.Fatalf("unexpected IPv4 listener order: %#v", listeners)
+	}
+}
