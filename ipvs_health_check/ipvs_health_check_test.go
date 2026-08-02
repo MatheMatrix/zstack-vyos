@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"testing"
 	"time"
 	"zstack-vyos/plugin"
 	"zstack-vyos/utils"
@@ -60,6 +61,16 @@ var _ = Describe("ipvs health check test", func() {
 	bsMap[bs2.getBackendKey()] = &bs2
 	bsMap[bs3.getBackendKey()] = &bs3
 	bsMap[bs4.getBackendKey()] = &bs4
+	hasIpvsBackend := func(key string) bool {
+		ipvsConf, err := plugin.NewIpvsConfFromSave()
+		Expect(err).To(BeNil())
+		for _, fs := range ipvsConf.Services {
+			if fs.BackendServers[key] != nil {
+				return true
+			}
+		}
+		return false
+	}
 
 	fs := plugin.IpvsHealthCheckFrontService{
 		LbUuid:       bs1.LbUuid,
@@ -336,6 +347,59 @@ var _ = Describe("ipvs health check test", func() {
 		time.Sleep(time.Duration(wait) * time.Second)
 		ipvsConf, _ = plugin.NewIpvsConfFromSave()
 		Expect(len(ipvsConf.Services) == 0).To(BeTrue(), fmt.Sprintf("0 ipvs service, actual %d", len(ipvsConf.Services)))
+	})
+
+	It("ipvs health check: reload removes down checker backend from ipvsadm", func() {
+		checker := bs1
+		checker.Install()
+		defer checker.UnInstall()
+		Expect(hasIpvsBackend(checker.getBackendKey())).To(BeTrue(), "backend should be installed before reload")
+
+		checker.setStatus(false)
+		gHealthCheckMap = map[string]*IpvsHealthCheckBackendServer{checker.getBackendKey(): &checker}
+		gDisabledHealthCheckMap = map[string]*IpvsHealthCheckBackendServer{}
+		conf := plugin.IpvsHealthCheckConf{
+			Services: []*plugin.IpvsHealthCheckFrontService{{
+				LbUuid:         checker.LbUuid,
+				ListenerUuid:   checker.ListenerUuid,
+				ConnectionType: checker.ConnectionType,
+				ProtocolType:   checker.ProtocolType,
+				Scheduler:      checker.Scheduler,
+				FrontIp:        checker.FrontIp,
+				FrontPort:      checker.FrontPort,
+				BackendServers: []*plugin.IpvsHealthCheckBackendServer{&checker.IpvsHealthCheckBackendServer},
+			}},
+		}
+		utils.JsonStoreConfig(plugin.IPVS_HEALTH_CHECK_CONFIG_FILE, conf)
+
+		reloadIpvsHealthCheckConfig()
+
+		Eventually(func() bool {
+			return hasIpvsBackend(checker.getBackendKey())
+		}, 3*time.Second, 200*time.Millisecond).Should(BeFalse(), "down checker backend should be removed from ipvsadm after reload")
+	})
+
+	It("ipvs health check: sync removes a reintroduced down checker backend", func() {
+		checker := bs1
+		checker.setStatus(false)
+		gHealthCheckMap = map[string]*IpvsHealthCheckBackendServer{checker.getBackendKey(): &checker}
+		gDisabledHealthCheckMap = map[string]*IpvsHealthCheckBackendServer{}
+
+		reintroduced := checker
+		reintroduced.Install()
+		DeferCleanup(func() {
+			reintroduced.UnInstall()
+			gHealthCheckMap = map[string]*IpvsHealthCheckBackendServer{}
+			gDisabledHealthCheckMap = map[string]*IpvsHealthCheckBackendServer{}
+		})
+		Expect(hasIpvsBackend(checker.getBackendKey())).To(BeTrue(), "backend should be reintroduced before sync")
+		Expect(checker.status).To(BeFalse(), "checker must remain down before sync")
+
+		syncIpvsadmWithHealthCheck()
+
+		Eventually(func() bool {
+			return hasIpvsBackend(checker.getBackendKey())
+		}, 3*time.Second, 200*time.Millisecond).Should(BeFalse(), "sync should remove the reintroduced down backend")
 	})
 
 	It("ipvs health check: test ipv6", func() {
@@ -698,3 +762,55 @@ var _ = Describe("ipvs health check test", func() {
 		}
 	})
 })
+
+type blockingTestLocker struct {
+	waiting chan struct{}
+	release chan struct{}
+}
+
+func (l *blockingTestLocker) Lock() {
+	close(l.waiting)
+	<-l.release
+}
+
+func (l *blockingTestLocker) Unlock() {}
+
+func TestEnsureUninstalledIfDownRechecksStatusUnderLock(t *testing.T) {
+	checker := IpvsHealthCheckBackendServer{}
+	checker.HealthCheckProtocol = healthCheckProtocolTCP
+	checker.status = false
+
+	locker := &blockingTestLocker{
+		waiting: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	uninstallCalled := make(chan struct{}, 1)
+	done := make(chan struct{})
+	go func() {
+		checker.ensureUninstalledIfDown(locker, func() {
+			uninstallCalled <- struct{}{}
+		})
+		close(done)
+	}()
+
+	select {
+	case <-locker.waiting:
+	case <-time.After(3 * time.Second):
+		t.Fatal("ensure-down operation did not start waiting for the lock")
+	}
+
+	checker.status = true
+	close(locker.release)
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("ensure-down operation did not finish after the lock was released")
+	}
+
+	select {
+	case <-uninstallCalled:
+		t.Fatal("backend recovered while waiting for the lock was uninstalled")
+	default:
+	}
+}
