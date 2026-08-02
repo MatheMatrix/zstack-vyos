@@ -204,6 +204,10 @@ func (bs *IpvsHealthCheckBackendServer) Install() {
 func (bs *IpvsHealthCheckBackendServer) UnInstall() {
 	ipvsadmLock.Lock()
 	defer ipvsadmLock.Unlock()
+	bs.uninstallLocked()
+}
+
+func (bs *IpvsHealthCheckBackendServer) uninstallLocked() {
 	bs.status = false
 
 	proto := "-u"
@@ -242,6 +246,22 @@ func (bs *IpvsHealthCheckBackendServer) UnInstall() {
 		Sudo:    true,
 	}
 	b.Run()
+}
+
+func (bs *IpvsHealthCheckBackendServer) EnsureUninstalledIfDown() {
+	bs.ensureUninstalledIfDown(&ipvsadmLock, bs.uninstallLocked)
+}
+
+func (bs *IpvsHealthCheckBackendServer) ensureUninstalledIfDown(locker sync.Locker, uninstall func()) {
+	locker.Lock()
+	defer locker.Unlock()
+
+	if bs.status || isHealthCheckDisabled(bs.HealthCheckProtocol) {
+		return
+	}
+
+	log.Debugf("[ipvsHealthCheck task] ensure down backend %s is uninstalled", bs.getBackendKey())
+	uninstall()
 }
 
 func (bs *IpvsHealthCheckBackendServer) EditBackendServer() {
@@ -460,6 +480,7 @@ func reloadIpvsHealthCheckConfig() {
 	var toCancelled []*IpvsHealthCheckBackendServer
 	var toStarted []*IpvsHealthCheckBackendServer
 	var toInstalled []*IpvsHealthCheckBackendServer
+	var toEnsureDown []*IpvsHealthCheckBackendServer
 
 	func() {
 		gHealthCheckMapLock.Lock()
@@ -505,6 +526,9 @@ func reloadIpvsHealthCheckConfig() {
 					log.Debugf("[ipvsHealthCheck reload] checker: %s not changed", old.getBackendKey())
 				}
 
+				if !old.status {
+					toEnsureDown = append(toEnsureDown, old)
+				}
 			}
 		}
 
@@ -522,6 +546,7 @@ func reloadIpvsHealthCheckConfig() {
 					check.setStatus(true)
 				}
 				gHealthCheckMap[check.getBackendKey()] = check
+				toEnsureDown = append(toEnsureDown, check)
 				toStarted = append(toStarted, check)
 			}
 		}
@@ -542,6 +567,10 @@ func reloadIpvsHealthCheckConfig() {
 
 	for _, check := range toInstalled {
 		check.Install()
+	}
+
+	for _, check := range toEnsureDown {
+		check.EnsureUninstalledIfDown()
 	}
 
 	for _, check := range toStarted {
@@ -580,6 +609,7 @@ func syncIpvsadmWithHealthCheck() {
 	}
 
 	var toInstalled []*IpvsHealthCheckBackendServer
+	var toEnsureDown []*IpvsHealthCheckBackendServer
 
 	func() {
 		gHealthCheckMapLock.Lock()
@@ -607,8 +637,8 @@ func syncIpvsadmWithHealthCheck() {
 					log.Debugf("[ipvsHealthCheck sync] delete backend server %+v", temp.getBackendKey())
 					go temp.UnInstall()
 				} else if gHealthCheckMap[temp.getBackendKey()] != nil && !gHealthCheckMap[temp.getBackendKey()].status {
-					log.Debugf("[ipvsHealthCheck sync] change backend server %+v status up", temp.getBackendKey())
-					gHealthCheckMap[temp.getBackendKey()].setStatus(true)
+					log.Debugf("[ipvsHealthCheck sync] ensure down backend server %+v is uninstalled", temp.getBackendKey())
+					toEnsureDown = append(toEnsureDown, gHealthCheckMap[temp.getBackendKey()])
 				}
 			}
 		}
@@ -630,6 +660,10 @@ func syncIpvsadmWithHealthCheck() {
 
 	for _, gbs := range toInstalled {
 		gbs.Install()
+	}
+
+	for _, gbs := range toEnsureDown {
+		gbs.EnsureUninstalledIfDown()
 	}
 }
 
