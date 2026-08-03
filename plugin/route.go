@@ -13,8 +13,9 @@ import (
 )
 
 const (
-	SYNC_ROUTES = "/syncroutes"
-	GET_ROUTES  = "/getroutes"
+	SYNC_ROUTES                    = "/syncroutes"
+	GET_ROUTES                     = "/getroutes"
+	managementNodeCidrBootstrapKey = "managementNodeCidr"
 )
 
 type RouteInfo struct {
@@ -98,7 +99,7 @@ func SetRoutes(infos []RouteInfo) {
 	}
 
 	for _, o := range oldStaticRoutes {
-		if o.Destination == "0.0.0.0/0" {
+		if isProtectedSystemRoute(o) {
 			continue
 		}
 		delete := true
@@ -139,6 +140,15 @@ func SetRoutes(infos []RouteInfo) {
 	}
 
 	tree.Apply(false)
+}
+
+func isProtectedSystemRoute(route RouteInfo) bool {
+	if route.Destination == "0.0.0.0/0" {
+		return true
+	}
+
+	mgmtNodeCidr, _ := utils.BootstrapInfo[managementNodeCidrBootstrapKey].(string)
+	return mgmtNodeCidr != "" && route.Destination == mgmtNodeCidr
 }
 
 func GetLinuxRoutes() (ret int, output string, stderr string, err error) {
