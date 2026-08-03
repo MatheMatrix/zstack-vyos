@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"testing"
 	"time"
 	"zstack-vyos/plugin"
 	"zstack-vyos/utils"
@@ -60,6 +61,16 @@ var _ = Describe("ipvs health check test", func() {
 	bsMap[bs2.getBackendKey()] = &bs2
 	bsMap[bs3.getBackendKey()] = &bs3
 	bsMap[bs4.getBackendKey()] = &bs4
+	hasIpvsBackend := func(key string) bool {
+		ipvsConf, err := plugin.NewIpvsConfFromSave()
+		Expect(err).To(BeNil())
+		for _, fs := range ipvsConf.Services {
+			if fs.BackendServers[key] != nil {
+				return true
+			}
+		}
+		return false
+	}
 
 	fs := plugin.IpvsHealthCheckFrontService{
 		LbUuid:       bs1.LbUuid,
@@ -97,6 +108,7 @@ var _ = Describe("ipvs health check test", func() {
 
 	confFile = plugin.IPVS_HEALTH_CHECK_CONFIG_FILE
 	gHealthCheckMap = map[string]*IpvsHealthCheckBackendServer{}
+	gDisabledHealthCheckMap = map[string]*IpvsHealthCheckBackendServer{}
 
 	It("ipvs health check: prepare env", func() {
 		mgtNicForUT, pubNicForUT, priNicForUT = utils.SetupSlbHaBootStrap()
@@ -337,6 +349,59 @@ var _ = Describe("ipvs health check test", func() {
 		Expect(len(ipvsConf.Services) == 0).To(BeTrue(), fmt.Sprintf("0 ipvs service, actual %d", len(ipvsConf.Services)))
 	})
 
+	It("ipvs health check: reload removes down checker backend from ipvsadm", func() {
+		checker := bs1
+		checker.Install()
+		defer checker.UnInstall()
+		Expect(hasIpvsBackend(checker.getBackendKey())).To(BeTrue(), "backend should be installed before reload")
+
+		checker.setStatus(false)
+		gHealthCheckMap = map[string]*IpvsHealthCheckBackendServer{checker.getBackendKey(): &checker}
+		gDisabledHealthCheckMap = map[string]*IpvsHealthCheckBackendServer{}
+		conf := plugin.IpvsHealthCheckConf{
+			Services: []*plugin.IpvsHealthCheckFrontService{{
+				LbUuid:         checker.LbUuid,
+				ListenerUuid:   checker.ListenerUuid,
+				ConnectionType: checker.ConnectionType,
+				ProtocolType:   checker.ProtocolType,
+				Scheduler:      checker.Scheduler,
+				FrontIp:        checker.FrontIp,
+				FrontPort:      checker.FrontPort,
+				BackendServers: []*plugin.IpvsHealthCheckBackendServer{&checker.IpvsHealthCheckBackendServer},
+			}},
+		}
+		utils.JsonStoreConfig(plugin.IPVS_HEALTH_CHECK_CONFIG_FILE, conf)
+
+		reloadIpvsHealthCheckConfig()
+
+		Eventually(func() bool {
+			return hasIpvsBackend(checker.getBackendKey())
+		}, 3*time.Second, 200*time.Millisecond).Should(BeFalse(), "down checker backend should be removed from ipvsadm after reload")
+	})
+
+	It("ipvs health check: sync removes a reintroduced down checker backend", func() {
+		checker := bs1
+		checker.setStatus(false)
+		gHealthCheckMap = map[string]*IpvsHealthCheckBackendServer{checker.getBackendKey(): &checker}
+		gDisabledHealthCheckMap = map[string]*IpvsHealthCheckBackendServer{}
+
+		reintroduced := checker
+		reintroduced.Install()
+		DeferCleanup(func() {
+			reintroduced.UnInstall()
+			gHealthCheckMap = map[string]*IpvsHealthCheckBackendServer{}
+			gDisabledHealthCheckMap = map[string]*IpvsHealthCheckBackendServer{}
+		})
+		Expect(hasIpvsBackend(checker.getBackendKey())).To(BeTrue(), "backend should be reintroduced before sync")
+		Expect(checker.status).To(BeFalse(), "checker must remain down before sync")
+
+		syncIpvsadmWithHealthCheck()
+
+		Eventually(func() bool {
+			return hasIpvsBackend(checker.getBackendKey())
+		}, 3*time.Second, 200*time.Millisecond).Should(BeFalse(), "sync should remove the reintroduced down backend")
+	})
+
 	It("ipvs health check: test ipv6", func() {
 		bs1.FrontIp = "2024:9:29:86:1::100"
 		bs1.BackendIp = "2024:9:29:86:2::100"
@@ -486,6 +551,129 @@ var _ = Describe("ipvs health check test", func() {
 		Expect(<-bs.result).To(BeTrue(), "none health check should keep backend healthy without udp probing")
 	})
 
+	It("ipvs health check: default timeout", func() {
+		Expect(healthCheckTimeoutDuration(0)).To(Equal(2 * time.Second))
+		Expect(healthCheckTimeoutDuration(-1)).To(Equal(2 * time.Second))
+		Expect(healthCheckTimeoutDuration(3)).To(Equal(3 * time.Second))
+	})
+
+	It("ipvs health check: test tcp to none reload keeps desired backend", func() {
+		old := bs1
+		old.ProtocolType = "tcp"
+		old.HealthCheckProtocol = "tcp"
+		old.status = true
+		ctx, cancel := context.WithCancel(context.Background())
+		old.cancel = cancel
+		DeferCleanup(func() {
+			old.Cancel()
+			disabled := gDisabledHealthCheckMap[old.getBackendKey()]
+			if disabled != nil {
+				disabled.UnInstall()
+			}
+			gHealthCheckMap = map[string]*IpvsHealthCheckBackendServer{}
+			gDisabledHealthCheckMap = map[string]*IpvsHealthCheckBackendServer{}
+		})
+
+		disabled := bs1.IpvsHealthCheckBackendServer
+		disabled.ProtocolType = "tcp"
+		disabled.HealthCheckProtocol = "none"
+		conf := plugin.IpvsHealthCheckConf{
+			Services: []*plugin.IpvsHealthCheckFrontService{{
+				LbUuid:         disabled.LbUuid,
+				ListenerUuid:   disabled.ListenerUuid,
+				ConnectionType: disabled.ConnectionType,
+				ProtocolType:   disabled.ProtocolType,
+				Scheduler:      disabled.Scheduler,
+				FrontIp:        disabled.FrontIp,
+				FrontPort:      disabled.FrontPort,
+				BackendServers: []*plugin.IpvsHealthCheckBackendServer{&disabled},
+			}},
+		}
+
+		gHealthCheckMap = map[string]*IpvsHealthCheckBackendServer{old.getBackendKey(): &old}
+		gDisabledHealthCheckMap = map[string]*IpvsHealthCheckBackendServer{}
+		utils.JsonStoreConfig(plugin.IPVS_HEALTH_CHECK_CONFIG_FILE, conf)
+		reloadIpvsHealthCheckConfig()
+
+		select {
+		case <-ctx.Done():
+		case <-time.After(time.Second):
+			Fail("old tcp checker should be cancelled")
+		}
+
+		if _, found := gHealthCheckMap[old.getBackendKey()]; found {
+			Fail("none backend must not remain in active health check tasks")
+		}
+		if _, found := gDisabledHealthCheckMap[old.getBackendKey()]; !found {
+			Fail("none backend should be tracked as desired disabled backend")
+		}
+		Expect(old.status).To(BeTrue(), "tcp to none reload must not uninstall the desired real server")
+	})
+
+	It("ipvs health check: test none to tcp reload inherits installed backend status", func() {
+		disabled := bs1
+		disabled.ProtocolType = "tcp"
+		disabled.HealthCheckProtocol = "none"
+		disabled.status = true
+		DeferCleanup(func() {
+			gHealthCheckMap = map[string]*IpvsHealthCheckBackendServer{}
+			gDisabledHealthCheckMap = map[string]*IpvsHealthCheckBackendServer{}
+		})
+
+		active := bs1.IpvsHealthCheckBackendServer
+		active.ProtocolType = "tcp"
+		active.HealthCheckProtocol = "tcp"
+		conf := plugin.IpvsHealthCheckConf{
+			Services: []*plugin.IpvsHealthCheckFrontService{{
+				LbUuid:         active.LbUuid,
+				ListenerUuid:   active.ListenerUuid,
+				ConnectionType: active.ConnectionType,
+				ProtocolType:   active.ProtocolType,
+				Scheduler:      active.Scheduler,
+				FrontIp:        active.FrontIp,
+				FrontPort:      active.FrontPort,
+				BackendServers: []*plugin.IpvsHealthCheckBackendServer{&active},
+			}},
+		}
+
+		gHealthCheckMap = map[string]*IpvsHealthCheckBackendServer{}
+		gDisabledHealthCheckMap = map[string]*IpvsHealthCheckBackendServer{disabled.getBackendKey(): &disabled}
+		utils.JsonStoreConfig(plugin.IPVS_HEALTH_CHECK_CONFIG_FILE, conf)
+		reloadIpvsHealthCheckConfig()
+
+		check := gHealthCheckMap[disabled.getBackendKey()]
+		Expect(check).NotTo(BeNil())
+		Expect(check.status).To(BeTrue(), "none to tcp reload should inherit installed backend status")
+		check.Cancel()
+	})
+
+	It("ipvs health check: test cancelled checker ignores in-flight result", func() {
+		old := bs1
+		old.ProtocolType = "tcp"
+		old.HealthCheckProtocol = "tcp"
+		old.status = true
+		old.failedCnt = old.UnhealthyThreshold - 1
+		old.Cancel()
+
+		Expect(old.applyHealthCheckResult(false)).To(BeFalse())
+		Expect(old.status).To(BeTrue(), "cancelled checker must not uninstall desired backend")
+		Expect(old.failedCnt).To(Equal(old.UnhealthyThreshold - 1))
+	})
+
+	It("ipvs health check: test active checker applies in-flight result", func() {
+		old := bs1
+		old.ProtocolType = "tcp"
+		old.HealthCheckProtocol = "tcp"
+		old.status = true
+		old.successCnt = 0
+		old.failedCnt = 1
+
+		Expect(old.applyHealthCheckResult(true)).To(BeTrue())
+		Expect(old.status).To(BeTrue())
+		Expect(old.successCnt).To(Equal(uint(1)))
+		Expect(old.failedCnt).To(Equal(uint(0)))
+	})
+
 	It("ipvs health check: test syncIpvsadmWithHealthCheck", func() {
 
 		wait := uint(bs1.HealthCheckInterval) * (bs1.HealthyThreshold + 2)
@@ -574,3 +762,55 @@ var _ = Describe("ipvs health check test", func() {
 		}
 	})
 })
+
+type blockingTestLocker struct {
+	waiting chan struct{}
+	release chan struct{}
+}
+
+func (l *blockingTestLocker) Lock() {
+	close(l.waiting)
+	<-l.release
+}
+
+func (l *blockingTestLocker) Unlock() {}
+
+func TestEnsureUninstalledIfDownRechecksStatusUnderLock(t *testing.T) {
+	checker := IpvsHealthCheckBackendServer{}
+	checker.HealthCheckProtocol = healthCheckProtocolTCP
+	checker.status = false
+
+	locker := &blockingTestLocker{
+		waiting: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	uninstallCalled := make(chan struct{}, 1)
+	done := make(chan struct{})
+	go func() {
+		checker.ensureUninstalledIfDown(locker, func() {
+			uninstallCalled <- struct{}{}
+		})
+		close(done)
+	}()
+
+	select {
+	case <-locker.waiting:
+	case <-time.After(3 * time.Second):
+		t.Fatal("ensure-down operation did not start waiting for the lock")
+	}
+
+	checker.status = true
+	close(locker.release)
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("ensure-down operation did not finish after the lock was released")
+	}
+
+	select {
+	case <-uninstallCalled:
+		t.Fatal("backend recovered while waiting for the lock was uninstalled")
+	default:
+	}
+}
