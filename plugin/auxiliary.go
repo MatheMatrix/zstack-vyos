@@ -557,6 +557,11 @@ func SetZebraRoutes(infos []RouteInfo) {
 		}
 
 		if !found {
+			if isManagementNodeRoute(old.Dst) {
+				newRoutes = append(newRoutes, old)
+				continue
+			}
+
 			if old.Dst == "0.0.0.0/0" && !changeDefaultRoute {
 				// mn don't want to change default
 				continue
