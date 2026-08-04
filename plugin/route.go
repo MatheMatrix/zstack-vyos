@@ -147,8 +147,12 @@ func isProtectedSystemRoute(route RouteInfo) bool {
 		return true
 	}
 
-	mgmtNodeCidr, _ := utils.BootstrapInfo[managementNodeCidrBootstrapKey].(string)
-	return mgmtNodeCidr != "" && route.Destination == mgmtNodeCidr
+	return isManagementNodeRoute(route.Destination)
+}
+
+func isManagementNodeRoute(destination string) bool {
+	managementNodeCidr, _ := utils.BootstrapInfo[managementNodeCidrBootstrapKey].(string)
+	return managementNodeCidr != "" && destination == managementNodeCidr
 }
 
 func GetLinuxRoutes() (ret int, output string, stderr string, err error) {
