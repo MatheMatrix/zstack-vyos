@@ -753,6 +753,9 @@ func RefreshIpvsBackend() error {
 
 			for _, sg := range listener.ServerGroups {
 				for _, bs := range sg.BackendServers {
+					if bs.Disabled {
+						continue
+					}
 					if listener.Vip != "" {
 						bs := NewIpvsBackendServer(bs.Ip, fmt.Sprintf("%d", listener.InstancePort), fmt.Sprintf("%d", bs.Weight), fs4)
 						if lbParam.healthCheckPort == 0 {
