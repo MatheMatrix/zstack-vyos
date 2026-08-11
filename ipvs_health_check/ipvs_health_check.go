@@ -67,18 +67,32 @@ func (bs *IpvsHealthCheckBackendServer) equal(other *IpvsHealthCheckBackendServe
 		bs.Weight == other.Weight &&
 		bs.BackendIp == other.BackendIp &&
 		bs.BackendPort == other.BackendPort &&
-		bs.HealthCheckProtocol == other.HealthCheckProtocol &&
+		strings.EqualFold(bs.HealthCheckProtocol, other.HealthCheckProtocol) &&
 		bs.HealthCheckPort == other.HealthCheckPort &&
+		bs.HealthCheckInterval == other.HealthCheckInterval &&
+		bs.HealthCheckTimeout == other.HealthCheckTimeout &&
+		strings.EqualFold(bs.HealthCheckMethod, other.HealthCheckMethod) &&
+		bs.HealthCheckURI == other.HealthCheckURI &&
+		bs.HealthCheckExpectedCodeClasses == other.HealthCheckExpectedCodeClasses &&
+		bs.HealthyThreshold == other.HealthyThreshold &&
+		bs.UnhealthyThreshold == other.UnhealthyThreshold &&
 		bs.MaxConnection == other.MaxConnection &&
 		bs.MinConnection == other.MinConnection
 }
 
 func (bs *IpvsHealthCheckBackendServer) doHealthCheck() {
-	if isHealthCheckDisabled(bs.HealthCheckProtocol) {
+	switch strings.ToLower(bs.HealthCheckProtocol) {
+	case "none":
 		bs.result <- true
-	} else if bs.HealthCheckProtocol == "udp" {
+	case "udp":
 		bs.doUdpCheck()
-	} else {
+	case "tcp":
+		bs.result <- bs.checkTcp()
+	case "http":
+		bs.result <- bs.checkHttp(false)
+	case "https":
+		bs.result <- bs.checkHttp(true)
+	default:
 		log.Debugf("unknow health check protocol %s", bs.HealthCheckProtocol)
 		bs.result <- false
 	}
