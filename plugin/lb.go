@@ -124,8 +124,9 @@ const (
 )
 
 type BackendServerInfo struct {
-	Ip     string `json:"ip"`
-	Weight int    `json:"weight"`
+	Ip       string `json:"ip"`
+	Weight   int    `json:"weight"`
+	Disabled bool   `json:"disabled"`
 }
 
 type ServerGroupInfo struct {
@@ -463,6 +464,25 @@ func parseListenerPrameter(lb LbInfo) (map[string]interface{}, error) {
 	m["SocketPath"] = makeLbSocketPath(lb)
 	m["Weight"] = weight
 
+	activeNicIps := make([]string, 0)
+	activeWeight := make(map[string]string)
+	for _, serverGroup := range lb.ServerGroups {
+		for _, backend := range serverGroup.BackendServers {
+			if backend.Disabled {
+				continue
+			}
+			activeNicIps = append(activeNicIps, backend.Ip)
+			if value, ok := weight[backend.Ip]; ok {
+				activeWeight[backend.Ip] = value
+			} else {
+				activeWeight[backend.Ip] = strconv.Itoa(backend.Weight)
+			}
+		}
+	}
+	sort.Strings(activeNicIps)
+	m["NicIps"] = activeNicIps
+	m["Weight"] = activeWeight
+
 	var isAclRedirect bool
 	var defaultServerGroup ServerGroupInfo
 
@@ -761,15 +781,15 @@ backend {{.ServerGroupUuid}}-{{.RedirectPort}}
 {{- range . }}
 {{- if eq $.BalancerAlgorithm "static-rr" }}
 {{- if eq $.SessionPersistence "insert" "rewrite"}}
-	server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $redirectPort }} cookie {{ haproxyBackendName .Ip }} weight {{.Weight}} check port {{$redirectPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
+	server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $redirectPort }} cookie {{ haproxyBackendName .Ip }} weight {{.Weight}} check port {{$redirectPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}{{if .Disabled}} disabled{{end}}
 {{- else }}
-	server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $redirectPort }} weight {{.Weight}} check port {{$redirectPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
+	server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $redirectPort }} weight {{.Weight}} check port {{$redirectPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}{{if .Disabled}} disabled{{end}}
 {{- end }}
 {{- else }}
 {{- if eq $.SessionPersistence "insert" "rewrite"}}
-	server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $redirectPort }} cookie {{ haproxyBackendName .Ip }} check port {{$redirectPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
+	server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $redirectPort }} cookie {{ haproxyBackendName .Ip }} check port {{$redirectPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}{{if .Disabled}} disabled{{end}}
 {{- else }}
-	server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $redirectPort }} check port {{$redirectPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
+	server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $redirectPort }} check port {{$redirectPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}{{if .Disabled}} disabled{{end}}
 {{- end }}
 {{- end }}
 	{{- end }}
@@ -810,15 +830,15 @@ backend {{ .ServerGroupUuid}}
 {{- range . }}
 {{- if eq $.BalancerAlgorithm "static-rr" }}
 {{- if eq $.SessionPersistence "insert" "rewrite"}}
-    server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $.InstancePort }} cookie {{ haproxyBackendName .Ip }} weight {{.Weight}} check port {{$.CheckPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
+    server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $.InstancePort }} cookie {{ haproxyBackendName .Ip }} weight {{.Weight}} check port {{$.CheckPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}{{if .Disabled}} disabled{{end}}
 {{- else }}    
-    server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $.InstancePort }} weight {{.Weight}} check port {{$.CheckPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
+    server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $.InstancePort }} weight {{.Weight}} check port {{$.CheckPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}{{if .Disabled}} disabled{{end}}
 {{- end }}
 {{- else }}
 {{- if eq $.SessionPersistence "insert" "rewrite"}}
-    server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $.InstancePort }} cookie {{ haproxyBackendName .Ip }} check port {{$.CheckPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
+    server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $.InstancePort }} cookie {{ haproxyBackendName .Ip }} check port {{$.CheckPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}{{if .Disabled}} disabled{{end}}
 {{- else }}
-    server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $.InstancePort }} check port {{$.CheckPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
+    server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $.InstancePort }} check port {{$.CheckPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}{{if .Disabled}} disabled{{end}}
 {{- end }}
 {{- end }}
 {{- end }}
@@ -913,7 +933,20 @@ backend {{ .ServerGroupUuid}}
 	utils.PanicOnError(err)
 	err = utils.MkdirForFile(this.confPath, 0755)
 	utils.PanicOnError(err)
-	err = ioutil.WriteFile(this.confPath, buf.Bytes(), 0755)
+	candidatePath := this.confPath + ".candidate"
+	err = ioutil.WriteFile(candidatePath, buf.Bytes(), 0755)
+	utils.PanicOnError(err)
+	validate := utils.Bash{
+		Command: fmt.Sprintf("sudo %s -c -f %s", getHaproxyBindPath(), candidatePath),
+	}
+	ret, stdout, stderr, err := validate.RunWithReturn()
+	if err != nil || ret != 0 {
+		_ = os.Remove(candidatePath)
+		return errors.New(fmt.Sprintf(
+			"invalid haproxy candidate config[listenerUuid: %s, return code: %d, stdout: %s, stderr: %s]",
+			lb.ListenerUuid, ret, stdout, stderr))
+	}
+	err = os.Rename(candidatePath, this.confPath)
 	utils.PanicOnError(err)
 	LbListeners[this.lb.ListenerUuid] = this
 	return err
@@ -2521,10 +2554,26 @@ func TransformToMetric(c *loadBalancerCollector, listenerUuid string, listener L
 	sessionNum = 0
 	lbUuid := ""
 
-	lbUuid = listener.getLbInfo().LbUuid
+	lbInfo := listener.getLbInfo()
+	lbUuid = lbInfo.LbUuid
 	counters = listener.getLastCounters().counters
 	num = len(counters)
 	maxSessionNum = (uint64)(listener.getMaxSession())
+	type backendMetricKey struct {
+		serverGroupUuid string
+		ip              string
+	}
+	disabledBackends := make(map[backendMetricKey]struct{})
+	for _, serverGroup := range lbInfo.ServerGroups {
+		for _, backend := range serverGroup.BackendServers {
+			if backend.Disabled {
+				disabledBackends[backendMetricKey{
+					serverGroupUuid: serverGroup.ServerGroupUuid,
+					ip:              backend.Ip,
+				}] = struct{}{}
+			}
+		}
+	}
 	/* get total count */
 	for _, cnt := range counters {
 		sessionNum += cnt.sessionNumber
@@ -2532,7 +2581,12 @@ func TransformToMetric(c *loadBalancerCollector, listenerUuid string, listener L
 
 	for i := 0; i < num; i++ {
 		cnt := counters[i]
-		ch <- prom.MustNewConstMetric(c.statusEntry, prom.GaugeValue, float64(cnt.Status), cnt.listenerUuid, cnt.ip, lbUuid, cnt.serverGroupUuid)
+		if _, disabled := disabledBackends[backendMetricKey{
+			serverGroupUuid: cnt.serverGroupUuid,
+			ip:              cnt.ip,
+		}]; !disabled {
+			ch <- prom.MustNewConstMetric(c.statusEntry, prom.GaugeValue, float64(cnt.Status), cnt.listenerUuid, cnt.ip, lbUuid, cnt.serverGroupUuid)
+		}
 		ch <- prom.MustNewConstMetric(c.inByteEntry, prom.GaugeValue, float64(cnt.bytesIn), cnt.listenerUuid, cnt.ip, lbUuid, cnt.serverGroupUuid)
 		ch <- prom.MustNewConstMetric(c.outByteEntry, prom.GaugeValue, float64(cnt.bytesOut), cnt.listenerUuid, cnt.ip, lbUuid, cnt.serverGroupUuid)
 		ch <- prom.MustNewConstMetric(c.curSessionNumEntry, prom.GaugeValue, float64(cnt.sessionNumber), cnt.listenerUuid, cnt.ip, lbUuid)
