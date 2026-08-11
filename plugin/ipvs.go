@@ -168,12 +168,15 @@ type IpvsHealthCheckBackendServer struct {
 	BackendIp   string
 	BackendPort string
 
-	HealthCheckProtocol string
-	HealthCheckPort     int
-	HealthCheckInterval int
-	HealthCheckTimeout  int
-	HealthyThreshold    uint
-	UnhealthyThreshold  uint
+	HealthCheckProtocol            string
+	HealthCheckPort                int
+	HealthCheckInterval            int
+	HealthCheckTimeout             int
+	HealthCheckMethod              string
+	HealthCheckURI                 string
+	HealthCheckExpectedCodeClasses string
+	HealthyThreshold               uint
+	UnhealthyThreshold             uint
 
 	MaxConnection int
 	MinConnection int
@@ -187,6 +190,9 @@ func (bs *IpvsHealthCheckBackendServer) CopyParamsFrom(other *IpvsHealthCheckBac
 	bs.HealthCheckPort = other.HealthCheckPort
 	bs.HealthCheckInterval = other.HealthCheckInterval
 	bs.HealthCheckTimeout = other.HealthCheckTimeout
+	bs.HealthCheckMethod = other.HealthCheckMethod
+	bs.HealthCheckURI = other.HealthCheckURI
+	bs.HealthCheckExpectedCodeClasses = other.HealthCheckExpectedCodeClasses
 	bs.HealthyThreshold = other.HealthyThreshold
 	bs.UnhealthyThreshold = other.UnhealthyThreshold
 	bs.MaxConnection = other.MaxConnection
@@ -242,12 +248,15 @@ func (hcConf *IpvsHealthCheckConf) FromIpvsConf(conf *IpvsConf) *IpvsHealthCheck
 				MaxConnection: bs.maxConnection,
 				MinConnection: bs.minConnection,
 
-				HealthCheckProtocol: bs.healthCheckProtocl,
-				HealthCheckPort:     bs.healthCheckPort,
-				HealthCheckInterval: bs.healthCheckInterval,
-				HealthCheckTimeout:  bs.healthCheckTimeout,
-				HealthyThreshold:    bs.healthyThreshold,
-				UnhealthyThreshold:  bs.unhealthyThreshold,
+				HealthCheckProtocol:            bs.healthCheckProtocl,
+				HealthCheckPort:                bs.healthCheckPort,
+				HealthCheckInterval:            bs.healthCheckInterval,
+				HealthCheckTimeout:             bs.healthCheckTimeout,
+				HealthCheckMethod:              bs.healthCheckMethod,
+				HealthCheckURI:                 bs.healthCheckURI,
+				HealthCheckExpectedCodeClasses: bs.healthCheckExpectedCodeClasses,
+				HealthyThreshold:               bs.healthyThreshold,
+				UnhealthyThreshold:             bs.unhealthyThreshold,
 			}
 
 			hcFs.BackendServers = append(hcFs.BackendServers, &hcBs)
@@ -744,6 +753,9 @@ func RefreshIpvsBackend() error {
 
 			for _, sg := range listener.ServerGroups {
 				for _, bs := range sg.BackendServers {
+					if bs.Disabled {
+						continue
+					}
 					if listener.Vip != "" {
 						bs := NewIpvsBackendServer(bs.Ip, fmt.Sprintf("%d", listener.InstancePort), fmt.Sprintf("%d", bs.Weight), fs4)
 						if lbParam.healthCheckPort == 0 {
