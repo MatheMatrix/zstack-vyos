@@ -62,7 +62,7 @@ func (bs *IpvsHealthCheckBackendServer) doUdpCheck() {
 			bs.result <- true
 		}
 	} else {
-		log.Debugf("[udp checher]: recv udp message from %s:%s, result:%s", bs.BackendIp, bs.HealthCheckPort, buffer)
+		log.Debugf("[udp checher]: recv udp message from %s:%d, result:%s", bs.BackendIp, bs.HealthCheckPort, buffer)
 		bs.result <- true
 	}
 }

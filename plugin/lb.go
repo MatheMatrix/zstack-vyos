@@ -184,12 +184,15 @@ type RedirectServerGroup struct {
 }
 
 type LbParams struct {
-	healthCheckProtocl  string
-	healthCheckPort     int
-	healthCheckInterval int
-	healthCheckTimeout  int
-	healthyThreshold    uint
-	unhealthyThreshold  uint
+	healthCheckProtocl             string
+	healthCheckPort                int
+	healthCheckInterval            int
+	healthCheckTimeout             int
+	healthCheckMethod              string
+	healthCheckURI                 string
+	healthCheckExpectedCodeClasses string
+	healthyThreshold               uint
+	unhealthyThreshold             uint
 
 	httpMode              string
 	maxConnection         int
@@ -203,22 +206,38 @@ type LbParams struct {
 }
 
 func ParseLbParams(lb LbInfo) LbParams {
-	param := LbParams{}
+	param := LbParams{
+		healthCheckMethod:              "HEAD",
+		healthCheckURI:                 "/",
+		healthCheckExpectedCodeClasses: "http_2xx",
+	}
 	for _, p := range lb.Parameters {
-		kv := strings.Split(p, "::")
+		kv := strings.SplitN(p, "::", 2)
 		if len(kv) < 2 {
 			continue
 		}
 		switch kv[0] {
 		case "healthCheckTarget":
-			mp := strings.Split(kv[1], ":")
+			mp := strings.SplitN(kv[1], ":", 2)
+			if len(mp) != 2 {
+				continue
+			}
 			cport := mp[1]
 			if cport == "default" {
 				param.healthCheckPort = 0
 			} else {
 				param.healthCheckPort, _ = strconv.Atoi(cport)
 			}
-			param.healthCheckProtocl = mp[0]
+			param.healthCheckProtocl = strings.ToLower(mp[0])
+
+		case "healthCheckParameter":
+			mp := strings.SplitN(kv[1], ":", 3)
+			if len(mp) != 3 {
+				continue
+			}
+			param.healthCheckMethod = strings.ToUpper(mp[0])
+			param.healthCheckURI = mp[1]
+			param.healthCheckExpectedCodeClasses = mp[2]
 
 		case "healthCheckInterval":
 			param.healthCheckInterval, _ = strconv.Atoi(kv[1])
@@ -410,38 +429,44 @@ func parseListenerPrameter(lb LbInfo) (map[string]interface{}, error) {
 	sort.Stable(sort.StringSlice(lb.NicIps))
 	m := structs.Map(lb)
 	weight := make(map[string]string)
+	m["HttpChkMethod"] = "HEAD"
+	m["HttpChkUri"] = "/"
+	m["HttpChkExpect"] = "^2"
 
 	for _, param := range lb.Parameters {
 		kv := strings.SplitN(param, "::", 2)
+		if len(kv) != 2 {
+			continue
+		}
 		k := kv[0]
 		v := kv[1]
 
 		if k == "healthCheckTarget" {
-			mp := strings.Split(v, ":")
+			mp := strings.SplitN(v, ":", 2)
+			if len(mp) != 2 {
+				continue
+			}
 			cport := mp[1]
 			if cport == "default" {
 				m["CheckPort"] = lb.InstancePort
 			} else {
 				m["CheckPort"] = cport
 			}
-			m["HealthCheckProtocol"] = mp[0]
+			m["HealthCheckProtocol"] = strings.ToLower(mp[0])
 		} else if k == "balancerWeight" {
-			mp := strings.Split(v, "::")
+			mp := strings.SplitN(v, "::", 2)
+			if len(mp) != 2 {
+				continue
+			}
 			weight[mp[0]] = mp[1]
 		} else if k == "healthCheckParameter" {
-			mp := strings.Split(v, ":")
-			m["HttpChkMethod"] = mp[0]
-			m["HttpChkUri"] = mp[1]
-			if mp[2] != "http_2xx" {
-				code := map[string]string{"http_2xx": "2", "http_3xx": "3", "http_4xx": "4", "http_5xx": "5"}
-				expect := "^["
-				for _, o := range strings.Split(mp[2], ",") {
-					expect = expect + code[o]
-				}
-				m["HttpChkExpect"] = expect + "]"
-			} else {
-				m["HttpChkExpect"] = mp[2]
+			mp := strings.SplitN(v, ":", 3)
+			if len(mp) != 3 {
+				continue
 			}
+			m["HttpChkMethod"] = strings.ToUpper(mp[0])
+			m["HttpChkUri"] = mp[1]
+			m["HttpChkExpect"] = haproxyHttpCheckExpectedStatus(mp[2])
 		} else {
 			m[strings.Title(k)] = v
 		}
@@ -576,6 +601,34 @@ func parseListenerPrameter(lb LbInfo) (map[string]interface{}, error) {
 
 	m["Vips"] = vips
 	return m, nil
+}
+
+func haproxyHttpCheckExpectedStatus(expectedCodeClasses string) string {
+	code := map[string]string{
+		"http_2xx": "2",
+		"http_3xx": "3",
+		"http_4xx": "4",
+		"http_5xx": "5",
+	}
+
+	digits := make([]string, 0)
+	seen := make(map[string]bool)
+	for _, class := range strings.Split(expectedCodeClasses, ",") {
+		digit, ok := code[strings.TrimSpace(class)]
+		if !ok || seen[digit] {
+			continue
+		}
+		seen[digit] = true
+		digits = append(digits, digit)
+	}
+	sort.Strings(digits)
+	if len(digits) == 0 {
+		return "^2"
+	}
+	if len(digits) == 1 {
+		return "^" + digits[0]
+	}
+	return "^[" + strings.Join(digits, "") + "]"
 }
 
 func getListenerMaxCocurrenceSocket(maxConnect string) string {
@@ -749,11 +802,12 @@ backend {{.ServerGroupUuid}}-{{.RedirectPort}}
     cookie  {{$.CookieName}}  rewrite
 {{- end }}
 {{- end }}
-{{- if eq $.HealthCheckProtocol "http" }}
+{{- if or (eq $.HealthCheckProtocol "http") (eq $.HealthCheckProtocol "https") }}
     option httpchk {{$.HttpChkMethod}} {{$.HttpChkUri}}
-{{- if ne $.HttpChkExpect "http_2xx" }}
     http-check expect rstatus {{$.HttpChkExpect}}
 {{- end }}
+{{- if ne $.HealthCheckProtocol "none" }}
+    timeout check {{$.HealthCheckTimeout}}s
 {{- end }}
 
 	{{$redirectPort := .RedirectPort}}
@@ -761,15 +815,15 @@ backend {{.ServerGroupUuid}}-{{.RedirectPort}}
 {{- range . }}
 {{- if eq $.BalancerAlgorithm "static-rr" }}
 {{- if eq $.SessionPersistence "insert" "rewrite"}}
-	server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $redirectPort }} cookie {{ haproxyBackendName .Ip }} weight {{.Weight}} check port {{$redirectPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
+	server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $redirectPort }} cookie {{ haproxyBackendName .Ip }} weight {{.Weight}}{{if ne $.HealthCheckProtocol "none"}} check port {{$redirectPort}}{{if eq $.HealthCheckProtocol "https"}} check-ssl verify none{{end}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}}{{end}} {{$.ServerSendProxy}}
 {{- else }}
-	server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $redirectPort }} weight {{.Weight}} check port {{$redirectPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
+	server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $redirectPort }} weight {{.Weight}}{{if ne $.HealthCheckProtocol "none"}} check port {{$redirectPort}}{{if eq $.HealthCheckProtocol "https"}} check-ssl verify none{{end}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}}{{end}} {{$.ServerSendProxy}}
 {{- end }}
 {{- else }}
 {{- if eq $.SessionPersistence "insert" "rewrite"}}
-	server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $redirectPort }} cookie {{ haproxyBackendName .Ip }} check port {{$redirectPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
+	server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $redirectPort }} cookie {{ haproxyBackendName .Ip }}{{if ne $.HealthCheckProtocol "none"}} check port {{$redirectPort}}{{if eq $.HealthCheckProtocol "https"}} check-ssl verify none{{end}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}}{{end}} {{$.ServerSendProxy}}
 {{- else }}
-	server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $redirectPort }} check port {{$redirectPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
+	server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $redirectPort }}{{if ne $.HealthCheckProtocol "none"}} check port {{$redirectPort}}{{if eq $.HealthCheckProtocol "https"}} check-ssl verify none{{end}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}}{{end}} {{$.ServerSendProxy}}
 {{- end }}
 {{- end }}
 	{{- end }}
@@ -799,26 +853,27 @@ backend {{ .ServerGroupUuid}}
 {{- end }}
 {{- end }}
 
-{{- if eq $.HealthCheckProtocol "http" }}
+{{- if or (eq $.HealthCheckProtocol "http") (eq $.HealthCheckProtocol "https") }}
     option httpchk {{$.HttpChkMethod}} {{$.HttpChkUri}}
-{{- if ne $.HttpChkExpect "http_2xx" }}
     http-check expect rstatus {{$.HttpChkExpect}}
 {{- end }}
+{{- if ne $.HealthCheckProtocol "none" }}
+    timeout check {{$.HealthCheckTimeout}}s
 {{- end }}
 
 {{- with .BackendServers }}
 {{- range . }}
 {{- if eq $.BalancerAlgorithm "static-rr" }}
 {{- if eq $.SessionPersistence "insert" "rewrite"}}
-    server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $.InstancePort }} cookie {{ haproxyBackendName .Ip }} weight {{.Weight}} check port {{$.CheckPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
+    server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $.InstancePort }} cookie {{ haproxyBackendName .Ip }} weight {{.Weight}}{{if ne $.HealthCheckProtocol "none"}} check port {{$.CheckPort}}{{if eq $.HealthCheckProtocol "https"}} check-ssl verify none{{end}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}}{{end}} {{$.ServerSendProxy}}
 {{- else }}    
-    server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $.InstancePort }} weight {{.Weight}} check port {{$.CheckPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
+    server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $.InstancePort }} weight {{.Weight}}{{if ne $.HealthCheckProtocol "none"}} check port {{$.CheckPort}}{{if eq $.HealthCheckProtocol "https"}} check-ssl verify none{{end}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}}{{end}} {{$.ServerSendProxy}}
 {{- end }}
 {{- else }}
 {{- if eq $.SessionPersistence "insert" "rewrite"}}
-    server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $.InstancePort }} cookie {{ haproxyBackendName .Ip }} check port {{$.CheckPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
+    server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $.InstancePort }} cookie {{ haproxyBackendName .Ip }}{{if ne $.HealthCheckProtocol "none"}} check port {{$.CheckPort}}{{if eq $.HealthCheckProtocol "https"}} check-ssl verify none{{end}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}}{{end}} {{$.ServerSendProxy}}
 {{- else }}
-    server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $.InstancePort }} check port {{$.CheckPort}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}} {{$.ServerSendProxy}}
+    server nic-{{ haproxyBackendName .Ip }} {{ haproxyEndpoint .Ip $.InstancePort }}{{if ne $.HealthCheckProtocol "none"}} check port {{$.CheckPort}}{{if eq $.HealthCheckProtocol "https"}} check-ssl verify none{{end}} inter {{$.HealthCheckInterval}}s rise {{$.HealthyThreshold}} fall {{$.UnhealthyThreshold}}{{end}} {{$.ServerSendProxy}}
 {{- end }}
 {{- end }}
 {{- end }}
