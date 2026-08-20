@@ -113,24 +113,6 @@ func SyncZStackRouteTables(tables []ZStackRouteTable) error {
 		return fmt.Errorf("copy temp route table file failed: %s", e)
 	}
 
-	if IsEuler2203() {
-		// enable policy route, must disable rp_filter
-		if len(tables) > 0 {
-			bash = Bash{
-				Command: "sysctl -a | grep -w \"rp_filter\" | awk '{print $1}' | xargs -I{} sysctl -w {}=0",
-			}
-			err := bash.Run()
-			PanicOnError(err)
-		} else {
-			// disable policy route, restore rp_filter
-			bash = Bash{
-				Command: "sysctl -a | grep -w \"rp_filter\" | awk '{print $1}' | xargs -I{} sysctl -w {}=1",
-			}
-			err := bash.Run()
-			PanicOnError(err)
-		}
-	}
-
 	return nil
 }
 
