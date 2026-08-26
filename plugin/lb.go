@@ -42,6 +42,11 @@ const (
 	LB_MODE_TCP   = "tcp"
 	LB_MODE_UDP   = "udp"
 
+	LB_DATA_PLANE_IPVS       = "ipvs"
+	LB_FORWARD_MODE_FULL_NAT = "full_nat"
+	LB_FORWARD_MODE_NAT      = "nat"
+	LB_FORWARD_MODE_DR       = "dr"
+
 	LB_BACKEND_PREFIX_REG = "^nic-"
 
 	LISTENER_MAP_SIZE = 128
@@ -155,6 +160,8 @@ type LbInfo struct {
 	InstancePort       int                `json:"instancePort"`
 	LoadBalancerPort   int                `json:"loadBalancerPort"`
 	Mode               string             `json:"mode"`
+	DataPlane          string             `json:"dataPlane"`
+	ForwardMode        string             `json:"forwardMode"`
 	Parameters         []string           `json:"parameters"`
 	CertificateUuid    string             `json:"certificateUuid"`
 	SecurityPolicyType string             `json:"securityPolicyType"`
@@ -199,6 +206,7 @@ type LbParams struct {
 	httpRedirectHttps     bool
 	accessControlStatus   bool
 	balancerAlgorithm     string
+	dataPlane             string
 	aclEntry              []string
 }
 
@@ -259,10 +267,28 @@ func ParseLbParams(lb LbInfo) LbParams {
 			}
 		case "balancerAlgorithm":
 			param.balancerAlgorithm = kv[1]
+		case "dataPlane":
+			param.dataPlane = kv[1]
 		}
 	}
 
 	return param
+}
+
+func isIpvsDataPlane(info LbInfo) bool {
+	if info.Mode == LB_MODE_UDP {
+		return true
+	}
+
+	if info.Mode != LB_MODE_TCP {
+		return false
+	}
+
+	return strings.EqualFold(info.DataPlane, LB_DATA_PLANE_IPVS)
+}
+
+func isTcpIpvsDataPlane(info LbInfo) bool {
+	return info.Mode == LB_MODE_TCP && strings.EqualFold(info.DataPlane, LB_DATA_PLANE_IPVS)
 }
 
 type Listener interface {
@@ -2217,8 +2243,12 @@ func AddLbs(lbs []Listener) error {
 }
 
 func isIpvsListener(info LbInfo) bool {
-	if info.Mode != LB_MODE_UDP {
+	if !isIpvsDataPlane(info) {
 		return false
+	}
+
+	if isTcpIpvsDataPlane(info) {
+		return true
 	}
 
 	confPath := makeLbConfFilePath(info)
@@ -2238,6 +2268,15 @@ func RefreshLbInternal(cmd *RefreshLbCmd) {
 
 	EnableHaproxyLog = cmd.EnableHaproxyLog
 	for _, lb := range cmd.Lbs {
+		if isTcpIpvsDataPlane(lb) {
+			listener := GetListener(lb)
+			if listener != nil {
+				toDeleted = append(toDeleted, listener)
+			}
+			ipvsAdded[lb.ListenerUuid] = lb
+			continue
+		}
+
 		if isIpvsListener(lb) {
 			ipvsAdded[lb.ListenerUuid] = lb
 			continue
@@ -2307,6 +2346,14 @@ func DeleteLbInternal(cmd *deleteLbCmd) {
 	ipvs := map[string]LbInfo{}
 	if len(cmd.Lbs) > 0 {
 		for _, lb := range cmd.Lbs {
+			if isTcpIpvsDataPlane(lb) {
+				if listener := GetListener(lb); listener != nil {
+					toDeleted = append(toDeleted, listener)
+				}
+				ipvs[lb.ListenerUuid] = lb
+				continue
+			}
+
 			if isIpvsListener(lb) {
 				ipvs[lb.ListenerUuid] = lb
 				continue
@@ -2428,7 +2475,7 @@ func NewLbPrometheusCollector() MetricCollector {
 		curSessionNumEntry: prom.NewDesc(
 			"zstack_lb_cur_session_num",
 			"Backend server active session number",
-			[]string{LB_LISTENER_UUID, LB_LISTENER_BACKEND_IP, LB_UUID}, nil,
+			[]string{LB_LISTENER_UUID, LB_LISTENER_BACKEND_IP, LB_UUID, LB_ServerGroup_UUID}, nil,
 		),
 		inByteEntry: prom.NewDesc(
 			"zstack_lb_in_bytes",
@@ -2449,17 +2496,17 @@ func NewLbPrometheusCollector() MetricCollector {
 		refusedSessionNumEntry: prom.NewDesc(
 			"zstack_lb_refused_session_num",
 			"Backend server refused session number",
-			[]string{LB_LISTENER_UUID, LB_LISTENER_BACKEND_IP, LB_UUID}, nil,
+			[]string{LB_LISTENER_UUID, LB_LISTENER_BACKEND_IP, LB_UUID, LB_ServerGroup_UUID}, nil,
 		),
 		totalSessionNumEntry: prom.NewDesc(
 			"zstack_lb_total_session_num",
 			"Backend server total session number",
-			[]string{LB_LISTENER_UUID, LB_LISTENER_BACKEND_IP, LB_UUID}, nil,
+			[]string{LB_LISTENER_UUID, LB_LISTENER_BACKEND_IP, LB_UUID, LB_ServerGroup_UUID}, nil,
 		),
 		concurrentSessionUsageEntry: prom.NewDesc(
 			"zstack_lb_concurrent_session_num",
 			"Backend server session number including active and waiting state session",
-			[]string{LB_LISTENER_UUID, LB_LISTENER_BACKEND_IP, LB_UUID}, nil,
+			[]string{LB_LISTENER_UUID, LB_LISTENER_BACKEND_IP, LB_UUID, LB_ServerGroup_UUID}, nil,
 		),
 		hrsp1xxEntry: prom.NewDesc(
 			"zstack_lb_hrsp1xx",
@@ -2535,10 +2582,10 @@ func TransformToMetric(c *loadBalancerCollector, listenerUuid string, listener L
 		ch <- prom.MustNewConstMetric(c.statusEntry, prom.GaugeValue, float64(cnt.Status), cnt.listenerUuid, cnt.ip, lbUuid, cnt.serverGroupUuid)
 		ch <- prom.MustNewConstMetric(c.inByteEntry, prom.GaugeValue, float64(cnt.bytesIn), cnt.listenerUuid, cnt.ip, lbUuid, cnt.serverGroupUuid)
 		ch <- prom.MustNewConstMetric(c.outByteEntry, prom.GaugeValue, float64(cnt.bytesOut), cnt.listenerUuid, cnt.ip, lbUuid, cnt.serverGroupUuid)
-		ch <- prom.MustNewConstMetric(c.curSessionNumEntry, prom.GaugeValue, float64(cnt.sessionNumber), cnt.listenerUuid, cnt.ip, lbUuid)
-		ch <- prom.MustNewConstMetric(c.refusedSessionNumEntry, prom.GaugeValue, float64(cnt.refusedSessionNumber), cnt.listenerUuid, cnt.ip, lbUuid)
-		ch <- prom.MustNewConstMetric(c.totalSessionNumEntry, prom.GaugeValue, float64(cnt.totalSessionNumber), cnt.listenerUuid, cnt.ip, lbUuid)
-		ch <- prom.MustNewConstMetric(c.concurrentSessionUsageEntry, prom.GaugeValue, float64(cnt.concurrentSessionNumber), cnt.listenerUuid, cnt.ip, lbUuid)
+		ch <- prom.MustNewConstMetric(c.curSessionNumEntry, prom.GaugeValue, float64(cnt.sessionNumber), cnt.listenerUuid, cnt.ip, lbUuid, cnt.serverGroupUuid)
+		ch <- prom.MustNewConstMetric(c.refusedSessionNumEntry, prom.GaugeValue, float64(cnt.refusedSessionNumber), cnt.listenerUuid, cnt.ip, lbUuid, cnt.serverGroupUuid)
+		ch <- prom.MustNewConstMetric(c.totalSessionNumEntry, prom.GaugeValue, float64(cnt.totalSessionNumber), cnt.listenerUuid, cnt.ip, lbUuid, cnt.serverGroupUuid)
+		ch <- prom.MustNewConstMetric(c.concurrentSessionUsageEntry, prom.GaugeValue, float64(cnt.concurrentSessionNumber), cnt.listenerUuid, cnt.ip, lbUuid, cnt.serverGroupUuid)
 	}
 
 	ch <- prom.MustNewConstMetric(c.curSessionUsageEntry, prom.GaugeValue, float64(sessionNum*100/maxSessionNum), listenerUuid, lbUuid)
