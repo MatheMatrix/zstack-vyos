@@ -120,12 +120,20 @@ const (
     ssl-default-bind-ciphers %s
     ssl-default-bind-options %s
 	`
+
+	// HAProxy configures TLS 1.3 ciphersuites separately from TLS 1.2 and earlier.
+	LBSecurityPolicyConfigurationWithTLS13 = `
+    ssl-default-bind-ciphers %s
+    ssl-default-bind-ciphersuites %s
+    ssl-default-bind-options %s
+	`
 )
 
 const (
 	LBSecurityPolicyCommonCiphers      = "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA384:ECDHE-RSA-AES128-SHA:ECDHE-RSA-AES256-SHA"
 	LBSecurityPolicy1_2_3CommonCiphers = "AES128-GCM-SHA256:AES128-SHA256:AES256-SHA256:AES128-SHA:AES256-SHA"
-	LBSecurityPolicystrict3OnlyCiphers = "TLS_AES_256_GCM_SHA384:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-SHA256:ECDHE-ECDSA-AES256-SHA384:ECDHE-ECDSA-AES128-SHA:ECDHE-ECDSA-AES256-SHA"
+	LBSecurityPolicyStrictCiphers      = "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA384"
+	LBSecurityPolicyTLS13Ciphersuites  = "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256"
 )
 
 type BackendServerInfo struct {
@@ -480,9 +488,9 @@ func parseListenerPrameter(lb LbInfo) (map[string]interface{}, error) {
 	} else if lb.SecurityPolicyType == TLS_CIPHER_POLICY_1_2 {
 		m["SecurityOptions"] = fmt.Sprintf(LBSecurityPolicyConfiguration, LBSecurityPolicyCommonCiphers+":"+LBSecurityPolicy1_2_3CommonCiphers, "no-sslv3 no-tlsv10 no-tlsv11 no-tlsv13 no-tls-tickets")
 	} else if lb.SecurityPolicyType == TLS_CIPHER_POLICY_1_2_STRICT {
-		m["SecurityOptions"] = fmt.Sprintf(LBSecurityPolicyConfiguration, LBSecurityPolicyCommonCiphers, "no-sslv3 no-tlsv10 no-tlsv11 no-tlsv13 no-tls-tickets")
+		m["SecurityOptions"] = fmt.Sprintf(LBSecurityPolicyConfiguration, LBSecurityPolicyStrictCiphers, "no-sslv3 no-tlsv10 no-tlsv11 no-tlsv13 no-tls-tickets")
 	} else if lb.SecurityPolicyType == TLS_CIPHER_POLICY_1_2_STRICT_WITH_1_3 {
-		m["SecurityOptions"] = fmt.Sprintf(LBSecurityPolicyConfiguration, LBSecurityPolicyCommonCiphers+":"+LBSecurityPolicystrict3OnlyCiphers, "no-sslv3 no-tlsv10 no-tlsv11 no-tlsv12 no-tls-tickets")
+		m["SecurityOptions"] = fmt.Sprintf(LBSecurityPolicyConfigurationWithTLS13, LBSecurityPolicyStrictCiphers, LBSecurityPolicyTLS13Ciphersuites, "no-sslv3 no-tlsv10 no-tlsv11 no-tls-tickets")
 	}
 
 	m["CertificatePath"] = makeCertificatePath(lb.CertificateUuid)
